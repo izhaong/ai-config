@@ -4,10 +4,8 @@
 
 use ai_config_bus::Bus;
 use ai_config_store::Store;
-use ai_config_watcher::Watcher;
 
 pub struct Daemon {
-    pub watcher: Watcher,
     pub bus: Bus,
     pub store: Store,
 }
@@ -22,7 +20,6 @@ impl Daemon {
             Store::open_at(std::path::Path::new(":memory:")).expect("in-memory store 永远可开")
         });
         Self {
-            watcher: Watcher::placeholder(),
             bus: Bus::placeholder(),
             store,
         }
