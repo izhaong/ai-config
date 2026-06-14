@@ -602,7 +602,6 @@ export function App() {
               onClick={() => setActiveProject("user-global")}
             >
               {t("nav.userGlobal")}
-              <span className="badge">M3</span>
             </li>
             {projects.map((p) => (
               <li
@@ -782,7 +781,6 @@ export function App() {
         <span>{t("statusbar.secrets", { count: doctor?.missing_secrets.length ?? 0 })}</span>
         <span>{t("statusbar.projects", { count: projects.length })}</span>
         <span>{t("statusbar.broken", { count: list?.broken_links ?? 0 })}</span>
-        <span className="right">{t("app.phase")}</span>
       </footer>
 
       {toast ? (
