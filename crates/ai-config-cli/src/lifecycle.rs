@@ -134,36 +134,6 @@ impl Outcome {
     }
 }
 
-/// 反推 src 路径:dest 在 `<home>/.cursor/skills/foo` 之类,src 在 `<root>/skills/foo/SKILL.md`。
-fn infer_src_for_create(
-    dest: &camino::Utf8Path,
-    platform: PlatformId,
-    kind: &str,
-    default_root: &Utf8Path,
-) -> camino::Utf8PathBuf {
-    let adapter = match platform::for_id(platform) {
-        Ok(a) => a,
-        Err(_) => return dest.to_path_buf(),
-    };
-    let dir = match kind {
-        "skill" => adapter.skills_dir(),
-        "rule" => adapter.rules_dir(),
-        "agent" => adapter.agents_dir(),
-        _ => return dest.to_path_buf(),
-    };
-    if let Ok(rel) = dest.strip_prefix(dir.as_path()) {
-        return default_root
-            .join(match kind {
-                "skill" => "skills",
-                "rule" => "rules",
-                "agent" => "agents",
-                _ => "",
-            })
-            .join(rel);
-    }
-    dest.to_path_buf()
-}
-
 fn infer_kind_from_dest(dest: &camino::Utf8Path) -> &'static str {
     let s = dest.as_str();
     if s.contains("/skills/") || s.ends_with("/skills") {
@@ -178,7 +148,7 @@ fn infer_kind_from_dest(dest: &camino::Utf8Path) -> &'static str {
 }
 
 /// 跑一次完整 sync(per-item × per-platform 动作展开),返回 outcomes。
-fn execute_all_actions(ctx: &SyncContext, default_root: &Utf8Path) -> Vec<Outcome> {
+fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
     let mut out: Vec<Outcome> = Vec::new();
     let mut mcp_renders_done = std::collections::HashSet::new();
 
@@ -187,10 +157,16 @@ fn execute_all_actions(ctx: &SyncContext, default_root: &Utf8Path) -> Vec<Outcom
             SyncAction::Create {
                 platform,
                 dest,
+                src,
                 item_id: _,
             } => {
                 let kind = infer_kind_from_dest(dest);
-                let src = infer_src_for_create(dest, *platform, kind, default_root);
+                let link_src = match kind {
+                    "skill" => ai_config_core::sync::link_src_for_create(AssetKind::Skill, src),
+                    "rule" => ai_config_core::sync::link_src_for_create(AssetKind::Rule, src),
+                    "agent" => ai_config_core::sync::link_src_for_create(AssetKind::Agent, src),
+                    _ => src.clone(),
+                };
                 let label = format!("Create {} → {}", kind, dest);
                 // 确保父目录存在
                 if let Some(parent) = dest.parent() {
@@ -208,7 +184,7 @@ fn execute_all_actions(ctx: &SyncContext, default_root: &Utf8Path) -> Vec<Outcom
                         }
                     }
                 }
-                match link::link(&src, dest, LinkKind::auto()) {
+                match link::link(&link_src, dest, LinkKind::auto()) {
                     Ok(()) => out.push(Outcome::ok(label, *platform, kind)),
                     Err(e) => out.push(Outcome::failed(label, *platform, kind, &e)),
                 }
@@ -303,7 +279,7 @@ pub fn run_install(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
     };
 
     // 4. 执行 SyncAction
-    let outcomes = execute_all_actions(&ctx, default_root);
+    let outcomes = execute_all_actions(&ctx);
     let ok_count = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
@@ -493,7 +469,7 @@ pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
             return ExitCode::from(e.exit_code());
         }
     };
-    let outcomes = execute_all_actions(&ctx, default_root);
+    let outcomes = execute_all_actions(&ctx);
     let synced = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
@@ -676,10 +652,10 @@ fn describe_for(
             (dest, src)
         }
         AssetKind::Agent => {
-            let ext = "md";
-            let dest = adapter.agents_dir().join(format!("{name}.{ext}"));
-            let src = default_root.join("agents").join(format!("{name}.{ext}"));
-            (dest, src)
+            let dest = sync::asset_dest_for(platform, kind, name, _src)
+                .unwrap_or_else(|| adapter.agents_dir().join(name));
+            let expected_src = sync::agent_link_src(_src);
+            (dest, expected_src)
         }
         AssetKind::Mcp => {
             let state = match mcp_json::mcp_json_file_sync_state(_src, &adapter.mcp_json_path()) {

@@ -9,6 +9,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { AssetDrawer } from "./AssetDrawer";
 import { AssetRow } from "./AssetRow";
 import { ConfirmModal } from "./ConfirmModal";
+import { RegisterProjectModal } from "./RegisterProjectModal";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { assetKindLabel, kindDirName } from "./i18n/labels";
 import {
@@ -45,6 +46,8 @@ export function App() {
     confirmLabel?: string;
     onConfirm: () => Promise<void>;
   } | null>(null);
+  const [registerProjectOpen, setRegisterProjectOpen] = useState(false);
+  const [registerProjectBusy, setRegisterProjectBusy] = useState(false);
 
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [drawerName, setDrawerName] = useState<string | null>(null);
@@ -114,6 +117,13 @@ export function App() {
   const allVisibleSelected =
     visible.length > 0 && visible.every((e) => selectedKeys.has(entryKey(e)));
 
+  const emptyAssetRoot = useMemo(() => {
+    if (activeProject === "user-global") return null;
+    const p = projects.find((q) => q.name === activeProject);
+    if (!p?.root_path) return null;
+    return `${p.root_path}/.ai-config`;
+  }, [activeProject, projects]);
+
   const issues = doctor?.platform_capability_issues ?? [];
   const issueMap = new Map(issues.map((i) => [`${i.platform}:${i.kind}`, i.reason]));
 
@@ -144,53 +154,68 @@ export function App() {
     setDrawerDraft("");
   }, []);
 
+  const reloadDrawerIfOpen = useCallback(
+    async (listResult: AssetList | null) => {
+      const name = drawerNameRef.current;
+      if (!name || !listResult) return;
+
+      const stillExists = listResult.entries.some(
+        (e) => e.kind === activeKind && e.name === name
+      );
+      if (!stillExists) {
+        closeDrawer();
+        setToast({
+          kind: "err",
+          text: t("toast.loadAssetFailed", {
+            label: assetKindLabel(t, activeKind),
+            error: t("toast.assetRemovedExternally"),
+          }),
+        });
+        return;
+      }
+
+      try {
+        const d = await invoke<AssetDetail>(`cmd_${activeKind}_get`, {
+          name,
+          project: activeProject,
+        });
+        setDrawerDetail(d);
+        if (!drawerEditingRef.current) {
+          setDrawerDraft(d.content);
+        }
+      } catch (e) {
+        closeDrawer();
+        setToast({
+          kind: "err",
+          text: t("toast.loadAssetFailed", {
+            label: assetKindLabel(t, activeKind),
+            error: e,
+          }),
+        });
+      }
+    },
+    [activeKind, activeProject, closeDrawer, t]
+  );
+
+  const refreshView = useCallback(
+    async (showLoading = false) => {
+      if (showLoading) setLoading(true);
+      try {
+        const r = await refresh();
+        await reloadDrawerIfOpen(r);
+      } finally {
+        if (showLoading) setLoading(false);
+      }
+    },
+    [refresh, reloadDrawerIfOpen]
+  );
+
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void listen("assets-changed", () => {
-      void (async () => {
-        const r = await refresh();
-        const name = drawerNameRef.current;
-        if (!name || !r) return;
-
-        const stillExists = r.entries.some(
-          (e) => e.kind === activeKind && e.name === name
-        );
-        if (!stillExists) {
-          closeDrawer();
-          setToast({
-            kind: "err",
-            text: t("toast.loadAssetFailed", {
-              label: assetKindLabel(t, activeKind),
-              error: t("toast.assetRemovedExternally"),
-            }),
-          });
-          return;
-        }
-
-        try {
-          const d = await invoke<AssetDetail>(`cmd_${activeKind}_get`, {
-            name,
-            project: activeProject,
-          });
-          if (disposed) return;
-          setDrawerDetail(d);
-          if (!drawerEditingRef.current) {
-            setDrawerDraft(d.content);
-          }
-        } catch (e) {
-          if (disposed) return;
-          closeDrawer();
-          setToast({
-            kind: "err",
-            text: t("toast.loadAssetFailed", {
-              label: assetKindLabel(t, activeKind),
-              error: e,
-            }),
-          });
-        }
-      })();
+      void refreshView(false);
     }).then((fn) => {
       if (disposed) {
         fn();
@@ -203,7 +228,7 @@ export function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [refresh, closeDrawer, activeKind, activeProject, t]);
+  }, [refreshView]);
 
   useEffect(() => {
     setSelectedKeys(new Set());
@@ -486,23 +511,29 @@ export function App() {
     });
   }, [deleteTargets, kindLabel, runDeleteEntries, t]);
 
-  const addProject = useCallback(async () => {
-    const name = window.prompt(t("prompt.projectName"), "");
-    if (!name) return;
-    const rootPath = window.prompt(t("prompt.projectRoot"), "");
-    if (!rootPath) return;
-    try {
-      await invoke<ProjectItem>("cmd_projects_add", { name, rootPath });
-      setProjects((p) => [...p, { id: 0, name, root_path: rootPath, registered_at: "" }]);
-      setToast({ kind: "ok", text: t("toast.projectRegistered", { name }) });
-    } catch (e) {
-      setToast({ kind: "err", text: t("toast.registerProjectFailed", { error: e }) });
-    }
-  }, [t]);
+  const submitRegisterProject = useCallback(
+    async (name: string, rootPath: string) => {
+      setRegisterProjectBusy(true);
+      try {
+        const project = await invoke<ProjectItem>("cmd_projects_add", {
+          name,
+          rootPath,
+        });
+        setProjects((p) => [...p, project]);
+        setRegisterProjectOpen(false);
+        setToast({ kind: "ok", text: t("toast.projectRegistered", { name: project.name }) });
+      } catch (e) {
+        setToast({ kind: "err", text: t("toast.registerProjectFailed", { error: e }) });
+      } finally {
+        setRegisterProjectBusy(false);
+      }
+    },
+    [t]
+  );
 
-  const removeProject = useCallback(
+  const runRemoveProject = useCallback(
     async (name: string) => {
-      if (!window.confirm(t("prompt.confirmRemoveProject", { name }))) return;
+      setBusy(true);
       try {
         await invoke("cmd_projects_remove", { name });
         setProjects((p) => p.filter((q) => q.name !== name));
@@ -510,9 +541,24 @@ export function App() {
         setToast({ kind: "ok", text: t("toast.projectRemoved", { name }) });
       } catch (e) {
         setToast({ kind: "err", text: t("toast.removeProjectFailed", { error: e }) });
+      } finally {
+        setBusy(false);
+        setConfirm(null);
       }
     },
     [activeProject, t]
+  );
+
+  const requestRemoveProject = useCallback(
+    (name: string) => {
+      setConfirm({
+        title: t("confirm.removeProject"),
+        message: t("confirm.removeProjectMessage", { name }),
+        confirmLabel: t("confirm.removeProject"),
+        onConfirm: () => runRemoveProject(name),
+      });
+    },
+    [runRemoveProject, t]
   );
 
   useEffect(() => {
@@ -571,7 +617,7 @@ export function App() {
                   className="remove"
                   onClick={(e) => {
                     e.stopPropagation();
-                    void removeProject(p.name);
+                    requestRemoveProject(p.name);
                   }}
                   title={t("nav.removeProject", { name: p.name })}
                 >
@@ -579,7 +625,11 @@ export function App() {
                 </span>
               </li>
             ))}
-            <li className="add" onClick={() => void addProject()} title={t("nav.registerProjectTitle")}>
+            <li
+              className="add"
+              onClick={() => setRegisterProjectOpen(true)}
+              title={t("nav.registerProjectTitle")}
+            >
               {t("nav.registerProject")}
             </li>
           </ul>
@@ -624,6 +674,13 @@ export function App() {
               {loading || busy ? t("toolbar.processing") : ""}
             </span>
             <div className="spacer" />
+            <button
+              disabled={loading || busy}
+              title={t("toolbar.refreshTitle")}
+              onClick={() => void refreshView(true)}
+            >
+              {loading ? t("toolbar.refreshing") : t("toolbar.refresh")}
+            </button>
             <button className="primary" disabled={batchDisabled} onClick={() => void batchDeploy()}>
               {t("toolbar.batchDeploy")}
             </button>
@@ -646,10 +703,27 @@ export function App() {
             ) : visible.length === 0 ? (
               <div className="empty">
                 {activeKind === "mcp" ? (
-                  t("empty.mcp")
-                ) : (
+                  emptyAssetRoot ? (
+                    <Trans
+                      i18nKey="empty.mcp"
+                      values={{ assetRoot: emptyAssetRoot }}
+                      components={{ code: <code /> }}
+                    />
+                  ) : (
+                    t("empty.mcpGlobal")
+                  )
+                ) : emptyAssetRoot ? (
                   <Trans
                     i18nKey="empty.assets"
+                    values={{
+                      assetRoot: emptyAssetRoot,
+                      kindDir: kindDirName(t, activeKind),
+                    }}
+                    components={{ code: <code /> }}
+                  />
+                ) : (
+                  <Trans
+                    i18nKey="empty.assetsGlobal"
                     values={{ kindDir: kindDirName(t, activeKind) }}
                     components={{ code: <code /> }}
                   />
@@ -727,6 +801,16 @@ export function App() {
             if (!busy) setConfirm(null);
           }}
           onConfirm={() => void confirm.onConfirm()}
+        />
+      ) : null}
+
+      {registerProjectOpen ? (
+        <RegisterProjectModal
+          busy={registerProjectBusy}
+          onCancel={() => {
+            if (!registerProjectBusy) setRegisterProjectOpen(false);
+          }}
+          onSubmit={(name, rootPath) => void submitRegisterProject(name, rootPath)}
         />
       ) : null}
     </div>

@@ -27,6 +27,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 
 use crate::error::CoreError;
+use crate::paths;
 
 /// 链接类型(ARCHITECTURE §10)。
 ///
@@ -240,17 +241,12 @@ pub fn check(dest: &Utf8Path, expected_src: &Utf8Path) -> LinkHealth {
 // ── 内部:实际创建链接 ─────────────────────────────────────────────
 
 fn create_link(src: &Utf8Path, dest: &Utf8Path, kind: LinkKind) -> Result<(), CoreError> {
-    // 确保 dest 父目录存在(`link` 不负责 mkdir,调用方准备;但缺父目录给好提示)。
-    if let Some(parent) = dest.parent() {
-        if !parent.as_str().is_empty() && !parent.exists() {
-            return Err(CoreError::LinkFailed {
-                src: src.to_string(),
-                dest: dest.to_string(),
-                reason: format!("父目录不存在: {parent}"),
-                hint: "先确保 dest 的父目录已创建(sync 引擎应已就绪)".to_string(),
-            });
-        }
-    }
+    paths::ensure_parent_dir(dest).map_err(|e| CoreError::LinkFailed {
+        src: src.to_string(),
+        dest: dest.to_string(),
+        reason: format!("创建父目录失败: {e}"),
+        hint: "检查 ~/.cursor / ~/.codex / ~/.claude / ~/.hermes 等目录的写入权限".to_string(),
+    })?;
 
     let result: io::Result<()> = match kind {
         LinkKind::Symlink => symlink_kind(src, dest),
@@ -741,22 +737,44 @@ mod tests {
         );
     }
 
-    // ── 7. 父目录不存在时,返回可读错误 ──────────────────────
+    // ── 7. 父目录不存在时自动创建并成功链接 ──────────────────
 
     #[test]
-    fn link_fails_cleanly_when_parent_dir_missing() {
+    fn link_creates_missing_parent_dir_for_skill_like_dest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = Utf8PathBuf::from_path_buf(tmp.path().join("skill-src")).unwrap();
+        fs::create_dir_all(&src).unwrap();
+        let dest = Utf8PathBuf::from_path_buf(tmp.path().join(".cursor/skills/my-skill")).unwrap();
+        assert!(!dest.parent().unwrap().exists());
+
+        link(&src, &dest, LinkKind::auto()).expect("skill 风格目录链接应成功");
+        assert!(dest.parent().unwrap().is_dir());
+    }
+
+    #[test]
+    fn link_creates_missing_parent_dir_for_rule_like_dest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = Utf8PathBuf::from_path_buf(tmp.path().join("source.mdc")).unwrap();
+        let dest =
+            Utf8PathBuf::from_path_buf(tmp.path().join(".cursor/rules/my-rule.mdc")).unwrap();
+        fs::write(&src, b"rule").unwrap();
+        assert!(!dest.parent().unwrap().exists());
+
+        link(&src, &dest, LinkKind::auto()).expect("rule 风格文件链接应成功");
+        assert_eq!(check(&dest, &src), LinkHealth::Linked { src: src.clone() });
+    }
+
+    #[test]
+    fn link_creates_missing_parent_dir_for_agent_like_dest() {
         let tmp = tempfile::tempdir().unwrap();
         let src = Utf8PathBuf::from_path_buf(tmp.path().join("source.txt")).unwrap();
-        let dest = Utf8PathBuf::from_path_buf(tmp.path().join("nope/dest.txt")).unwrap();
+        let dest = Utf8PathBuf::from_path_buf(tmp.path().join(".cursor/agents/dest.txt")).unwrap();
         fs::write(&src, b"x").unwrap();
+        assert!(!dest.parent().unwrap().exists());
 
-        let err = link(&src, &dest, LinkKind::auto()).expect_err("应失败");
-        match err {
-            CoreError::LinkFailed { reason, .. } => {
-                assert!(reason.contains("父目录"), "reason: {reason}");
-            }
-            other => panic!("应返回 LinkFailed, 实得 {other:?}"),
-        }
+        link(&src, &dest, LinkKind::auto()).expect("agent 风格文件链接应成功");
+        assert!(dest.parent().unwrap().is_dir());
+        assert_eq!(check(&dest, &src), LinkHealth::Linked { src: src.clone() });
     }
 
     // ── 8. check 对 dest 完全不存在也走 Broken(便于 doctor) ──

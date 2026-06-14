@@ -24,14 +24,12 @@ pub trait PlatformAdapter: Send + Sync {
 
     /// 平台级能力探测(PRD §6.3)。
     ///
-    /// 默认实现:Skill / Mcp 全平台支持;Rule / Agent 在 Codex / Hermes 上**不**直接
+    /// 默认实现:Skill / Mcp / Agent 全平台支持;Rule 在 Codex / Hermes 上**不**直接
     /// 消费 — Codex Rule 通过 AGENTS.md 间接;Hermes Rule 仅 CWD `.cursor/rules/`。
     fn supports(&self, asset: AssetKind) -> bool {
         match asset {
-            AssetKind::Skill | AssetKind::Mcp => true,
-            AssetKind::Rule | AssetKind::Agent => {
-                !matches!(self.id(), PlatformId::Codex | PlatformId::Hermes)
-            }
+            AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent => true,
+            AssetKind::Rule => !matches!(self.id(), PlatformId::Codex | PlatformId::Hermes),
         }
     }
 }
@@ -164,9 +162,9 @@ impl PlatformAdapter for HermesAdapter {
     }
     fn supports(&self, asset: AssetKind) -> bool {
         match asset {
-            AssetKind::Skill | AssetKind::Mcp => true,
+            AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent => true,
             // Hermes 只在工作目录读 `.cursor/rules/*.mdc`,不消费全局 ~/.hermes/rules
-            AssetKind::Rule | AssetKind::Agent => false,
+            AssetKind::Rule => false,
         }
     }
     fn skills_dir(&self) -> Utf8PathBuf {
@@ -201,12 +199,35 @@ pub fn hermes_adapter() -> Result<Box<dyn PlatformAdapter>, CoreError> {
 
 /// 按 `PlatformId` 工厂(供 CLI / 同步层按平台拉一个适配器)。
 pub fn for_id(id: PlatformId) -> Result<Box<dyn PlatformAdapter>, CoreError> {
-    match id {
-        PlatformId::Cursor => cursor_adapter(),
-        PlatformId::Codex => codex_adapter(),
-        PlatformId::Claude => claude_adapter(),
-        PlatformId::Hermes => hermes_adapter(),
+    for_scope(id, &home())
+}
+
+/// 按作用域解析平台目录。
+///
+/// - `deploy_base == $HOME`:与 `for_id` 相同(Hermes 尊重 `HERMES_SKILLS_DIR`)。
+/// - 项目作用域:`deploy_base` 为仓库根,平台目录在 `<repo>/.cursor` 等。
+pub fn for_scope(
+    id: PlatformId,
+    deploy_base: &camino::Utf8Path,
+) -> Result<Box<dyn PlatformAdapter>, CoreError> {
+    if deploy_base == home() {
+        return match id {
+            PlatformId::Cursor => cursor_adapter(),
+            PlatformId::Codex => codex_adapter(),
+            PlatformId::Claude => claude_adapter(),
+            PlatformId::Hermes => hermes_adapter(),
+        };
     }
+    let base = deploy_base.to_path_buf();
+    Ok(match id {
+        PlatformId::Cursor => Box::new(CursorAdapter { home: base.clone() }),
+        PlatformId::Codex => Box::new(CodexAdapter { home: base.clone() }),
+        PlatformId::Claude => Box::new(ClaudeAdapter { home: base.clone() }),
+        PlatformId::Hermes => Box::new(HermesAdapter {
+            home: base.clone(),
+            skills_root: base.join(".hermes/skills"),
+        }),
+    })
 }
 
 /// 4 平台适配器(PRD §7.1 "4 平台都做")。返回顺序固定便于测试断言。
@@ -360,11 +381,10 @@ mod tests {
     }
 
     #[test]
-    fn codex_does_not_support_agents() {
-        // 默认实现:Codex 不直接消费 Agent(走 subagents 但 tools 层面
-        // 视作不支持,与现有 trait 默认一致)
+    fn codex_supports_agents() {
         let a = codex_adapter().unwrap();
-        assert!(!a.supports(AssetKind::Agent));
+        assert!(a.supports(AssetKind::Agent));
+        assert!(a.agents_dir().as_str().ends_with(".codex/subagents"));
     }
 
     #[test]
@@ -390,12 +410,12 @@ mod tests {
     }
 
     #[test]
-    fn hermes_supports_skill_and_mcp_only() {
+    fn hermes_supports_skill_mcp_and_agent() {
         let a = hermes_adapter().unwrap();
         assert!(a.supports(AssetKind::Skill));
         assert!(a.supports(AssetKind::Mcp));
+        assert!(a.supports(AssetKind::Agent));
         assert!(!a.supports(AssetKind::Rule));
-        assert!(!a.supports(AssetKind::Agent));
     }
 
     // ── HermesAdapter 读 HERMES_SKILLS_DIR env(PRD §5.x) ───────────
@@ -436,6 +456,14 @@ mod tests {
     }
 
     // ── registry / for_id 工厂 ───────────────────────────────────
+
+    #[test]
+    fn for_scope_uses_repo_root_for_project() {
+        let repo = Utf8PathBuf::from("/tmp/my-repo");
+        let a = for_scope(PlatformId::Cursor, &repo).unwrap();
+        assert_eq!(a.skills_dir(), repo.join(".cursor/skills"));
+        assert_eq!(a.mcp_json_path(), repo.join(".cursor/mcp.json"));
+    }
 
     #[test]
     fn registry_returns_four_platforms_in_canonical_order() {

@@ -96,20 +96,14 @@ fn watch_mcp_json(
     debouncer: &mut Debouncer<notify::RecommendedWatcher>,
     root: &Utf8Path,
 ) -> Result<(), WatcherError> {
-    let mcp_json = root.join("mcp.json");
-    if mcp_json.is_file() {
-        debouncer
-            .watcher()
-            .watch(mcp_json.as_std_path(), RecursiveMode::NonRecursive)?;
-        tracing::debug!("watcher: 监听 {mcp_json}");
+    if !root.is_dir() {
         return Ok(());
     }
-    if root.is_dir() {
-        debouncer
-            .watcher()
-            .watch(root.as_std_path(), RecursiveMode::NonRecursive)?;
-        tracing::debug!("watcher: 监听 {root} (等待 mcp.json)");
-    }
+    // 监听资产根目录本身，覆盖 mcp.json 原地编辑与编辑器原子替换(rename)。
+    debouncer
+        .watcher()
+        .watch(root.as_std_path(), RecursiveMode::NonRecursive)?;
+    tracing::debug!("watcher: 监听 {root} (mcp.json 及根级变更)");
     Ok(())
 }
 
@@ -127,6 +121,40 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
     use std::time::Instant;
+
+    #[test]
+    fn debounced_callback_fires_on_mcp_json_write() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).expect("utf8 path");
+        fs::write(root.join("mcp.json"), r#"{"mcpServers":{}}"#).expect("mcp.json");
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_cb = Arc::clone(&hits);
+        let _handle = start_debounced(
+            WatchRoots {
+                asset_roots: vec![root.clone()],
+            },
+            move || {
+                hits_cb.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .expect("start watcher");
+
+        fs::write(
+            root.join("mcp.json"),
+            r#"{"mcpServers":{"foo":{"command":"uvx"}}}"#,
+        )
+        .expect("rewrite mcp");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if hits.load(Ordering::SeqCst) >= 1 {
+                return;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        panic!("mcp.json change did not fire within 3s");
+    }
 
     #[test]
     fn debounced_callback_fires_on_agent_create() {
