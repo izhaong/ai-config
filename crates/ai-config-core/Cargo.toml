@@ -1,0 +1,24 @@
+[package]
+name = "ai-config-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ai-config 业务逻辑核心:model / source / platform / link / template / secrets / sync / error"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+camino.workspace = true
+walkdir.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+proptest.workspace = true
+dirs = "5"

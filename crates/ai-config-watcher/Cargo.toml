@@ -1,0 +1,18 @@
+[package]
+name = "ai-config-watcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ai-config 文件监听:4 目录(skills/ rules/ mcp/servers/ agents/),notify + debouncer-mini 200ms"
+
+[dependencies]
+notify.workspace = true
+notify-debouncer-mini.workspace = true
+tokio = { workspace = true, features = ["sync", "macros", "rt"] }
+serde.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+camino.workspace = true

@@ -1,0 +1,5 @@
+[toolchain]
+# 锁 stable;与 plan §2.2.1 "rust-version = 1.78" 兼容,本机实测 1.92
+channel = "stable"
+components = ["rustfmt", "clippy", "rust-src"]
+profile = "minimal"

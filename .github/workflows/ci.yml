@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: |
+          cargo clippy -p ai-config-core -p ai-config-cli -p ai-config-daemon             -p ai-config-bus -p ai-config-watcher -p ai-config-store             -- -D warnings
+      - name: cargo test
+        run: cargo test -p ai-config-core -p ai-config-cli -p ai-config-store

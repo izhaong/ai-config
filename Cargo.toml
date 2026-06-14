@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+# Phase 3 启用 apps/ai-config-gui
+# 升 Tauri 2.5 latest 解决 tauri-utils 2.9 vs tauri-build 2.0 上游冲突
+members = [
+    "crates/ai-config-core",
+    "crates/ai-config-cli",
+    "crates/ai-config-daemon",
+    "crates/ai-config-bus",
+    "crates/ai-config-watcher",
+    "crates/ai-config-store",
+    "apps/ai-config-gui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+license = "MIT"
+repository = "https://github.com/izhaong/ai-config"
+
+[workspace.dependencies]
+# 异步
+tokio = { version = "1.40", features = ["rt-multi-thread", "fs", "sync", "macros", "time"] }
+# 序列化 / 配置
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+# 错误
+thiserror = "1"
+anyhow = "1"
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# CLI
+clap = { version = "4.5", features = ["derive", "cargo", "wrap_help"] }
+# FS / 路径
+camino = { version = "1.1", features = ["serde1"] }
+walkdir = "2.5"
+# 通知（FS watch）
+notify = "6.1"
+notify-debouncer-mini = "0.4"
+# SQLite
+rusqlite = { version = "0.31", features = ["bundled"] }
+# Tauri 2.5 latest(Phase 3 启用 GUI;避免 tauri 2.0 + tauri-utils 2.9 上游冲突)
+tauri = { version = "2.5", features = [] }
+tauri-build = { version = "2.5", features = [] }
+tauri-plugin-shell = "2.0"
+# 时间
+chrono = { version = "0.4", features = ["serde"] }
+
+# 仅测试
+tempfile = "3"
+proptest = "1.4"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

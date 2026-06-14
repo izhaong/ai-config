@@ -1,0 +1,15 @@
+[package]
+name = "ai-config-gui-bin"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri 2 binary entry — calls into ai_config_gui_lib::run"
+
+[[bin]]
+name = "ai-config-gui"
+path = "src/main.rs"
+
+[dependencies]
+ai-config-gui = { path = ".." }
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }

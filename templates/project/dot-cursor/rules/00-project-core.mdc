@@ -1,0 +1,36 @@
+---
+description: {{PROJECT_NAME}} 项目核心约束（Issue/分支/Plan/敏感信息摘要）
+alwaysApply: true
+---
+
+# {{PROJECT_NAME}} 项目核心（`.cursor/rules/00-project-core.mdc`）
+
+本文件为本项目 **`alwaysApply`** 入口。全局编码与提交规范见 **`{{AI_CONFIG_REL}}/rules/`**（勿在此重复全文）。
+
+## 仓库事实（请按项目修改）
+
+- **项目名**：{{PROJECT_NAME}}
+- **本地路径**：`<填写本机路径>`
+- **远程**：`<填写 git remote URL>`
+- **集成线**：`develop`（或团队约定分支）
+- **发布线**：`main`（若适用）
+
+## Git / PR（摘要）
+
+1. 非平凡改动：先 Issue（或等价工作项），再从集成线拉 `feat/*` / `fix/*` 分支。
+2. 小步提交：中文 Conventional Commits（`{{AI_CONFIG_REL}}/rules/git-commit-conventions.mdc`）。
+3. 完成后 push 并开 PR；合并后本地 `develop` + `pull --ff-only`。
+4. 禁止在集成线/发布线上直接堆业务提交。
+
+## Plan
+
+- 非平凡功能：先用 Cursor Plan，落盘 **`.cursor/plans/<主题>.plan.md`**（勿仅以 `~/.cursor/plans/` 为唯一副本）。
+- 完成状态须可验证；未验证不得标 `completed`。
+
+## 文档同步
+
+代码行为或对外契约变化时，在同一 PR 内更新 `README` / `docs/` / `CHANGELOG`（按本项目约定）。
+
+## 敏感信息
+
+不输出、不提交真实密码、Token、私钥；配置示例用占位符。

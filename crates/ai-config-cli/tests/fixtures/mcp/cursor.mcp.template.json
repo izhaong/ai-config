@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "example-http": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <REDACTED>",
+        "Accept": "application/json, text/event-stream"
+      }
+    },
+    "example-stdio": {
+      "command": "npx",
+      "args": ["-y", "example-mcp-server@latest"]
+    },
+    "example-with-secrets": {
+      "command": "uvx",
+      "args": ["mcp-server-example"],
+      "env": {
+        "API_HOST": "127.0.0.1",
+        "API_KEY": "<REDACTED>",
+        "MYSQL_HOST": "db.example.com",
+        "MYSQL_PASSWORD": "<REDACTED>"
+      }
+    }
+  }
+}

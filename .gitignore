@@ -1,0 +1,42 @@
+# Build artifacts
+target/
+**/*.rs.bk
+**/*.pdb
+
+# Tauri (Phase 3 启用)
+# apps/ai-config-gui/target/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# 守护进程运行时
+.ai-config/daemon.sock
+.ai-config/daemon.pid
+.ai-config/daemon.log
+.ai-config/*.db
+.ai-config/*.db-wal
+.ai-config/*.db-shm
+.ai-config/secrets.env
+
+# Secrets 文件模板不入仓
+# mcp/secrets.env.example 仍入仓(PRD §8 反模式:不留真实密钥入仓)
+
+# Node 残留(M0.5 已删 webui;留这里防止新 PR 误提交)
+node_modules/
+**/node_modules/
+
+# Rust 临时文件
+**/*.tmp
+
+# Tauri 2 GUI(Phase 3 W8)
+apps/ai-config-gui/dist/
+apps/ai-config-gui/node_modules/
+apps/ai-config-gui/.vite/
+apps/ai-config-gui/src-tauri/target/
+
+# Tauri 2 build artifacts(apps/ai-config-gui)
+apps/ai-config-gui/gen/

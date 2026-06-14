@@ -1,0 +1,27 @@
+[package]
+name = "ai-config-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ai-config 守护进程:监听源目录变化、自动同步、暴露事件流给 agent / GUI"
+
+[[bin]]
+name = "ai-configd"
+path = "src/main.rs"
+
+[dependencies]
+ai-config-core = { path = "../ai-config-core" }
+ai-config-bus = { path = "../ai-config-bus" }
+ai-config-watcher = { path = "../ai-config-watcher" }
+ai-config-store = { path = "../ai-config-store" }
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true

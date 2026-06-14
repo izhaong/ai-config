@@ -1,0 +1,30 @@
+[package]
+name = "ai-config-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ai-config 命令行入口:agent / 人类都用,带 --json 结构化输出"
+
+[[bin]]
+name = "ai-config"
+path = "src/main.rs"
+
+[dependencies]
+ai-config-core = { path = "../ai-config-core" }
+clap.workspace = true
+clap_complete = "4.5"
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+camino.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+assert_cmd = "2.0"
+predicates = "3.1"

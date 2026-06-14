@@ -1,0 +1,27 @@
+[package]
+name = "ai-config-gui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ai-config 图形界面:Tauri 2.5 + React 19 前端(PRD §14 Q-2 拍板 React 最新版)"
+
+[lib]
+name = "ai_config_gui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+ai-config-core = { path = "../../crates/ai-config-core" }
+ai-config-store = { path = "../../crates/ai-config-store" }
+tauri = { workspace = true, features = [] }
+tauri-plugin-shell = { workspace = true }
+camino = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
