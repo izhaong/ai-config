@@ -728,7 +728,8 @@ async fn cmd_mcp_get(
     let config = mcp_json::get_server_config(asset_root, &name)
         .map_err(|e| format!("读取 MCP server 失败: {e}"))?
         .ok_or_else(|| format!("MCP server `{name}` 找不到"))?;
-    let content = serde_json::to_string_pretty(&config).map_err(|e| format!("JSON 序列化失败: {e}"))?;
+    let content =
+        serde_json::to_string_pretty(&config).map_err(|e| format!("JSON 序列化失败: {e}"))?;
     let description = mcp_json::server_transport_summary(&config);
     let parent_path = mcp_path.to_string();
     Ok(AssetFileDetail {
@@ -1026,14 +1027,11 @@ async fn collect_watch_roots(state: &AppState) -> Result<Vec<Utf8PathBuf>, Strin
 async fn restart_asset_watcher(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let asset_roots = collect_watch_roots(state).await?;
     let handle = app.clone();
-    let watcher = start_debounced(
-        WatchRoots { asset_roots },
-        move || {
-            if let Err(e) = handle.emit("assets-changed", ()) {
-                tracing::warn!("emit assets-changed 失败: {e}");
-            }
-        },
-    )
+    let watcher = start_debounced(WatchRoots { asset_roots }, move || {
+        if let Err(e) = handle.emit("assets-changed", ()) {
+            tracing::warn!("emit assets-changed 失败: {e}");
+        }
+    })
     .map_err(|e| format!("启动文件监听失败: {e}"))?;
 
     let mut guard = state

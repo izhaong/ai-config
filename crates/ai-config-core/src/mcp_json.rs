@@ -217,10 +217,7 @@ pub fn server_transport_summary(config: &Value) -> String {
     if let Some(url) = config.get("url").and_then(|v| v.as_str()) {
         return format!("url: {url}");
     }
-    let cmd = config
-        .get("command")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let cmd = config.get("command").and_then(|v| v.as_str()).unwrap_or("");
     if cmd.is_empty() {
         return String::new();
     }

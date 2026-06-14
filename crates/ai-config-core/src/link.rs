@@ -408,17 +408,20 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> io::Result<()> {
         if ty.is_dir() {
             copy_dir_recursive(&from, &to)?;
         } else if ty.is_symlink() {
-            // 链接按链接复制(junction / symlink 重新挂),不沿 target。
             let target = fs::read_link(&from)?;
-            std::os::unix::fs::symlink(&target, &to).or_else(|_| {
-                #[cfg(windows)]
-                {
-                    if ty.is_dir() {
-                        return std::os::windows::fs::symlink_dir(&target, &to);
-                    }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&target, &to)?;
+            }
+            #[cfg(windows)]
+            {
+                let meta = fs::metadata(&from)?;
+                if meta.is_dir() {
+                    std::os::windows::fs::symlink_dir(&target, &to)?;
+                } else {
+                    std::os::windows::fs::symlink_file(&target, &to)?;
                 }
-                std::os::unix::fs::symlink(&target, &to)
-            })?;
+            }
         } else {
             fs::copy(&from, &to)?;
         }

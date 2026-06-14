@@ -15,6 +15,7 @@
 //! connect 失败时返回部分失败(退出码 3),并把原因放在 stderr 提示。
 
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
@@ -54,8 +55,16 @@ pub fn run(action: DaemonCmd, mode: OutputMode) -> ExitCode {
 
 // ─── 路径与目录 ──────────────────────────────────────────────────────────
 
-/// XDG 风格配置目录:`~/.config/ai-config`。
+/// XDG 风格配置目录:`~/.config/ai-config`(Windows:`%APPDATA%\\ai-config`)。
 fn config_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            if !appdata.trim().is_empty() {
+                return PathBuf::from(appdata).join("ai-config");
+            }
+        }
+    }
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         if !xdg.trim().is_empty() {
             return PathBuf::from(xdg).join("ai-config");
@@ -184,9 +193,12 @@ fn start(mode: OutputMode) -> ExitCode {
     let child = match log {
         Ok(f) => {
             // `Stdio` 不是 Copy,所以用 `try_clone` 拿一份给 stderr
-            let f_for_stderr = f
-                .try_clone()
-                .unwrap_or_else(|_| std::fs::File::create("/dev/null").expect("open /dev/null"));
+            let f_for_stderr = f.try_clone().unwrap_or_else(|_| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(null_device())
+                    .expect("open null device")
+            });
             Command::new(&exe)
                 .stdout(Stdio::from(f))
                 .stderr(Stdio::from(f_for_stderr))
@@ -387,6 +399,26 @@ fn logs(mode: OutputMode) -> ExitCode {
 
 /// `daemon events-follow` — 连 UDS 订阅 BusEvent,`--json` 直出原始 JSON。
 fn events_follow(mode: OutputMode, json: bool) -> ExitCode {
+    #[cfg(windows)]
+    {
+        let _ = json;
+        emit_error_envelope(
+            mode,
+            exit_code::PARTIAL_FAILURE,
+            "daemon events-follow is not supported on Windows yet",
+            Some("UDS-based daemon IPC is Unix-only in the current Phase 0 placeholder"),
+        );
+        return ExitCode::from(exit_code::PARTIAL_FAILURE);
+    }
+
+    #[cfg(unix)]
+    {
+        events_follow_unix(mode, json)
+    }
+}
+
+#[cfg(unix)]
+fn events_follow_unix(mode: OutputMode, json: bool) -> ExitCode {
     let pid = match read_pid() {
         Some(p) if pid_alive(p) => p,
         _ => {
@@ -473,6 +505,17 @@ fn events_follow(mode: OutputMode, json: bool) -> ExitCode {
         println!("{out_line}");
     }
     ExitCode::SUCCESS
+}
+
+fn null_device() -> &'static str {
+    #[cfg(unix)]
+    {
+        "/dev/null"
+    }
+    #[cfg(windows)]
+    {
+        "NUL"
+    }
 }
 
 // ─── 工具 ───────────────────────────────────────────────────────────────

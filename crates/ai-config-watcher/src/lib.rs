@@ -38,11 +38,9 @@ pub fn start_debounced(
     on_change: impl Fn() + Send + Sync + 'static,
 ) -> Result<WatcherHandle, WatcherError> {
     let callback = Arc::new(on_change);
-    let mut debouncer = new_debouncer(Duration::from_millis(DEBOUNCE_MS), move |res| {
-        match res {
-            Ok(_events) => callback(),
-            Err(e) => tracing::warn!("watcher debounce 错误: {e}"),
-        }
+    let mut debouncer = new_debouncer(Duration::from_millis(DEBOUNCE_MS), move |res| match res {
+        Ok(_events) => callback(),
+        Err(e) => tracing::warn!("watcher debounce 错误: {e}"),
     })
     .map_err(|e| WatcherError::Debouncer(e.to_string()))?;
 
