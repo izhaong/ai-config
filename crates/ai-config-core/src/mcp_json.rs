@@ -269,7 +269,12 @@ pub fn mcp_server_sync_state_for_platform(
     server_name: &str,
     plat: PlatformId,
 ) -> McpSyncState {
-    mcp_server_sync_state_for_platform_at(asset_root, server_name, plat, &crate::paths::global_deploy_base())
+    mcp_server_sync_state_for_platform_at(
+        asset_root,
+        server_name,
+        plat,
+        &crate::paths::global_deploy_base(),
+    )
 }
 
 /// 指定下发根目录的 MCP 同步状态(项目作用域传仓库根)。

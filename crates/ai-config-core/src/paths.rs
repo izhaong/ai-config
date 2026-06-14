@@ -51,7 +51,11 @@ pub fn is_ai_config_repo(p: &Utf8Path) -> bool {
 /// - 用户直接选 `.ai-config/` → 仓库根 = 父目录
 /// - 历史数据:路径本身已是资产根(含 `skills/`) → 仓库根与资产根相同
 pub fn resolve_project_roots(stored: &Utf8Path) -> (Utf8PathBuf, Utf8PathBuf) {
-    if stored.file_name().map(|n| n == USER_ASSET_DIR_NAME).unwrap_or(false) {
+    if stored
+        .file_name()
+        .map(|n| n == USER_ASSET_DIR_NAME)
+        .unwrap_or(false)
+    {
         let repo = stored
             .parent()
             .map(|p| p.to_path_buf())
@@ -382,6 +386,9 @@ mod tests {
         fs::create_dir_all(asset.join("skills")).unwrap();
         let (r, a) = resolve_project_roots(&asset);
         assert_eq!(a, asset);
-        assert_eq!(r, Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap());
+        assert_eq!(
+            r,
+            Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap()
+        );
     }
 }

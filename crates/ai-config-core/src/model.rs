@@ -218,6 +218,8 @@ pub enum SyncAction {
         item_id: u64,
         platform: PlatformId,
         dest: Utf8PathBuf,
+        /// 资产源路径(skill 为 `SKILL.md`,rule/agent 为源文件或目录)
+        src: Utf8PathBuf,
     },
     /// 链接已存在,无需变更
     Linked { item_id: u64, platform: PlatformId },
@@ -343,6 +345,7 @@ mod tests {
             item_id: 1,
             platform: PlatformId::Cursor,
             dest: dest.clone(),
+            src: Utf8PathBuf::from("skills/foo/SKILL.md"),
         };
         assert_eq!(create.platform(), PlatformId::Cursor);
 
@@ -379,6 +382,7 @@ mod tests {
             item_id: 1,
             platform: PlatformId::Cursor,
             dest: dest.clone(),
+            src: Utf8PathBuf::from("skills/foo/SKILL.md"),
         };
         assert!(create.is_create());
         assert!(!create.is_retract());
@@ -426,6 +430,7 @@ mod tests {
             item_id: 42,
             platform: PlatformId::Cursor,
             dest: Utf8PathBuf::from(".cursor/rules/git-flow-and-release.mdc"),
+            src: Utf8PathBuf::from("rules/git-flow-and-release.mdc"),
         };
         let json = serde_json::to_string(&original).expect("serialize");
         // 验证 tag 形式 + 字段命名
