@@ -1,13 +1,14 @@
-//! `ai-config skill ...` / `ai-config rule ...` 共享子命令(PRD §5.1 必做)。
+//! `ai-config skill ...` / `rule ...` / `agent ...` 共享子命令(PRD §5.1 必做)。
 //!
 //! 维度划分(与 §2 / §11.2 一致):
 //! - **skill**:`skills/<name>/SKILL.md`(目录)
-//! - **rule**:`rules/<name>.mdc` / `.md`(单文件,无 scope,单一源)
+//! - **rule**:`rules/<name>.mdc` / `.md`(单文件)
+//! - **agent**:`agents/<name>/` 或 `agents/<name>.{md,yaml,json}`
 //!
 //! 子命令语义:
 //! - `list`:`<root>/<kind>s/` 下扫到的 entry 列表
 //! - `show <name>`:打印 `name` + 源路径 + 描述(若有 frontmatter)
-//! - `reveal <name>`:调 `open` 打开 IDE skills / rules 目录(人工查看用)
+//! - `reveal <name>`:调 `open` 打开源目录或文件所在目录
 
 use std::process::ExitCode;
 
@@ -23,6 +24,7 @@ use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 pub enum AssetKind {
     Skill,
     Rule,
+    Agent,
 }
 
 impl AssetKind {
@@ -30,6 +32,7 @@ impl AssetKind {
         match self {
             AssetKind::Skill => "skill",
             AssetKind::Rule => "rule",
+            AssetKind::Agent => "agent",
         }
     }
 }
@@ -90,6 +93,7 @@ fn run_show(mode: OutputMode, root: &Utf8Path, kind: AssetKind, name: &str) -> E
         emit_error_envelope(mode, exit_code::PARTIAL_FAILURE, &msg, Some(&hint));
         return ExitCode::from(exit_code::PARTIAL_FAILURE);
     };
+    let read_path = content_path_for_show(kind, &Utf8PathBuf::from(&e.source_path));
     if mode.is_json() {
         emit_json(
             mode,
@@ -97,7 +101,7 @@ fn run_show(mode: OutputMode, root: &Utf8Path, kind: AssetKind, name: &str) -> E
                 "name": e.name,
                 "source_path": e.source_path,
                 "description": e.description,
-                "head": read_head(&Utf8PathBuf::from(&e.source_path), 30),
+                "head": read_head(&read_path, 30),
             }),
         );
     } else {
@@ -106,7 +110,7 @@ fn run_show(mode: OutputMode, root: &Utf8Path, kind: AssetKind, name: &str) -> E
         if let Some(d) = &e.description {
             println!("description: {d}");
         }
-        let body = read_head(&Utf8PathBuf::from(&e.source_path), 30);
+        let body = read_head(&read_path, 30);
         if !body.is_empty() {
             println!("---");
             println!("{body}");
@@ -166,6 +170,7 @@ fn scan_assets(root: &Utf8Path, kind: AssetKind) -> Result<Vec<AssetEntry>, Core
     let raw: Vec<Utf8PathBuf> = match kind {
         AssetKind::Skill => scan.skills,
         AssetKind::Rule => scan.rules,
+        AssetKind::Agent => scan.agents,
     };
     let mut out = Vec::with_capacity(raw.len());
     for path in raw {
@@ -176,8 +181,16 @@ fn scan_assets(root: &Utf8Path, kind: AssetKind) -> Result<Vec<AssetEntry>, Core
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
             AssetKind::Rule => path.file_stem().map(|s| s.to_string()).unwrap_or_default(),
+            AssetKind::Agent => {
+                if path.is_dir() {
+                    path.file_name().map(|s| s.to_string()).unwrap_or_default()
+                } else {
+                    path.file_stem().map(|s| s.to_string()).unwrap_or_default()
+                }
+            }
         };
-        let desc = parse_frontmatter_description(&path);
+        let desc_path = content_path_for_show(kind, &path);
+        let desc = parse_frontmatter_description(&desc_path);
         out.push(AssetEntry {
             name,
             source_path: path.as_str().to_string(),
@@ -196,8 +209,31 @@ fn find_by_name(
     Ok(entries.into_iter().find(|e| e.name == name))
 }
 
-/// 极简 frontmatter 解析:读 SKILL.md / .mdc 的开头,识别
-/// `---\n...description: ...\n---\n`,只取 `description` 一行。
+/// Agent 目录优先 `AGENT.md`,否则首个 `.md`;其它 kind 用源路径本身。
+fn content_path_for_show(kind: AssetKind, src: &Utf8Path) -> Utf8PathBuf {
+    if kind != AssetKind::Agent {
+        return src.to_path_buf();
+    }
+    if !src.is_dir() {
+        return src.to_path_buf();
+    }
+    let agent_md = src.join("AGENT.md");
+    if agent_md.is_file() {
+        return agent_md;
+    }
+    if let Ok(entries) = std::fs::read_dir(src.as_std_path()) {
+        for entry in entries.flatten() {
+            if let Ok(path) = Utf8PathBuf::from_path_buf(entry.path()) {
+                if path.extension().map(|e| e == "md").unwrap_or(false) {
+                    return path;
+                }
+            }
+        }
+    }
+    agent_md
+}
+
+/// 极简 frontmatter 解析:读 SKILL.md / .mdc / agent 正文,识别 `description:`。
 fn parse_frontmatter_description(path: &Utf8Path) -> Option<String> {
     let content = std::fs::read_to_string(path.as_std_path()).ok()?;
     if !content.starts_with("---") {

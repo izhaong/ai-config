@@ -13,12 +13,12 @@
 
 ## Supported IDEs
 
-| IDE             | Typical paths (after `install`)                    |
-| --------------- | -------------------------------------------------- |
-| **Cursor**      | `~/.cursor/skills/`, `~/.cursor/mcp.json`          |
-| **Codex**       | `~/.codex/skills/`                                 |
-| **Claude Code** | `~/.claude/skills/`, rules via project symlinks    |
-| **Hermes**      | `~/.hermes/skills/` (optional `HERMES_SKILLS_DIR`) |
+| IDE             | Typical paths (after `install`)                                         |
+| --------------- | ----------------------------------------------------------------------- |
+| **Cursor**      | `~/.cursor/skills/`, `~/.cursor/agents/`, `~/.cursor/mcp.json`          |
+| **Codex**       | `~/.codex/skills/`, `~/.codex/subagents/`                               |
+| **Claude Code** | `~/.claude/skills/`, `~/.claude/subagents/`, rules via symlinks         |
+| **Hermes**      | `~/.hermes/skills/`, `~/.hermes/agents/` (optional `HERMES_SKILLS_DIR`) |
 
 ---
 
@@ -85,19 +85,20 @@ Put real API keys in `~/.config/ai-config/secrets.env` (see `templates/project` 
 
 ## CLI commands
 
-| Command                  | Purpose                                               |
-| ------------------------ | ----------------------------------------------------- |
-| `install`                | One-shot setup: dirs, symlinks, optional migration    |
-| `uninstall`              | Remove managed links; backup MCP files                |
-| `sync`                   | Push skills/rules/MCP to all configured platforms     |
-| `status`                 | Show last sync state                                  |
-| `list` / `show`          | List or inspect managed assets                        |
-| `doctor`                 | Health check (`--json` for agents)                    |
-| `secrets`                | Manage `secrets.env` helpers                          |
-| `skill` / `rule` / `mcp` | Per-asset operations (incl. `mcp deploy` / `retract`) |
-| `daemon`                 | Background watcher (when enabled)                     |
-| `gui`                    | Launch Tauri UI                                       |
-| `completion`             | Shell completions                                     |
+| Command                    | Purpose                                            |
+| -------------------------- | -------------------------------------------------- |
+| `install`                  | One-shot setup: dirs, symlinks, optional migration |
+| `uninstall`                | Remove managed links; backup MCP files             |
+| `sync`                     | Push skills/rules/MCP to all configured platforms  |
+| `status`                   | Show last sync state                               |
+| `list` / `show`            | List or inspect managed assets                     |
+| `doctor`                   | Health check (`--json` for agents)                 |
+| `secrets`                  | Manage `secrets.env` helpers                       |
+| `skill` / `rule` / `agent` | Per-asset list / show / reveal                     |
+| `mcp`                      | MCP server ops (incl. `deploy` / `retract`)        |
+| `daemon`                   | Background watcher (when enabled)                  |
+| `gui`                      | Launch Tauri UI                                    |
+| `completion`               | Shell completions                                  |
 
 Global flags: `--json`, `--quiet`, `--root <PATH>` (or `AI_CONFIG_ROOT`).
 

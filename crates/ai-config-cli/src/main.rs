@@ -73,6 +73,11 @@ enum Cmd {
         #[command(subcommand)]
         action: AssetCmd,
     },
+    /// agent 维度(目录或单文件 `.md` / `.yaml` / `.json`)
+    Agent {
+        #[command(subcommand)]
+        action: AssetCmd,
+    },
     /// mcp 维度(逐项 + 单条 deploy/retract)
     Mcp {
         #[command(subcommand)]
@@ -223,6 +228,14 @@ fn main() -> ExitCode {
                 AssetCmd::Reveal { name } => asset::AssetCmd::Reveal { name },
             };
             mapped.run(mode, &default_root, asset::AssetKind::Rule)
+        }
+        Cmd::Agent { action } => {
+            let mapped = match action {
+                AssetCmd::List => asset::AssetCmd::List,
+                AssetCmd::Show { name } => asset::AssetCmd::Show { name },
+                AssetCmd::Reveal { name } => asset::AssetCmd::Reveal { name },
+            };
+            mapped.run(mode, &default_root, asset::AssetKind::Agent)
         }
         Cmd::Mcp { action } => {
             let mapped = match action {

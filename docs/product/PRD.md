@@ -1,6 +1,6 @@
 # ai-config 桌面端 — 产品需求文档 (PRD)
 
-> 状态：**Approved v0.3** · 2026-06-12（开放问题 1–8 已拍板）
+> 状态：**Approved v0.4** · 2026-06-14（同步 Phase 3 W9 实现与对话需求）
 > 范围：本产品本身
 > 同级：`../../README.md` ·`../../AGENTS.md` ·`../../HERMES.md` ·`../../manifests/plugins.md`
 > 技术方案：`.claude/plans/ai-config/20260612_ai-config_rust-desktop.plan.md`
@@ -13,18 +13,34 @@
 
 - **写一套**：本工具的资产 = 4 种 — 全局在 `global-config/{skills,rules,mcp,agents}/`；项目覆盖在 `<project>/.ai-config/` 下同结构
 - **同步到多个平台**：Cursor / Codex / Claude Code / Hermes
-- **分层**：全局（user-global，本仓库内容）+ 项目（per-project，项目下 `.ai-config/` 内容覆盖 / 附加）
+- **分层**：全局（user-global，`~/.ai-config/`）+ 项目（per-project，`<repo>/.ai-config/` 与全局**同目录结构**）
+
+### 1.1 资产根目录同构（全局 ≡ 项目）
+
+项目拥有**独立的** skills / rules / mcp / agents，物理布局与 `~/.ai-config/` **完全一致**，仅根路径不同：
+
+```
+~/.ai-config/                    <repo>/.ai-config/
+├── skills/<name>/SKILL.md       ├── skills/<name>/SKILL.md
+├── rules/*.mdc                  ├── rules/*.mdc
+├── mcp.json                     ├── mcp.json
+└── agents/                      └── agents/
+```
+
+- 选中 **user-global**：读 / 写 `~/.ai-config/` 下四类资产
+- 选中 **已注册项目**：读 / 写 `<repo>/.ai-config/` 下四类资产（与全局 merge 后展示；编辑落盘在项目树）
+- 注册项目时若 `<repo>/.ai-config/` 不存在，工具**自动创建**上述标准子目录与空 `mcp.json`
 
 ---
 
 ## 2. 资产模型
 
-| 资产       | 物理形态                                         | 一份"项"是什么                                                    | 平台消费形式                             |
-| ---------- | ------------------------------------------------ | ----------------------------------------------------------------- | ---------------------------------------- |
-| **skills** | 目录（`SKILL.md` + 可选 scripts/assets/agents/） | 一个 skill = 一个目录                                             | 软链 `~/.X/skills/<name>`                |
-| **rules**  | 单文件                                           | 一条 rule = 一个 `.mdc` / `.md`                                   | 软链到平台 rules 目录                    |
-| **mcp**    | 列表（一项一记录）                               | 一条 mcp server = 一条记录（name + command/args/env/url/headers） | 渲染时合并成 `~/.X/mcp.json`（一份输出） |
-| **agents** | 目录或单文件（按平台约定）                       | 一个 agent / subagent = 一个文件或目录                            | 软链到平台 agents 目录                   |
+| 资产       | 物理形态                                         | 一份"项"是什么                                                    | 平台消费形式（见 §3.4 作用域）                                 |
+| ---------- | ------------------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------- |
+| **skills** | 目录（`SKILL.md` + 可选 scripts/assets/agents/） | 一个 skill = 一个目录                                             | 软链到平台 `skills/<name>/`                                    |
+| **rules**  | 单文件                                           | 一条 rule = 一个 `.mdc` / `.md`                                   | 软链到平台 rules 目录                                          |
+| **mcp**    | 列表（一项一记录）                               | 一条 mcp server = 一条记录（name + command/args/env/url/headers） | 合并写入平台 `mcp.json`（一份输出）                            |
+| **agents** | **目录或单文件**（按源形态）                     | 一个 agent / subagent = 一个目录或一个文件                        | 目录链目录、单文件链单文件；软链到平台 agents / subagents 目录 |
 
 ### 2.1 MCP 逐项的关键设计
 
@@ -45,6 +61,10 @@
 | Hermes      | `agents`    | 同上               |
 
 用户**只**关心"我有几个 agent，每个 agent 叫什么、做什么、适用哪些平台"。平台目录叫什么、放哪、文件格式，**适配器**负责。
+
+- **目录型 agent**：源为目录时，下发链整个目录到 `<deploy_base>/.X/agents/<name>/`（或 subagents）
+- **单文件 agent**：源为 `.md` / `.yaml` 等时，保留原扩展名软链到平台 agents 目录
+- **列表 description**：agent / rule 与 skill 一致，优先读 frontmatter `description`，回退 H1 标题
 
 ---
 
@@ -75,7 +95,7 @@
        （同 name = 覆盖；不同 name = 附加）
                     ↓
 ┌──────────────────────────────────────────────┐
-│  4 个平台目标                                  │
+│  4 个平台目标（作用域决定根，见 §3.4）          │
 │  Cursor   /   Codex   /   Claude   /   Hermes │
 └──────────────────────────────────────────────┘
 ```
@@ -87,6 +107,24 @@
 - **MCP 同 name 覆盖** — 项目下 `mcp/servers/my-srv.json` 覆盖全局同名条目
 - **平台级开关** — 每个条目可独立勾选"同步到哪些平台"（`platforms: [cursor, claude, codex, hermes]`）
 - **幂等** — 重复跑同步结果一致
+- **父目录自愈** — 首次 deploy 时若平台目标父目录不存在（如 `~/.cursor/skills/` 或 `<repo>/.cursor/skills/`），工具自动创建，**不**因父目录缺失导致软链 / `mcp.json` 写入失败
+- **运行期刷新（GUI）** — 监听 `~/.ai-config/` 与各已注册项目的 `<repo>/.ai-config/`；debounce 后自动刷新资产列表与 per-platform 链接状态（无需手动点刷新）
+
+### 3.4 作用域与下发目标（产品契约）
+
+选中 **user-global** 与 **已注册项目** 时，读写与下发**逻辑相同**，仅根目录不同：
+
+| 作用域          | 资产扫描根（读 / 编辑 / 合并） | 平台下发根（deploy / retract / 链接状态） |
+| --------------- | ------------------------------ | ----------------------------------------- |
+| **user-global** | `~/.ai-config/`                | `$HOME` → `~/.cursor/`、`~/.claude/` 等   |
+| **已注册项目**  | `<repo>/.ai-config/`           | `<repo>/` → `<repo>/.cursor/` 等          |
+
+- `projects.root_path` 存**仓库根**；注册时可填仓库根或 `.ai-config/`，入库前规范化为仓库根
+- **资产根同构**：`<repo>/.ai-config/` 目录树与 `~/.ai-config/` 相同（`skills/`、`rules/`、`agents/`、`mcp.json`）
+- 列表（GUI）：选中项目时**仅**展示 `<repo>/.ai-config/` 内条目；user-global 仅展示 `~/.ai-config/`（列表不混入另一侧）
+- 同步计划（`compute_for_project`）：仍为 `scan_with_override` 合并（同 name 覆盖，供批量 sync）
+- 项目作用域 deploy **不得**写入 `$HOME` 平台目录；不得把仓库根当资产根直接扫 `skills/`（须经 `.ai-config/`）
+- **Hermes（仅全局）**：`HERMES_SKILLS_DIR` 可覆盖全局 skills 路径；项目作用域固定 `<repo>/.hermes/skills`
 
 ### 3.3 持久化
 
@@ -142,8 +180,9 @@
 1. 某项目需要 `skill-foo` 走项目内的版本，**不**影响全局
 2. 在 `<project>/.ai-config/skills/skill-foo/` 创建项目版本
 3. 工具自动：项目下 `skill-foo` 指向项目源，覆盖全局同名
+4. GUI 选中该项目后单条下发写入 `<project>/.cursor/skills/skill-foo` 等（**不**写 `~/.cursor/`）
 
-**验收**：切到该项目工作区，IDE 看到的是项目版本；切到其他项目，看到的是全局版本。
+**验收**：在该项目工作区 IDE 见项目版；其他项目见全局版。项目作用域 deploy 后软链仅出现在项目仓 `.cursor` / `.claude` 等平台目录。
 
 #### E — agent 排查
 
@@ -167,19 +206,22 @@
 
 ### 5.1 必做（MVP / GA）
 
-| 模块          | 功能                                                                         |
-| ------------- | ---------------------------------------------------------------------------- |
-| **CLI**       | `install` / `uninstall` / `sync` / `status` / `doctor` / `list` / `show`     |
-| **CLI**       | `mcp` 子命令组（`add` / `remove` / `enable` / `disable` / `list`）— 逐项操作 |
-| **CLI**       | `secrets` 子命令组（`bootstrap` / `set` / `list` / `unset`）                 |
-| **守护进程**  | `watch` 子命令 — 监听源目录变化、自动同步、暴露事件                          |
-| **事件流**    | `events --follow` — agent 实时订阅                                           |
-| **Tauri GUI** | 项目注册 / 取消注册                                                          |
-| **Tauri GUI** | 浏览 + 编辑（skills / rules / agents）+ diff 预览                            |
-| **Tauri GUI** | MCP 表格化编辑（每行一条 server）— **不**是 JSON 编辑器                      |
-| **Tauri GUI** | 同步状态（per-item × per-platform 徽标）                                     |
-| **Tauri GUI** | secrets 列表（**不**显示明文值）                                             |
-| **跨平台**    | macOS 14+ 完整 / Linux (Ubuntu 22.04+) 完整 / Windows 11 best-effort         |
+| 模块          | 功能                                                                             |
+| ------------- | -------------------------------------------------------------------------------- |
+| **CLI**       | `install` / `uninstall` / `sync` / `status` / `doctor` / `list` / `show`         |
+| **CLI**       | `mcp` 子命令组（`add` / `remove` / `enable` / `disable` / `list`）— 逐项操作     |
+| **CLI**       | `agent` 子命令组（`list` / `show` / `reveal`）— 浏览 agents 源与路径             |
+| **CLI**       | `secrets` 子命令组（`bootstrap` / `set` / `list` / `unset`）                     |
+| **守护进程**  | `watch` 子命令 — 监听源目录变化、自动同步、暴露事件                              |
+| **事件流**    | `events --follow` — agent 实时订阅                                               |
+| **Tauri GUI** | 项目注册 / 取消注册（**应用内模态框**；禁止 `window.prompt` / `window.confirm`） |
+| **Tauri GUI** | 浏览 + 编辑（skills / rules / agents）+ 资产详情抽屉（关闭钮固定右上角）         |
+| **Tauri GUI** | 单条 deploy / retract（per-item × per-platform，尊重 §3.4 作用域）               |
+| **Tauri GUI** | 运行期监听资产目录变更并自动刷新列表与链接状态                                   |
+| **Tauri GUI** | MCP 表格化编辑（每行一条 server）— **不**是 JSON 编辑器                          |
+| **Tauri GUI** | 同步状态（per-item × per-platform 徽标）                                         |
+| **Tauri GUI** | secrets 列表（**不**显示明文值）                                                 |
+| **跨平台**    | macOS 14+ 完整 / Linux (Ubuntu 22.04+) 完整 / Windows 11 best-effort             |
 
 ### 5.2 显式不做（非目标）
 
@@ -218,8 +260,12 @@
 ### 6.2 GUI（人类视角）
 
 - **三栏**：左 = 项目列表（含 "user-global"） / 中 = 资产类型（Skills / Rules / MCP / Agents） / 右 = 内容
+- **项目注册**：点击「+ 注册项目」打开**应用内表单**（项目名 + 仓库根路径）；提示文案说明资产在 `<repo>/.ai-config/`、下发在 `<repo>/.cursor` 等。**不**使用 WebView 原生 `prompt` / `confirm`（Tauri 下不可靠）
+- **项目移除**：点击项目旁 `×` 弹出**确认模态框**后再调用 `projects.remove`
+- **Tauri 命令参数**：前端 `invoke` 使用 camelCase（如 `rootPath`），与 Rust 命令签名映射由 Tauri 处理
 - **顶部**：项目名 + git 分支 + ahead/behind 徽标
-- **每条卡片右侧**：4 个平台的状态指示（linked / unlinked / disabled / missing）+ 单条 sync 按钮
+- **每条卡片右侧**：4 个平台的状态指示（linked / unlinked / broken / missing）+ 单条 deploy / retract
+- **资产详情抽屉**：关闭按钮固定于抽屉右上角；编辑 skill / rule / agent 正文
 - **MCP 编辑**：表格化（一行 = 一条 server），不暴露原始 JSON；右侧面板显示 `${VAR}` 占位符 vs `secrets.env` 实有值
 - **secrets 编辑**：列表 + `••••••` 占位；点 "Set" 才弹输入框
 - **底部状态栏**：`● daemon running` / `○ daemon stopped` 常显
@@ -246,10 +292,16 @@
 - **A-8** 删一条 MCP server → 4 份 `mcp.json` 都不再包含它（**不**残留）
 - **A-9** 任意 CLI 子命令 `--json` 都能解析，**不**夹杂人类文本
 - **A-10** `doctor --json` 给出 "软链接断在哪 / secrets 缺哪个" 的结构化诊断
-- **A-11** 项目下 `.ai-config/skills/foo/` 创建后，该项目工作区里 4 个 IDE 看到的是项目版；其他项目看到的是全局版
+- **A-11** 项目下 `.ai-config/skills/foo/` 创建后，**在该项目作用域**下发，4 个 IDE 在工作区看到的是项目版（链接在 `<repo>/.cursor/` 等）；其他项目 / user-global 仍见全局版
 - **A-12** `secrets.env` 在所有写入路径上都是 0600
 - **A-13** GUI 全屏找不到 secrets 明文值
 - **A-14** SQLite DB 中没有任何字段保存 secrets 明文值
+- **A-15** GUI 选中已注册项目时，资产列表**仅**来自 `<repo>/.ai-config/`（空目录则空列表，不显示全局 `~/.ai-config/` 条目）
+- **A-16** 项目作用域单条 deploy 后，软链 / MCP 仅出现在 `<repo>/.cursor`、`<repo>/.claude` 等平台目录，**不**出现在 `~/.cursor` 等用户主目录
+- **A-17** GUI 运行期间修改 `~/.ai-config/` 或已注册项目 `<repo>/.ai-config/`，资产列表与链接状态在约 2s 内自动刷新（文件监听 + debounce）
+- **A-18** 平台目标父目录首次不存在时，deploy 自动创建父目录并成功完成，**不**报 `No such file or directory`
+- **A-19** Tauri GUI 注册 / 移除项目使用应用内模态框，**不**依赖 `window.prompt` / `window.confirm`
+- **A-21** 注册项目后 `<repo>/.ai-config/` 自动具备与 `~/.ai-config/` 相同的 `skills/`、`rules/`、`agents/` 子目录及 `mcp.json` 占位
 
 ---
 
@@ -354,18 +406,18 @@ A：看你 `.gitignore`。工具**不**自动 gitignore；项目仓 owner 自己
 
 ### 12.2 关键产品决策
 
-| 决策         | 选择                             | 理由                                                             |
-| ------------ | -------------------------------- | ---------------------------------------------------------------- |
-| 资产 4 种    | skills / rules / mcp / agents    | 覆盖 IDE 实际消费的 4 类内容                                     |
-| MCP 形态     | **逐项**，**不**整文件           | 一条 server 一条 diff，缺变量明确告警                            |
-| 配置分层     | 全局 + 项目两层                  | 项目能覆盖全局，且不污染全局                                     |
-| 平台差异封装 | 适配器模式                       | agents 叫法 / 目录都不同，封装在适配器里                         |
-| 事实源       | 文件系统（资产）+ SQLite（状态） | 资产进 git 协作，状态做关系查询                                  |
-| IPC          | Unix socket                      | macOS/Linux 都有；Tauri IPC 走前端；agent 走 socket              |
-| GUI 打包     | Tauri 2 + React 18               | 二进制小、TS 生态熟、跨平台;React 18 与 plan §2.1 / Phase 3 一致 |
-| 模板引擎     | minijinja                        | Jinja2 兼容，零学习成本                                          |
-| MCP 渲染     | 全量重写 + 原子 rename           | 简单可靠，几 KB 不在乎                                           |
-| 文件监听     | notify + debouncer-mini          | 行业标准，跨平台、debounce 内置                                  |
+| 决策         | 选择                                     | 理由                                                             |
+| ------------ | ---------------------------------------- | ---------------------------------------------------------------- |
+| 资产 4 种    | skills / rules / mcp / agents            | 覆盖 IDE 实际消费的 4 类内容                                     |
+| MCP 形态     | **逐项**，**不**整文件                   | 一条 server 一条 diff，缺变量明确告警                            |
+| 配置分层     | 全局 + 项目两层                          | 项目能覆盖全局，且不污染全局                                     |
+| 平台差异封装 | 适配器模式 + **作用域根**（`for_scope`） | 全局 `$HOME` vs 项目 `<repo>/` 共用同一套逻辑                    |
+| 事实源       | 文件系统（资产）+ SQLite（状态）         | 资产进 git 协作，状态做关系查询                                  |
+| IPC          | Unix socket                              | macOS/Linux 都有；Tauri IPC 走前端；agent 走 socket              |
+| GUI 打包     | Tauri 2 + React 18                       | 二进制小、TS 生态熟、跨平台;React 18 与 plan §2.1 / Phase 3 一致 |
+| 模板引擎     | minijinja                                | Jinja2 兼容，零学习成本                                          |
+| MCP 渲染     | 全量重写 + 原子 rename                   | 简单可靠，几 KB 不在乎                                           |
+| 文件监听     | notify + debouncer-mini                  | 行业标准，跨平台、debounce 内置                                  |
 
 ### 12.3 与外部资产的关系
 
@@ -380,13 +432,19 @@ A：看你 `.gitignore`。工具**不**自动 gitignore；项目仓 owner 自己
 
 > 时间倒序;每条引用触发它的开放问题编号。
 
-| 时间       | 决策                                                                                                                        | 触发                          |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| 2026-06-12 | **Q-1**:分发方式采用三通道(`cargo install --path` + crates.io + 预编译包),Phase 4 之后增 `brew tap`,参考 cc-switch 渠道策略 | 用户答复                      |
-| 2026-06-12 | **Q-2**:Tauri 2 前端锁定 **React 18**(覆盖 PRD 早期"Solid"推荐,与 plan §2.1 / Phase 3 对齐)                                 | 用户答复;消除 PRD ↔ plan 矛盾 |
-| 2026-06-12 | **Q-3**:secrets OS keychain **MVP 不做**,v1.1 评估                                                                          | 用户答复                      |
-| 2026-06-12 | **Q-4**:守护进程开机自启 **MVP 不做**,M6 后在 `install` 子命令里集成                                                        | 用户答复                      |
-| 2026-06-12 | **Q-5**:GUI 默认 **中文**;v1.1 补英文                                                                                       | 用户答复                      |
-| 2026-06-12 | **Q-6**:跨平台范围 **macOS 14+ / Ubuntu 22.04+ / Win11**,不支持 BSD                                                         | 用户答复(与 PRD 推荐一致)     |
-| 2026-06-12 | **Q-7**:4 平台 agents 适配器 **全部完整实现**;`agents/` 资产不分平台目录                                                    | 用户答复(与 PRD 推荐一致)     |
-| 2026-06-12 | **Q-8**:项目下同名条目 **整条覆盖**(MCP 不字段级合并)                                                                       | 用户答复(与 PRD 推荐一致)     |
+| 时间       | 决策                                                                                                                                                              | 触发                          |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| 2026-06-14 | **项目 `.ai-config` 同构**：`<repo>/.ai-config/` 与 `~/.ai-config/` 目录结构一致（skills/rules/agents/mcp.json）；注册时自动初始化                                | 对话需求                      |
+| 2026-06-14 | **项目作用域下发根**：已注册项目 deploy/retract 目标为 `<repo>/.cursor` 等，资产扫描根为 `<repo>/.ai-config/`；user-global 仍为 `~/.ai-config` → `$HOME` 平台目录 | Phase 3 W9 实现与对话需求     |
+| 2026-06-14 | **GUI 项目注册 UX**：Tauri WebView 禁用原生 `prompt`/`confirm`；改用 `RegisterProjectModal` + `ConfirmModal`                                                      | 注册按钮无响应排障            |
+| 2026-06-14 | **GUI 运行期监听**：监听全局与各项目 `.ai-config` 资产根，debounce 后刷新列表与 LinkState                                                                         | 对话需求                      |
+| 2026-06-14 | **agents**：目录型 / 单文件均支持；4 平台 deploy；CLI 增 `agent list/show/reveal`；列表 description 解析与 skill 对齐                                             | Phase 3 W9 能力完善           |
+| 2026-06-14 | **下发父目录**：`ensure_parent_dir` 在 skill/rule/agent 软链与 MCP 写入前自动创建缺失父目录                                                                       | 首次下发失败排障              |
+| 2026-06-12 | **Q-1**:分发方式采用三通道(`cargo install --path` + crates.io + 预编译包),Phase 4 之后增 `brew tap`,参考 cc-switch 渠道策略                                       | 用户答复                      |
+| 2026-06-12 | **Q-2**:Tauri 2 前端锁定 **React 18**(覆盖 PRD 早期"Solid"推荐,与 plan §2.1 / Phase 3 对齐)                                                                       | 用户答复;消除 PRD ↔ plan 矛盾 |
+| 2026-06-12 | **Q-3**:secrets OS keychain **MVP 不做**,v1.1 评估                                                                                                                | 用户答复                      |
+| 2026-06-12 | **Q-4**:守护进程开机自启 **MVP 不做**,M6 后在 `install` 子命令里集成                                                                                              | 用户答复                      |
+| 2026-06-12 | **Q-5**:GUI 默认 **中文**;v1.1 补英文                                                                                                                             | 用户答复                      |
+| 2026-06-12 | **Q-6**:跨平台范围 **macOS 14+ / Ubuntu 22.04+ / Win11**,不支持 BSD                                                                                               | 用户答复(与 PRD 推荐一致)     |
+| 2026-06-12 | **Q-7**:4 平台 agents 适配器 **全部完整实现**;`agents/` 资产不分平台目录                                                                                          | 用户答复(与 PRD 推荐一致)     |
+| 2026-06-12 | **Q-8**:项目下同名条目 **整条覆盖**(MCP 不字段级合并)                                                                                                             | 用户答复(与 PRD 推荐一致)     |

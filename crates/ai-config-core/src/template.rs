@@ -725,6 +725,7 @@ fn unmanaged_err(path: &Utf8Path, reason: &str) -> CoreError {
 /// 以外的 fs 元数据(PRD §8.1 硬约束:不擅改用户文件 → 沿用原权限)。
 pub(crate) fn atomic_write_json(dest: &Utf8Path, payload: &Value) -> Result<(), CoreError> {
     use tokio::runtime::Handle;
+    crate::paths::ensure_parent_dir(dest)?;
     let serialized = serde_json::to_string_pretty(payload).map_err(CoreError::Json)?;
 
     let tmp = dest.with_extension("json.tmp");
@@ -760,6 +761,17 @@ mod tests {
         let p = dir.join(format!("{name}.json"));
         fs::write(p.as_std_path(), body).unwrap();
         p
+    }
+
+    // ─── T0: 原子写 JSON 自动建父目录(平台 mcp.json) ───────────────
+
+    #[test]
+    fn atomic_write_json_creates_missing_parent_dir() {
+        let tmp = TempDir::new().unwrap();
+        let dest = Utf8PathBuf::from_path_buf(tmp.path().join(".cursor/mcp.json")).unwrap();
+        assert!(!dest.parent().unwrap().exists());
+        atomic_write_json(&dest, &serde_json::json!({ "mcpServers": {} })).unwrap();
+        assert!(dest.is_file());
     }
 
     // ─── T1: 解析有效 server JSON ─────────────────────────────────

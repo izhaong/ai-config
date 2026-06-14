@@ -42,6 +42,9 @@
     "items": "{{count}} 项",
     "selected": " · 已选 {{count}}",
     "processing": " (处理中…)",
+    "refresh": "刷新",
+    "refreshing": "刷新中…",
+    "refreshTitle": "重新加载当前项目的资产列表与链接状态",
     "batchDeploy": "批量下发",
     "batchRetract": "批量收回",
     "batchDelete": "批量删除",
@@ -49,8 +52,10 @@
   },
   "empty": {
     "loading": "加载中…",
-    "mcp": "暂无 MCP server，可编辑 mcp.json 或添加",
-    "assets": "暂无资产。在 <code>~/.ai-config/{{kindDir}}/</code> 下添加文件后刷新。"
+    "mcp": "暂无 MCP server。在 <code>{{assetRoot}}/mcp.json</code> 添加条目",
+    "mcpGlobal": "暂无 MCP server。在 <code>~/.ai-config/mcp.json</code> 添加条目",
+    "assets": "暂无资产。在 <code>{{assetRoot}}/{{kindDir}}/</code> 下添加文件",
+    "assetsGlobal": "暂无资产。在 <code>~/.ai-config/{{kindDir}}/</code> 下添加文件"
   },
   "drawer": {
     "loading": "加载中…",
@@ -68,7 +73,16 @@
     "deleteSourceMessage": "将永久删除 {{label}}「{{name}}」",
     "delete": "删除",
     "batchDelete": "批量删除",
-    "batchDeleteMessage": "将永久删除 {{count}} 个{{label}}源文件，并尽力收回各平台链接。"
+    "batchDeleteMessage": "将永久删除 {{count}} 个{{label}}源文件，并尽力收回各平台链接。",
+    "removeProject": "移除项目",
+    "removeProjectMessage": "确认从本工具中移除项目 `{{name}}`?"
+  },
+  "registerProject": {
+    "title": "注册项目",
+    "nameLabel": "项目名（在 store 中唯一）",
+    "rootLabel": "根目录绝对路径",
+    "rootHint": "填写仓库根目录；将自动创建 <仓库>/.ai-config/（结构与 ~/.ai-config 相同：skills、rules、agents、mcp.json）",
+    "submit": "注册"
   },
   "statusbar": {
     "doctor": "doctor: {{count}} 异常",

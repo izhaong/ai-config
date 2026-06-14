@@ -538,6 +538,48 @@ button.danger:disabled {
   gap: 8px;
 }
 
+.form-field {
+  margin-bottom: 14px;
+}
+
+.form-field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.form-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.form-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.form-field input:disabled {
+  opacity: 0.6;
+}
+
+.form-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+.confirm-dialog form .confirm-actions {
+  margin-top: 4px;
+}
+
 /* ── Skill 详情抽屉（仅遮罩列表区，不挡工具栏） ───────────── */
 .drawer-backdrop {
   position: absolute;

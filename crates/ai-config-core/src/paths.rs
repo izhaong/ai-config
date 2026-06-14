@@ -45,6 +45,36 @@ pub fn is_ai_config_repo(p: &Utf8Path) -> bool {
     p.join("crates/ai-config-core").is_dir()
 }
 
+/// 将注册表或用户输入的路径规范为 `(仓库根, 资产根 …/.ai-config/)`。
+///
+/// - 仓库根 → 资产根 = `<repo>/.ai-config/`
+/// - 用户直接选 `.ai-config/` → 仓库根 = 父目录
+/// - 历史数据:路径本身已是资产根(含 `skills/`) → 仓库根与资产根相同
+pub fn resolve_project_roots(stored: &Utf8Path) -> (Utf8PathBuf, Utf8PathBuf) {
+    if stored.file_name().map(|n| n == USER_ASSET_DIR_NAME).unwrap_or(false) {
+        let repo = stored
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| stored.to_path_buf());
+        return (repo, stored.to_path_buf());
+    }
+    if is_asset_root(stored) {
+        return (stored.to_path_buf(), stored.to_path_buf());
+    }
+    let asset = stored.join(USER_ASSET_DIR_NAME);
+    (stored.to_path_buf(), asset)
+}
+
+/// 用户全局下发目标:各平台目录在 `$HOME` 下。
+pub fn global_deploy_base() -> Utf8PathBuf {
+    home_dir()
+}
+
+/// 项目下发目标:各平台目录在仓库根下(`<repo>/.cursor` 等)。
+pub fn project_deploy_base(repo_root: &Utf8Path) -> Utf8PathBuf {
+    repo_root.to_path_buf()
+}
+
 /// 候选路径是否已是「资产根」(直接含 `skills/`)。
 pub fn is_asset_root(p: &Utf8Path) -> bool {
     p.join("skills").is_dir()
@@ -65,9 +95,33 @@ pub fn resolve_asset_root(candidate: &Utf8Path) -> Utf8PathBuf {
 }
 
 /// 创建资产根下标准子目录(已存在则跳过)。
+/// 适用于 `~/.ai-config/` 与 `<repo>/.ai-config/`（二者同构）。
 pub fn ensure_user_asset_layout(root: &Utf8Path) -> Result<(), CoreError> {
     for sub in ASSET_SUBDIRS {
         std::fs::create_dir_all(root.join(sub).as_std_path())?;
+    }
+    Ok(())
+}
+
+/// 初始化资产根完整布局：skills / rules / agents 子目录 + `mcp.json`（全局与项目 `.ai-config` 共用）。
+pub fn ensure_asset_layout(asset_root: &Utf8Path) -> Result<(), CoreError> {
+    ensure_user_asset_layout(asset_root)?;
+    let _ = mcp_json::ensure_mcp_json(asset_root);
+    let _ = mcp_json::migrate_legacy_mcp_layout(asset_root);
+    Ok(())
+}
+
+/// 由仓库根推导项目资产根 `<repo>/.ai-config/`。
+pub fn project_asset_root(repo_root: &Utf8Path) -> Utf8PathBuf {
+    resolve_project_roots(repo_root).1
+}
+
+/// 确保 `path` 的父目录存在(skill/rule/agent symlink 与平台 `mcp.json` 写入前调用)。
+pub fn ensure_parent_dir(path: &Utf8Path) -> Result<(), CoreError> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent.as_std_path()).map_err(CoreError::Io)?;
+        }
     }
     Ok(())
 }
@@ -232,6 +286,15 @@ mod tests {
     }
 
     #[test]
+    fn ensure_parent_dir_creates_nested_path() {
+        let tmp = TempDir::new().unwrap();
+        let path = Utf8PathBuf::from_path_buf(tmp.path().join(".cursor/agents/foo.md")).unwrap();
+        assert!(!path.parent().unwrap().exists());
+        ensure_parent_dir(&path).unwrap();
+        assert!(path.parent().unwrap().is_dir());
+    }
+
+    #[test]
     fn user_assets_need_seed_when_empty() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
@@ -277,10 +340,48 @@ mod tests {
     }
 
     #[test]
+    fn ensure_asset_layout_matches_global_shape() {
+        let tmp = TempDir::new().unwrap();
+        let asset = Utf8PathBuf::from_path_buf(tmp.path().join(".ai-config")).unwrap();
+        ensure_asset_layout(&asset).unwrap();
+        for sub in ASSET_SUBDIRS {
+            assert!(asset.join(sub).is_dir(), "missing {sub}");
+        }
+        assert!(asset.join("mcp.json").is_file());
+    }
+
+    #[test]
+    fn project_asset_root_from_repo() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        assert_eq!(project_asset_root(&repo), repo.join(".ai-config"));
+    }
+
+    #[test]
     fn resolve_asset_root_repo_falls_back_to_user_home() {
         let tmp = TempDir::new().unwrap();
         let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         fs::create_dir_all(repo.join("crates/ai-config-core")).unwrap();
         assert_eq!(resolve_asset_root(&repo), user_home_asset_root());
+    }
+
+    #[test]
+    fn resolve_project_roots_from_repo() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        fs::create_dir_all(repo.join(".ai-config/skills")).unwrap();
+        let (r, a) = resolve_project_roots(&repo);
+        assert_eq!(r, repo);
+        assert_eq!(a, repo.join(".ai-config"));
+    }
+
+    #[test]
+    fn resolve_project_roots_from_dot_ai_config() {
+        let tmp = TempDir::new().unwrap();
+        let asset = Utf8PathBuf::from_path_buf(tmp.path().join(".ai-config")).unwrap();
+        fs::create_dir_all(asset.join("skills")).unwrap();
+        let (r, a) = resolve_project_roots(&asset);
+        assert_eq!(a, asset);
+        assert_eq!(r, Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap());
     }
 }

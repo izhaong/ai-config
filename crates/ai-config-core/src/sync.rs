@@ -29,6 +29,7 @@ use camino::Utf8Path;
 use crate::error::CoreError;
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId, Project, SyncAction};
+use crate::paths;
 use crate::platform;
 use crate::source;
 
@@ -56,21 +57,33 @@ fn item_id_for(project_id: u64, kind: AssetKind, name: &str) -> u64 {
 
 /// 资产 entry 链接 / 渲染目标(平台 × kind 维度的 dest 路径)。
 ///
-/// 仅由 `sync` 内部使用,实现细节不暴露。
-fn dest_for(
+/// 全局作用域:`deploy_base` 省略时默认 `$HOME`。
+pub fn asset_dest_for(
     plat: PlatformId,
     kind: AssetKind,
     name: &str,
     src: &Utf8Path,
 ) -> Option<camino::Utf8PathBuf> {
-    let home_root = platform_dest_root(plat, kind)?;
+    asset_dest_for_at_base(plat, kind, name, src, &paths::global_deploy_base())
+}
+
+/// 指定下发根目录的 dest(项目作用域传仓库根,全局传 `$HOME`)。
+pub fn asset_dest_for_at_base(
+    plat: PlatformId,
+    kind: AssetKind,
+    name: &str,
+    src: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Option<camino::Utf8PathBuf> {
+    let plat_root = platform_dest_root(plat, kind, deploy_base)?;
     let entry_name = match kind {
-        AssetKind::Skill => return Some(home_root.join(name)),
+        AssetKind::Skill => return Some(plat_root.join(name)),
         AssetKind::Rule => format!("{name}.mdc"),
-        // mcp 资产**不**走 dest_for(走 RenderMcp 路径)
         AssetKind::Mcp => return None,
         AssetKind::Agent => {
-            // agent src 后缀由 `source` 保留,这里取原扩展名(.md / .yaml ...)
+            if src.is_dir() {
+                return Some(plat_root.join(name));
+            }
             let ext = src
                 .extension()
                 .map(|e| e.to_string())
@@ -78,22 +91,36 @@ fn dest_for(
             format!("{name}.{ext}")
         }
     };
-    Some(home_root.join(entry_name))
+    Some(plat_root.join(entry_name))
 }
 
-fn platform_dest_root(plat: PlatformId, kind: AssetKind) -> Option<camino::Utf8PathBuf> {
-    for adapter in platform::registry() {
-        if adapter.id() != plat {
-            continue;
-        }
-        return Some(match kind {
-            AssetKind::Skill => adapter.skills_dir(),
-            AssetKind::Rule => adapter.rules_dir(),
-            AssetKind::Agent => adapter.agents_dir(),
-            AssetKind::Mcp => return None, // MCP 走 mcp_json_path
-        });
-    }
-    None
+/// Agent deploy 时 symlink 的源路径(目录链目录,单文件链文件)。
+pub fn agent_link_src(src: &Utf8Path) -> camino::Utf8PathBuf {
+    src.to_path_buf()
+}
+
+fn dest_for(
+    plat: PlatformId,
+    kind: AssetKind,
+    name: &str,
+    src: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Option<camino::Utf8PathBuf> {
+    asset_dest_for_at_base(plat, kind, name, src, deploy_base)
+}
+
+fn platform_dest_root(
+    plat: PlatformId,
+    kind: AssetKind,
+    deploy_base: &Utf8Path,
+) -> Option<camino::Utf8PathBuf> {
+    let adapter = platform::for_scope(plat, deploy_base).ok()?;
+    Some(match kind {
+        AssetKind::Skill => adapter.skills_dir(),
+        AssetKind::Rule => adapter.rules_dir(),
+        AssetKind::Agent => adapter.agents_dir(),
+        AssetKind::Mcp => return None,
+    })
 }
 
 /// 计算一个项目的同步动作集。
@@ -111,7 +138,9 @@ pub fn compute_for_project(
     project: &Project,
     default_root: &Utf8Path,
 ) -> Result<Vec<SyncAction>, CoreError> {
-    let merged = source::scan_with_override(&project.root_path, default_root)?;
+    let (repo_root, asset_root) = paths::resolve_project_roots(&project.root_path);
+    let deploy_base = paths::project_deploy_base(&repo_root);
+    let merged = source::scan_with_override(&asset_root, default_root)?;
     let mut out: Vec<SyncAction> = Vec::new();
     let platforms = all_platforms();
 
@@ -171,7 +200,7 @@ pub fn compute_for_project(
                         });
                     }
                     _ => {
-                        let dest = match dest_for(*plat, kind, &name, &src) {
+                        let dest = match dest_for(*plat, kind, &name, &src, &deploy_base) {
                             Some(d) => d,
                             None => continue,
                         };
@@ -264,9 +293,14 @@ pub fn retract_all(
     let mut out: Vec<SyncAction> = Vec::new();
     for action in creates {
         match action {
-            SyncAction::Create { item_id, dest, .. } => out.push(SyncAction::Retract {
+            SyncAction::Create {
                 item_id,
-                platform,
+                dest,
+                platform: p,
+                ..
+            } if p == platform => out.push(SyncAction::Retract {
+                item_id,
+                platform: p,
                 dest,
             }),
             // 过滤掉其它平台 / MCP render
@@ -293,23 +327,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
 
-        // default_root 跟 project_root 共享一份资产清单;
-        // 把"全局资产"放在 default 视角下,项目视角"项目覆盖默认"在另外的 test 验证。
-        let default = root.clone();
-
-        // skills
+        let default = root.join("global");
         fs::create_dir_all(default.join("skills/foo")).unwrap();
         fs::write(default.join("skills/foo/SKILL.md"), "SKILL").unwrap();
-        // rules
         fs::create_dir_all(default.join("rules")).unwrap();
         fs::write(default.join("rules/r-one.mdc"), "R1").unwrap();
-        // mcp
         fs::write(default.join("mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
-        // agents
         fs::create_dir_all(default.join("agents")).unwrap();
         fs::write(default.join("agents/reviewer.md"), "AGENT").unwrap();
 
-        // project 没有 .ai-config,所以这次只走 default_root
+        // 项目仓根(无 `.ai-config/` 时 scan 回落到 default_root 合并)
         (tmp, default, root.join("proj"))
     }
 
@@ -334,8 +361,8 @@ mod tests {
         let actions = compute_for_project(&project, &default).unwrap();
 
         // 1 skill × 4 + 1 rule × 2(Cursor/Claude) + 1 mcp × 4(RenderMcp)
-        //   + 1 agent × 2(Cursor/Claude)
-        // → 4 + 2 + 4 + 2 = 12(Codex/Hermes 不直接消费 rule/agent)
+        //   + 1 agent × 4(全平台 subagents/agents)
+        // → 4 + 2 + 4 + 4 = 14
         let creates: Vec<_> = actions
             .iter()
             .filter(|a| matches!(a, SyncAction::Create { .. }))
@@ -344,27 +371,43 @@ mod tests {
             .iter()
             .filter(|a| matches!(a, SyncAction::RenderMcp { .. }))
             .collect();
-        assert_eq!(creates.len(), 8, "skill 4 + rule 2 + agent 2 = 8");
+        assert_eq!(creates.len(), 10, "skill 4 + rule 2 + agent 4 = 10");
         assert_eq!(renders.len(), 4, "mcp 4 platforms = 4 RenderMcp");
-        assert_eq!(actions.len(), 12);
+        assert_eq!(actions.len(), 14);
+    }
+
+    #[test]
+    fn asset_dest_for_directory_agent_uses_dir_dest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = Utf8PathBuf::from_path_buf(tmp.path().join("reviewer")).unwrap();
+        std::fs::create_dir_all(&src).unwrap();
+        let dest = asset_dest_for(PlatformId::Cursor, AssetKind::Agent, "reviewer", &src).unwrap();
+        assert!(dest.as_str().ends_with(".cursor/agents/reviewer"));
+        assert!(!dest.as_str().ends_with(".md"));
+    }
+
+    #[test]
+    fn asset_dest_for_file_agent_preserves_extension() {
+        let src = Utf8Path::new("/tmp/agents/reviewer.yaml");
+        let dest = asset_dest_for(PlatformId::Codex, AssetKind::Agent, "reviewer", src).unwrap();
+        assert!(dest.as_str().ends_with(".codex/subagents/reviewer.yaml"));
     }
 
     #[test]
     fn compute_for_project_project_overrides_default_same_name() {
-        // 新合约:`project.root_path` 直接是 `.ai-config/` 目录,所以 project_root
-        // 直接指向 `myproj/.ai-config`,skill 直接放在它下面。
         let tmp = tempfile::tempdir().unwrap();
         let default = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let project_root = default.join("myproj/.ai-config");
+        let repo = default.join("myproj");
+        let project_asset = repo.join(".ai-config");
         fs::create_dir_all(default.join("skills/foo")).unwrap();
         fs::write(default.join("skills/foo/SKILL.md"), "DEFAULT").unwrap();
-        fs::create_dir_all(project_root.join("skills/foo")).unwrap();
-        fs::write(project_root.join("skills/foo/SKILL.md"), "PROJECT").unwrap();
+        fs::create_dir_all(project_asset.join("skills/foo")).unwrap();
+        fs::write(project_asset.join("skills/foo/SKILL.md"), "PROJECT").unwrap();
 
         let project = Project {
             id: 11,
             name: "myproj".into(),
-            root_path: project_root.clone(),
+            root_path: repo.clone(),
             registered_at: chrono::Utc::now(),
         };
         let actions = compute_for_project(&project, &default).unwrap();
@@ -382,30 +425,22 @@ mod tests {
     }
 
     #[test]
-    fn compute_for_project_create_dest_points_to_home_dir() {
-        // 隔离:其它测试可能在跑时改 HERMES_SKILLS_DIR(env guard 进程内可能脏)。
-        // 这里显式 unset,保证本测试看到的 hermes skills_dir = $HOME/.hermes/skills。
+    fn compute_for_project_create_dest_under_repo_root() {
         let _env_guard = HermesEnvGuard::unset();
 
-        let (_tmp, default, project_root) = make_project_with_default();
+        let (_tmp, default, repo) = make_project_with_default();
         let project = Project {
             id: 1,
             name: "p".into(),
-            root_path: project_root,
+            root_path: repo.clone(),
             registered_at: chrono::Utc::now(),
         };
         let actions = compute_for_project(&project, &default).unwrap();
         for a in &actions {
-            if let SyncAction::Create { dest, platform, .. } = a {
-                let home_substr = match platform {
-                    PlatformId::Cursor => ".cursor",
-                    PlatformId::Codex => ".codex",
-                    PlatformId::Claude => ".claude",
-                    PlatformId::Hermes => ".hermes",
-                };
+            if let SyncAction::Create { dest, .. } = a {
                 assert!(
-                    dest.as_str().contains(home_substr),
-                    "dest {dest} 应在 {home_substr} 下"
+                    dest.starts_with(&repo),
+                    "dest {dest} 应在项目根 {repo} 下(非 $HOME)"
                 );
             }
         }
@@ -509,27 +544,27 @@ mod tests {
 
     #[test]
     fn compute_global_2_projects_each_1_skill_yields_8_actions() {
-        // 新合约:`project.root_path` 直接是 `.ai-config/` 目录,所以把项目根设到
-        // `default/p<n>/.ai-config`,把 skill 直接放在它下面(不再嵌一层 `.ai-config/`)。
         let tmp = tempfile::tempdir().unwrap();
         let default = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let p1_root = default.join("p1/.ai-config");
-        let p2_root = default.join("p2/.ai-config");
-        fs::create_dir_all(p1_root.join("skills/shared")).unwrap();
-        fs::write(p1_root.join("skills/shared/SKILL.md"), "FROM-P1").unwrap();
-        fs::create_dir_all(p2_root.join("skills/shared")).unwrap();
-        fs::write(p2_root.join("skills/shared/SKILL.md"), "FROM-P2").unwrap();
+        let p1_repo = default.join("p1");
+        let p2_repo = default.join("p2");
+        let p1_asset = p1_repo.join(".ai-config");
+        let p2_asset = p2_repo.join(".ai-config");
+        fs::create_dir_all(p1_asset.join("skills/shared")).unwrap();
+        fs::write(p1_asset.join("skills/shared/SKILL.md"), "FROM-P1").unwrap();
+        fs::create_dir_all(p2_asset.join("skills/shared")).unwrap();
+        fs::write(p2_asset.join("skills/shared/SKILL.md"), "FROM-P2").unwrap();
 
         let p1 = Project {
             id: 1,
             name: "p1".into(),
-            root_path: p1_root,
+            root_path: p1_repo,
             registered_at: chrono::Utc::now(),
         };
         let p2 = Project {
             id: 2,
             name: "p2".into(),
-            root_path: p2_root,
+            root_path: p2_repo,
             registered_at: chrono::Utc::now(),
         };
 
@@ -599,8 +634,8 @@ mod tests {
             assert!(a.is_retract(), "all should be Retract: {a:?}");
             assert_eq!(a.platform(), PlatformId::Cursor);
         }
-        // 每条 Create 都翻成 Retract(skill 4 + rule 2 + agent 2 = 8)
-        assert_eq!(actions.len(), 8);
+        // 每条 Create 都翻成 Retract(skill 1 + rule 1 + agent 1 = 3 on Cursor)
+        assert_eq!(actions.len(), 3);
     }
 
     #[test]
