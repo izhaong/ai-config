@@ -148,7 +148,7 @@ fn infer_kind_from_dest(dest: &camino::Utf8Path) -> &'static str {
 }
 
 /// 跑一次完整 sync(per-item × per-platform 动作展开),返回 outcomes。
-fn execute_all_actions(ctx: &SyncContext, default_root: &Utf8Path) -> Vec<Outcome> {
+fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
     let mut out: Vec<Outcome> = Vec::new();
     let mut mcp_renders_done = std::collections::HashSet::new();
 
@@ -279,7 +279,7 @@ pub fn run_install(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
     };
 
     // 4. 执行 SyncAction
-    let outcomes = execute_all_actions(&ctx, default_root);
+    let outcomes = execute_all_actions(&ctx);
     let ok_count = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
@@ -469,7 +469,7 @@ pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
             return ExitCode::from(e.exit_code());
         }
     };
-    let outcomes = execute_all_actions(&ctx, default_root);
+    let outcomes = execute_all_actions(&ctx);
     let synced = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
