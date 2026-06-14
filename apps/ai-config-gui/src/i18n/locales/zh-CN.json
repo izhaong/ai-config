@@ -1,0 +1,114 @@
+{
+  "app": {
+    "name": "ai-config",
+    "version": "v0.1.0 · M3 (W9)",
+    "daemonStopped": "守护进程已停止",
+    "phase": "Phase 3 · W9"
+  },
+  "language": {
+    "switch": "语言",
+    "zh": "中文",
+    "en": "English"
+  },
+  "nav": {
+    "projects": "项目",
+    "assets": "资产",
+    "userGlobal": "user-global",
+    "registerProject": "+ 注册项目",
+    "registerProjectTitle": "注册新项目",
+    "removeProject": "移除 {{name}}"
+  },
+  "assetKind": {
+    "skill": "Skills",
+    "rule": "Rules",
+    "mcp": "MCP",
+    "agent": "Agents"
+  },
+  "linkState": {
+    "linked": "已同步",
+    "unlinked": "未同步",
+    "broken": "链接异常",
+    "missing": "目标缺失"
+  },
+  "platform": {
+    "active": "已激活",
+    "inactive": "未激活",
+    "clickDeploy": "点击下发",
+    "clickRemove": "点击移除",
+    "unsupported": "{{platform}}: {{reason}}"
+  },
+  "toolbar": {
+    "selectAllTitle": "全选当前列表",
+    "items": "{{count}} 项",
+    "selected": " · 已选 {{count}}",
+    "processing": " (处理中…)",
+    "batchDeploy": "批量下发",
+    "batchRetract": "批量收回",
+    "batchDelete": "批量删除",
+    "batchDeleteTitle": "勾选左侧复选框后删除源文件"
+  },
+  "empty": {
+    "loading": "加载中…",
+    "mcp": "暂无 MCP server，可编辑 mcp.json 或添加",
+    "assets": "暂无资产。在 <code>~/.ai-config/{{kindDir}}/</code> 下添加文件后刷新。"
+  },
+  "drawer": {
+    "loading": "加载中…",
+    "noDescription": "(无描述)",
+    "cancel": "取消",
+    "save": "保存",
+    "edit": "编辑",
+    "delete": "删除{{label}}"
+  },
+  "confirm": {
+    "defaultConfirm": "确认",
+    "cancel": "取消",
+    "processing": "处理中…",
+    "deleteSource": "删除源文件",
+    "deleteSourceMessage": "将永久删除 {{label}}「{{name}}」",
+    "delete": "删除",
+    "batchDelete": "批量删除",
+    "batchDeleteMessage": "将永久删除 {{count}} 个{{label}}源文件，并尽力收回各平台链接。"
+  },
+  "statusbar": {
+    "doctor": "doctor: {{count}} 异常",
+    "doctorLoading": "doctor: ...",
+    "secrets": "secrets: {{count}} 缺",
+    "projects": "projects: {{count}} 注册",
+    "broken": "broken: {{count}}"
+  },
+  "toast": {
+    "loadProjectsFailed": "加载项目列表失败: {{error}}",
+    "listFailed": "cmd_list 失败: {{error}}",
+    "refreshFailed": "刷新失败: {{error}}",
+    "loadAssetFailed": "加载 {{label}} 失败: {{error}}",
+    "assetRemovedExternally": "资产已在外部删除",
+    "saveFailed": "保存失败: {{error}}",
+    "deletedCount": "已删除 {{count}} 个源文件",
+    "deleteFailed": "删除失败: {{errors}}",
+    "deletePartial": "部分删除: 成功 {{ok}}，失败 {{failed}}（{{errors}}）",
+    "entryNotFound": "未找到要删除的条目",
+    "deployFailed": "下发失败: {{error}}",
+    "retractFailed": "收回失败: {{error}}",
+    "batchDeployItemFailed": "{{name}} → {{platform}} 失败: {{error}}",
+    "batchRetractItemFailed": "{{name}} ← {{platform}} 失败: {{error}}",
+    "batchDeployed": "已批量下发 {{count}} 项",
+    "batchRetracted": "已批量收回 {{count}} 项",
+    "selectRowsFirst": "请先勾选左侧复选框（打开详情不会自动选中）",
+    "projectRegistered": "项目 `{{name}}` 已注册",
+    "registerProjectFailed": "注册项目失败: {{error}}",
+    "projectRemoved": "项目 `{{name}}` 已移除",
+    "removeProjectFailed": "移除项目失败: {{error}}"
+  },
+  "prompt": {
+    "projectName": "项目名(在 store 中唯一):",
+    "projectRoot": "项目根目录绝对路径:",
+    "confirmRemoveProject": "确认从本工具中移除项目 `{{name}}`?"
+  },
+  "kindDir": {
+    "skill": "skills",
+    "rule": "rules",
+    "mcp": "mcp",
+    "agent": "agents"
+  }
+}

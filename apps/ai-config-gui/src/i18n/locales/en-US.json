@@ -1,0 +1,114 @@
+{
+  "app": {
+    "name": "ai-config",
+    "version": "v0.1.0 · M3 (W9)",
+    "daemonStopped": "daemon stopped",
+    "phase": "Phase 3 · W9"
+  },
+  "language": {
+    "switch": "Language",
+    "zh": "中文",
+    "en": "English"
+  },
+  "nav": {
+    "projects": "Projects",
+    "assets": "Assets",
+    "userGlobal": "user-global",
+    "registerProject": "+ Register project",
+    "registerProjectTitle": "Register a new project",
+    "removeProject": "Remove {{name}}"
+  },
+  "assetKind": {
+    "skill": "Skills",
+    "rule": "Rules",
+    "mcp": "MCP",
+    "agent": "Agents"
+  },
+  "linkState": {
+    "linked": "Synced",
+    "unlinked": "Not synced",
+    "broken": "Link broken",
+    "missing": "Target missing"
+  },
+  "platform": {
+    "active": "Active",
+    "inactive": "Inactive",
+    "clickDeploy": "Click to deploy",
+    "clickRemove": "Click to retract",
+    "unsupported": "{{platform}}: {{reason}}"
+  },
+  "toolbar": {
+    "selectAllTitle": "Select all in list",
+    "items": "{{count}} items",
+    "selected": " · {{count}} selected",
+    "processing": " (working…)",
+    "batchDeploy": "Deploy all",
+    "batchRetract": "Retract all",
+    "batchDelete": "Delete selected",
+    "batchDeleteTitle": "Check rows on the left, then delete source files"
+  },
+  "empty": {
+    "loading": "Loading…",
+    "mcp": "No MCP servers yet. Edit mcp.json or add one.",
+    "assets": "No assets yet. Add files under <code>~/.ai-config/{{kindDir}}/</code> and refresh."
+  },
+  "drawer": {
+    "loading": "Loading…",
+    "noDescription": "(no description)",
+    "cancel": "Cancel",
+    "save": "Save",
+    "edit": "Edit",
+    "delete": "Delete {{label}}"
+  },
+  "confirm": {
+    "defaultConfirm": "Confirm",
+    "cancel": "Cancel",
+    "processing": "Working…",
+    "deleteSource": "Delete source file",
+    "deleteSourceMessage": "Permanently delete {{label}} “{{name}}”",
+    "delete": "Delete",
+    "batchDelete": "Batch delete",
+    "batchDeleteMessage": "Permanently delete {{count}} {{label}} source file(s) and best-effort retract from all platforms."
+  },
+  "statusbar": {
+    "doctor": "doctor: {{count}} issues",
+    "doctorLoading": "doctor: ...",
+    "secrets": "secrets: {{count}} missing",
+    "projects": "projects: {{count}} registered",
+    "broken": "broken: {{count}}"
+  },
+  "toast": {
+    "loadProjectsFailed": "Failed to load projects: {{error}}",
+    "listFailed": "cmd_list failed: {{error}}",
+    "refreshFailed": "Refresh failed: {{error}}",
+    "loadAssetFailed": "Failed to load {{label}}: {{error}}",
+    "assetRemovedExternally": "Asset was removed externally",
+    "saveFailed": "Save failed: {{error}}",
+    "deletedCount": "Deleted {{count}} source file(s)",
+    "deleteFailed": "Delete failed: {{errors}}",
+    "deletePartial": "Partial delete: {{ok}} ok, {{failed}} failed ({{errors}})",
+    "entryNotFound": "Entry to delete not found",
+    "deployFailed": "Deploy failed: {{error}}",
+    "retractFailed": "Retract failed: {{error}}",
+    "batchDeployItemFailed": "{{name}} → {{platform}} failed: {{error}}",
+    "batchRetractItemFailed": "{{name}} ← {{platform}} failed: {{error}}",
+    "batchDeployed": "Batch deployed {{count}} item(s)",
+    "batchRetracted": "Batch retracted {{count}} item(s)",
+    "selectRowsFirst": "Select rows with the checkboxes first (opening details does not select)",
+    "projectRegistered": "Project `{{name}}` registered",
+    "registerProjectFailed": "Failed to register project: {{error}}",
+    "projectRemoved": "Project `{{name}}` removed",
+    "removeProjectFailed": "Failed to remove project: {{error}}"
+  },
+  "prompt": {
+    "projectName": "Project name (unique in store):",
+    "projectRoot": "Absolute project root path:",
+    "confirmRemoveProject": "Remove project `{{name}}` from this tool?"
+  },
+  "kindDir": {
+    "skill": "skills",
+    "rule": "rules",
+    "mcp": "mcp",
+    "agent": "agents"
+  }
+}

@@ -5,7 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "ai-config 文件监听:4 目录(skills/ rules/ mcp/servers/ agents/),notify + debouncer-mini 200ms"
+description = "ai-config 文件监听:skills/ rules/ agents/ + mcp.json,notify + debouncer-mini 200ms"
+
+[dev-dependencies]
+tempfile = "3"
 
 [dependencies]
 notify.workspace = true

@@ -25,11 +25,11 @@
 //! `AppState` 持有 `Arc<Store>`(SQLite 持久化)和 `default_root: Arc<RwLock<Utf8PathBuf>>`(资产根)。
 //! 同步阻塞 IO 走 `tokio::task::spawn_blocking` 包裹,避免锁住 Tauri runtime。
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
 use ai_config_core::error::CoreError;
@@ -41,6 +41,7 @@ use ai_config_core::platform;
 use ai_config_core::source;
 use ai_config_core::template::McpSyncState;
 use ai_config_store::Store;
+use ai_config_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
 
 // ── 共享状态 ──────────────────────────────────────────────────────
 
@@ -50,6 +51,8 @@ pub struct AppState {
     pub store: Arc<Store>,
     /// 默认资产根(`~/.ai-config/`;启动时自动创建子目录)
     pub default_root: Arc<RwLock<Utf8PathBuf>>,
+    /// 资产目录文件监听句柄(项目增删时重启)
+    pub watcher: Mutex<Option<WatcherHandle>>,
 }
 
 impl AppState {
@@ -60,6 +63,7 @@ impl AppState {
         Ok(Self {
             store: Arc::new(store),
             default_root: Arc::new(RwLock::new(default_root)),
+            watcher: Mutex::new(None),
         })
     }
 }
@@ -729,7 +733,7 @@ async fn cmd_mcp_get(
     let (default_root, project_root) = resolve_roots(&state, project.as_deref()).await?;
     let mcp_path = locate_mcp_json(&default_root, &project_root)?;
     let asset_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(&asset_root, &name)
+    let config = mcp_json::get_server_config(asset_root, &name)
         .map_err(|e| format!("读取 MCP server 失败: {e}"))?
         .ok_or_else(|| format!("MCP server `{name}` 找不到"))?;
     let content = serde_json::to_string_pretty(&config).map_err(|e| format!("JSON 序列化失败: {e}"))?;
@@ -755,7 +759,7 @@ async fn cmd_mcp_deploy(
     let plat = parse_plat(&to)?;
     let mcp_path = locate_mcp_json(&default_root, &project_root)?;
     let asset_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(&asset_root, &name)
+    let config = mcp_json::get_server_config(asset_root, &name)
         .map_err(|e| format!("读取 MCP server 失败: {e}"))?
         .ok_or_else(|| format!("MCP server `{name}` 找不到"))?;
     let dest_json = platform::for_id(plat)
@@ -976,6 +980,7 @@ async fn cmd_projects_list(state: State<'_, AppState>) -> Result<Vec<Project>, S
 
 #[tauri::command]
 async fn cmd_projects_add(
+    app: AppHandle,
     state: State<'_, AppState>,
     name: String,
     root_path: String,
@@ -985,22 +990,68 @@ async fn cmd_projects_add(
     if !path.is_dir() {
         return Err(format!("`{root_path}` 不是已存在的目录"));
     }
-    tokio::task::spawn_blocking(move || store.projects().add(&name, &path))
+    let project = tokio::task::spawn_blocking(move || store.projects().add(&name, &path))
         .await
         .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("projects.add 失败: {e}"))
+        .map_err(|e| format!("projects.add 失败: {e}"))?;
+    restart_asset_watcher(&app, &state).await?;
+    Ok(project)
 }
 
 #[tauri::command]
-async fn cmd_projects_remove(state: State<'_, AppState>, name: String) -> Result<(), String> {
+async fn cmd_projects_remove(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), String> {
     let store = state.store.clone();
     tokio::task::spawn_blocking(move || store.projects().remove(&name))
         .await
         .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("projects.remove 失败: {e}"))
+        .map_err(|e| format!("projects.remove 失败: {e}"))?;
+    restart_asset_watcher(&app, &state).await?;
+    Ok(())
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────
+
+/// 收集需要监听的资产根(默认根 + 已注册项目),去重。
+async fn collect_watch_roots(state: &AppState) -> Result<Vec<Utf8PathBuf>, String> {
+    let default_root = state.default_root.read().await.clone();
+    let store = state.store.clone();
+    let projects = tokio::task::spawn_blocking(move || store.projects().list())
+        .await
+        .map_err(|e| format!("spawn_blocking join: {e}"))?
+        .map_err(|e| format!("projects.list 失败: {e}"))?;
+    let mut roots = vec![default_root];
+    for p in projects {
+        roots.push(p.root_path);
+    }
+    Ok(dedupe_roots(roots))
+}
+
+/// 启动或重启资产目录监听,变动后向前端 `assets-changed`。
+async fn restart_asset_watcher(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let asset_roots = collect_watch_roots(state).await?;
+    let handle = app.clone();
+    let watcher = start_debounced(
+        WatchRoots { asset_roots },
+        move || {
+            if let Err(e) = handle.emit("assets-changed", ()) {
+                tracing::warn!("emit assets-changed 失败: {e}");
+            }
+        },
+    )
+    .map_err(|e| format!("启动文件监听失败: {e}"))?;
+
+    let mut guard = state
+        .watcher
+        .lock()
+        .map_err(|e| format!("watcher mutex 中毒: {e}"))?;
+    *guard = Some(watcher);
+    tracing::info!("资产目录文件监听已就绪");
+    Ok(())
+}
 
 /// 解析 `to` / `from` 字符串到 `PlatformId`。
 fn parse_plat(s: &str) -> Result<PlatformId, String> {
@@ -1085,7 +1136,7 @@ fn retract_all_platforms_best_effort(
         let Ok(asset_root) = mcp_asset_root(&mcp_path) else {
             return;
         };
-        if mcp_json::get_server_config(&asset_root, name)
+        if mcp_json::get_server_config(asset_root, name)
             .ok()
             .flatten()
             .is_none()
@@ -1222,6 +1273,12 @@ pub fn run() {
                 env!("CARGO_PKG_VERSION"),
                 state.store.path()
             );
+            let handle = app.handle().clone();
+            tauri::async_runtime::block_on(async {
+                if let Err(e) = restart_asset_watcher(&handle, &state).await {
+                    tracing::warn!("文件监听未启动: {e}");
+                }
+            });
             #[cfg(debug_assertions)]
             {
                 if let Some(window) = app.get_webview_window("main") {

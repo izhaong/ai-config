@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 interface ConfirmModalProps {
   title: string;
   message: string;
@@ -10,11 +12,14 @@ interface ConfirmModalProps {
 export function ConfirmModal({
   title,
   message,
-  confirmLabel = "确认",
+  confirmLabel,
   busy = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
+  const { t } = useTranslation();
+  const confirm = confirmLabel ?? t("confirm.defaultConfirm");
+
   return (
     <div className="confirm-backdrop" onClick={onCancel}>
       <div
@@ -27,7 +32,7 @@ export function ConfirmModal({
         <p>{message}</p>
         <div className="confirm-actions">
           <button type="button" disabled={busy} onClick={onCancel}>
-            取消
+            {t("confirm.cancel")}
           </button>
           <button
             type="button"
@@ -35,7 +40,7 @@ export function ConfirmModal({
             disabled={busy}
             onClick={onConfirm}
           >
-            {busy ? "处理中…" : confirmLabel}
+            {busy ? t("confirm.processing") : confirm}
           </button>
         </div>
       </div>

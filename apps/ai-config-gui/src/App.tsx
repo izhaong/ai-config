@@ -4,12 +4,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { Trans, useTranslation } from "react-i18next";
 import { AssetDrawer } from "./AssetDrawer";
 import { AssetRow } from "./AssetRow";
 import { ConfirmModal } from "./ConfirmModal";
+import { LanguageSwitcher } from "./LanguageSwitcher";
+import { assetKindLabel, kindDirName } from "./i18n/labels";
 import {
   ASSET_KINDS,
-  ASSET_LABEL,
   canDeploy,
   canRetract,
   PLATFORMS,
@@ -27,6 +30,7 @@ function entryKey(entry: AssetEntry): string {
 }
 
 export function App() {
+  const { t } = useTranslation();
   const [activeProject, setActiveProject] = useState<string>("user-global");
   const [activeKind, setActiveKind] = useState<AssetKind>("skill");
   const [projects, setProjects] = useState<ProjectItem[]>([]);
@@ -50,12 +54,26 @@ export function App() {
   const [drawerLoading, setDrawerLoading] = useState(false);
 
   const reqIdRef = useRef(0);
+  const drawerNameRef = useRef<string | null>(null);
+  const drawerEditingRef = useRef(false);
+  const kindLabel = assetKindLabel(t, activeKind);
+
+  useEffect(() => {
+    drawerNameRef.current = drawerName;
+  }, [drawerName]);
+
+  useEffect(() => {
+    drawerEditingRef.current = drawerEditing;
+  }, [drawerEditing]);
 
   useEffect(() => {
     invoke<DoctorSummary>("cmd_doctor").then(setDoctor).catch(console.error);
     invoke<ProjectItem[]>("cmd_projects_list")
       .then(setProjects)
-      .catch((e) => setToast({ kind: "err", text: `加载项目列表失败: ${e}` }));
+      .catch((e) =>
+        setToast({ kind: "err", text: String(e) })
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once
   }, []);
 
   useEffect(() => {
@@ -67,7 +85,7 @@ export function App() {
       })
       .catch((e) => {
         if (reqIdRef.current === myReq) {
-          setToast({ kind: "err", text: `cmd_list 失败: ${e}` });
+          setToast({ kind: "err", text: t("toast.listFailed", { error: e }) });
           setList(null);
         }
       })
@@ -91,7 +109,6 @@ export function App() {
     [visible, selectedKeys]
   );
 
-  /** 批量删除仅认勾选行 */
   const deleteTargets = selectedEntries;
 
   const allVisibleSelected =
@@ -107,14 +124,18 @@ export function App() {
   );
 
   const refresh = useCallback(async () => {
-    const myReq = reqIdRef.current;
+    const myReq = ++reqIdRef.current;
     try {
       const r = await invoke<AssetList>("cmd_list", { project: activeProject });
       if (reqIdRef.current === myReq) setList(r);
+      return r;
     } catch (e) {
-      setToast({ kind: "err", text: `刷新失败: ${e}` });
+      if (reqIdRef.current === myReq) {
+        setToast({ kind: "err", text: t("toast.refreshFailed", { error: e }) });
+      }
+      return null;
     }
-  }, [activeProject]);
+  }, [activeProject, t]);
 
   const closeDrawer = useCallback(() => {
     setDrawerName(null);
@@ -122,6 +143,67 @@ export function App() {
     setDrawerEditing(false);
     setDrawerDraft("");
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen("assets-changed", () => {
+      void (async () => {
+        const r = await refresh();
+        const name = drawerNameRef.current;
+        if (!name || !r) return;
+
+        const stillExists = r.entries.some(
+          (e) => e.kind === activeKind && e.name === name
+        );
+        if (!stillExists) {
+          closeDrawer();
+          setToast({
+            kind: "err",
+            text: t("toast.loadAssetFailed", {
+              label: assetKindLabel(t, activeKind),
+              error: t("toast.assetRemovedExternally"),
+            }),
+          });
+          return;
+        }
+
+        try {
+          const d = await invoke<AssetDetail>(`cmd_${activeKind}_get`, {
+            name,
+            project: activeProject,
+          });
+          if (disposed) return;
+          setDrawerDetail(d);
+          if (!drawerEditingRef.current) {
+            setDrawerDraft(d.content);
+          }
+        } catch (e) {
+          if (disposed) return;
+          closeDrawer();
+          setToast({
+            kind: "err",
+            text: t("toast.loadAssetFailed", {
+              label: assetKindLabel(t, activeKind),
+              error: e,
+            }),
+          });
+        }
+      })();
+    }).then((fn) => {
+      if (disposed) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [refresh, closeDrawer, activeKind, activeProject, t]);
 
   useEffect(() => {
     setSelectedKeys(new Set());
@@ -145,13 +227,19 @@ export function App() {
         setDrawerDetail(d);
         setDrawerDraft(d.content);
       } catch (e) {
-        setToast({ kind: "err", text: `加载 ${ASSET_LABEL[activeKind]} 失败: ${e}` });
+        setToast({
+          kind: "err",
+          text: t("toast.loadAssetFailed", {
+            label: assetKindLabel(t, activeKind),
+            error: e,
+          }),
+        });
         setDrawerName(null);
       } finally {
         setDrawerLoading(false);
       }
     },
-    [activeKind, activeProject]
+    [activeKind, activeProject, t]
   );
 
   const saveAsset = useCallback(async () => {
@@ -173,11 +261,11 @@ export function App() {
       setDrawerDraft(d.content);
       await refresh();
     } catch (e) {
-      setToast({ kind: "err", text: `保存失败: ${e}` });
+      setToast({ kind: "err", text: t("toast.saveFailed", { error: e }) });
     } finally {
       setDrawerLoading(false);
     }
-  }, [drawerName, drawerDraft, activeKind, activeProject, refresh]);
+  }, [drawerName, drawerDraft, activeKind, activeProject, refresh, t]);
 
   const runDeleteEntries = useCallback(
     async (entries: AssetEntry[]) => {
@@ -202,16 +290,20 @@ export function App() {
         }
         await refresh();
         if (failed.length === 0) {
-          setToast({ kind: "ok", text: `已删除 ${ok} 个源文件` });
+          setToast({ kind: "ok", text: t("toast.deletedCount", { count: ok }) });
         } else if (ok === 0) {
           setToast({
             kind: "err",
-            text: `删除失败: ${failed.join("；")}`,
+            text: t("toast.deleteFailed", { errors: failed.join("；") }),
           });
         } else {
           setToast({
             kind: "err",
-            text: `部分删除: 成功 ${ok}，失败 ${failed.length}（${failed.join("；")}）`,
+            text: t("toast.deletePartial", {
+              ok,
+              failed: failed.length,
+              errors: failed.join("；"),
+            }),
           });
         }
       } finally {
@@ -219,23 +311,26 @@ export function App() {
         setConfirm(null);
       }
     },
-    [activeProject, drawerName, closeDrawer, refresh]
+    [activeProject, drawerName, closeDrawer, refresh, t]
   );
 
   const requestDeleteAsset = useCallback(() => {
     if (!drawerName) return;
     const entry = visible.find((e) => e.name === drawerName);
     if (!entry) {
-      setToast({ kind: "err", text: "未找到要删除的条目" });
+      setToast({ kind: "err", text: t("toast.entryNotFound") });
       return;
     }
     setConfirm({
-      title: "删除源文件",
-      message: `将永久删除 ${ASSET_LABEL[activeKind]}「${drawerName}」`,
-      confirmLabel: "删除",
+      title: t("confirm.deleteSource"),
+      message: t("confirm.deleteSourceMessage", {
+        label: kindLabel,
+        name: drawerName,
+      }),
+      confirmLabel: t("confirm.delete"),
       onConfirm: () => runDeleteEntries([entry]),
     });
-  }, [drawerName, visible, activeKind, runDeleteEntries]);
+  }, [drawerName, visible, kindLabel, runDeleteEntries, t]);
 
   const deleteAsset = requestDeleteAsset;
 
@@ -250,10 +345,10 @@ export function App() {
         setToast({ kind: "ok", text: r });
         await refresh();
       } catch (e) {
-        setToast({ kind: "err", text: `下发失败: ${e}` });
+        setToast({ kind: "err", text: t("toast.deployFailed", { error: e }) });
       }
     },
-    [activeProject, refresh]
+    [activeProject, refresh, t]
   );
 
   const retractOne = useCallback(
@@ -267,10 +362,10 @@ export function App() {
         setToast({ kind: "ok", text: r });
         await refresh();
       } catch (e) {
-        setToast({ kind: "err", text: `收回失败: ${e}` });
+        setToast({ kind: "err", text: t("toast.retractFailed", { error: e }) });
       }
     },
-    [activeProject, refresh]
+    [activeProject, refresh, t]
   );
 
   const handlePlatformToggle = useCallback(
@@ -319,18 +414,25 @@ export function App() {
             } catch (e) {
               setToast({
                 kind: "err",
-                text: `${entry.name} → ${p} 失败: ${e}`,
+                text: t("toast.batchDeployItemFailed", {
+                  name: entry.name,
+                  platform: p,
+                  error: e,
+                }),
               });
             }
           }
         }
       }
       await refresh();
-      setToast({ kind: "ok", text: `已批量下发 ${selectedEntries.length} 项` });
+      setToast({
+        kind: "ok",
+        text: t("toast.batchDeployed", { count: selectedEntries.length }),
+      });
     } finally {
       setLoading(false);
     }
-  }, [selectedEntries, activeProject, issueMap, refresh]);
+  }, [selectedEntries, activeProject, issueMap, refresh, t]);
 
   const batchRetract = useCallback(async () => {
     if (selectedEntries.length === 0) return;
@@ -348,65 +450,77 @@ export function App() {
             } catch (e) {
               setToast({
                 kind: "err",
-                text: `${entry.name} ← ${p} 失败: ${e}`,
+                text: t("toast.batchRetractItemFailed", {
+                  name: entry.name,
+                  platform: p,
+                  error: e,
+                }),
               });
             }
           }
         }
       }
       await refresh();
-      setToast({ kind: "ok", text: `已批量收回 ${selectedEntries.length} 项` });
+      setToast({
+        kind: "ok",
+        text: t("toast.batchRetracted", { count: selectedEntries.length }),
+      });
     } finally {
       setLoading(false);
     }
-  }, [selectedEntries, activeProject, refresh]);
+  }, [selectedEntries, activeProject, refresh, t]);
 
   const requestBatchDelete = useCallback(() => {
     if (deleteTargets.length === 0) {
-      setToast({ kind: "err", text: "请先勾选左侧复选框（打开详情不会自动选中）" });
+      setToast({ kind: "err", text: t("toast.selectRowsFirst") });
       return;
     }
     setConfirm({
-      title: "批量删除",
-      message: `将永久删除 ${deleteTargets.length} 个${ASSET_LABEL[activeKind]}源文件，并尽力收回各平台链接。`,
-      confirmLabel: "删除",
+      title: t("confirm.batchDelete"),
+      message: t("confirm.batchDeleteMessage", {
+        count: deleteTargets.length,
+        label: kindLabel,
+      }),
+      confirmLabel: t("confirm.delete"),
       onConfirm: () => runDeleteEntries(deleteTargets),
     });
-  }, [deleteTargets, activeKind, runDeleteEntries]);
+  }, [deleteTargets, kindLabel, runDeleteEntries, t]);
 
   const addProject = useCallback(async () => {
-    const name = window.prompt("项目名(在 store 中唯一):", "");
+    const name = window.prompt(t("prompt.projectName"), "");
     if (!name) return;
-    const rootPath = window.prompt("项目根目录绝对路径:", "");
+    const rootPath = window.prompt(t("prompt.projectRoot"), "");
     if (!rootPath) return;
     try {
       await invoke<ProjectItem>("cmd_projects_add", { name, rootPath });
       setProjects((p) => [...p, { id: 0, name, root_path: rootPath, registered_at: "" }]);
-      setToast({ kind: "ok", text: `项目 \`${name}\` 已注册` });
+      setToast({ kind: "ok", text: t("toast.projectRegistered", { name }) });
     } catch (e) {
-      setToast({ kind: "err", text: `注册项目失败: ${e}` });
+      setToast({ kind: "err", text: t("toast.registerProjectFailed", { error: e }) });
     }
-  }, []);
+  }, [t]);
 
-  const removeProject = useCallback(async (name: string) => {
-    if (!window.confirm(`确认从本工具中移除项目 \`${name}\`?`)) return;
-    try {
-      await invoke("cmd_projects_remove", { name });
-      setProjects((p) => p.filter((q) => q.name !== name));
-      if (activeProject === name) setActiveProject("user-global");
-      setToast({ kind: "ok", text: `项目 \`${name}\` 已移除` });
-    } catch (e) {
-      setToast({ kind: "err", text: `移除项目失败: ${e}` });
-    }
-  }, [activeProject]);
+  const removeProject = useCallback(
+    async (name: string) => {
+      if (!window.confirm(t("prompt.confirmRemoveProject", { name }))) return;
+      try {
+        await invoke("cmd_projects_remove", { name });
+        setProjects((p) => p.filter((q) => q.name !== name));
+        if (activeProject === name) setActiveProject("user-global");
+        setToast({ kind: "ok", text: t("toast.projectRemoved", { name }) });
+      } catch (e) {
+        setToast({ kind: "err", text: t("toast.removeProjectFailed", { error: e }) });
+      }
+    },
+    [activeProject, t]
+  );
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 4000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
   }, [toast]);
 
-  // 列表刷新后去掉已不存在的勾选
   useEffect(() => {
     setSelectedKeys((prev) => {
       const next = new Set([...prev].filter((k) => visibleKeys.has(k)));
@@ -416,27 +530,32 @@ export function App() {
 
   const batchDisabled = loading || busy || selectedEntries.length === 0;
   const batchDeleteDisabled = loading || busy;
+  const doctorIssueCount = doctor
+    ? doctor.broken + doctor.wrong_source + doctor.wrong_type
+    : 0;
 
   return (
     <div className="app">
       <header className="topbar">
-        <span className="name">ai-config</span>
-        <span className="branch">v0.1.0 · M3 (W9)</span>
+        <span className="name">{t("app.name")}</span>
+        <span className="branch">{t("app.version")}</span>
         <span className="status">
           <span className="dot down" />
-          daemon stopped
+          {t("app.daemonStopped")}
         </span>
+        <div className="spacer" />
+        <LanguageSwitcher />
       </header>
 
       <div className="main">
         <aside className="column">
-          <h2>项目</h2>
+          <h2>{t("nav.projects")}</h2>
           <ul>
             <li
               className={activeProject === "user-global" ? "active" : ""}
               onClick={() => setActiveProject("user-global")}
             >
-              user-global
+              {t("nav.userGlobal")}
               <span className="badge">M3</span>
             </li>
             {projects.map((p) => (
@@ -452,22 +571,22 @@ export function App() {
                   className="remove"
                   onClick={(e) => {
                     e.stopPropagation();
-                    removeProject(p.name);
+                    void removeProject(p.name);
                   }}
-                  title={`移除 ${p.name}`}
+                  title={t("nav.removeProject", { name: p.name })}
                 >
                   ×
                 </span>
               </li>
             ))}
-            <li className="add" onClick={addProject} title="注册新项目">
-              + 注册项目
+            <li className="add" onClick={() => void addProject()} title={t("nav.registerProjectTitle")}>
+              {t("nav.registerProject")}
             </li>
           </ul>
         </aside>
 
         <aside className="column">
-          <h2>资产</h2>
+          <h2>{t("nav.assets")}</h2>
           <ul>
             {ASSET_KINDS.map((k) => (
               <li
@@ -475,7 +594,7 @@ export function App() {
                 className={activeKind === k ? "active" : ""}
                 onClick={() => setActiveKind(k)}
               >
-                {ASSET_LABEL[k]}
+                {assetKindLabel(t, k)}
                 {issueMap.has(`cursor:${k}`) || issueMap.has(`codex:${k}`) ? (
                   <span className="badge">⚠</span>
                 ) : null}
@@ -486,7 +605,7 @@ export function App() {
 
         <main className="content">
           <div className="toolbar">
-            <label className="toolbar-check" title="全选当前列表">
+            <label className="toolbar-check" title={t("toolbar.selectAllTitle")}>
               <input
                 type="checkbox"
                 checked={allVisibleSelected && visible.length > 0}
@@ -495,47 +614,45 @@ export function App() {
               />
             </label>
             <h3>
-              {ASSET_LABEL[activeKind]} · {activeProject}
+              {kindLabel} · {activeProject === "user-global" ? t("nav.userGlobal") : activeProject}
             </h3>
             <span className="toolbar-meta">
-              {visible.length} 项
+              {t("toolbar.items", { count: visible.length })}
               {selectedEntries.length > 0
-                ? ` · 已选 ${selectedEntries.length}`
+                ? t("toolbar.selected", { count: selectedEntries.length })
                 : ""}
-              {loading || busy ? " (处理中…)" : ""}
+              {loading || busy ? t("toolbar.processing") : ""}
             </span>
             <div className="spacer" />
-            <button
-              className="primary"
-              disabled={batchDisabled}
-              onClick={batchDeploy}
-            >
-              批量下发
+            <button className="primary" disabled={batchDisabled} onClick={() => void batchDeploy()}>
+              {t("toolbar.batchDeploy")}
             </button>
-            <button disabled={batchDisabled} onClick={batchRetract}>
-              批量收回
+            <button disabled={batchDisabled} onClick={() => void batchRetract()}>
+              {t("toolbar.batchRetract")}
             </button>
             <button
               className="danger"
               disabled={batchDeleteDisabled}
-              title="勾选左侧复选框后删除源文件"
+              title={t("toolbar.batchDeleteTitle")}
               onClick={requestBatchDelete}
             >
-              批量删除
+              {t("toolbar.batchDelete")}
             </button>
           </div>
 
           <div className="content-pane">
             {list === null ? (
-              <div className="empty">加载中…</div>
+              <div className="empty">{t("empty.loading")}</div>
             ) : visible.length === 0 ? (
               <div className="empty">
                 {activeKind === "mcp" ? (
-                  <>暂无 MCP server，可编辑 mcp.json 或添加</>
+                  t("empty.mcp")
                 ) : (
-                  <>
-                    暂无资产。在 <code>~/.ai-config/{activeKind}s/</code> 下添加文件后刷新。
-                  </>
+                  <Trans
+                    i18nKey="empty.assets"
+                    values={{ kindDir: kindDirName(t, activeKind) }}
+                    components={{ code: <code /> }}
+                  />
                 )}
               </div>
             ) : (
@@ -552,9 +669,7 @@ export function App() {
                       selected={drawerName === entry.name}
                       onOpen={() => void openAsset(entry.name)}
                       issueReasonFor={(plat) => issueReasonFor(entry, plat)}
-                      onPlatformToggle={(plat) =>
-                        handlePlatformToggle(entry, plat)
-                      }
+                      onPlatformToggle={(plat) => handlePlatformToggle(entry, plat)}
                     />
                   );
                 })}
@@ -576,7 +691,7 @@ export function App() {
                   setDrawerEditing(false);
                   setDrawerDraft(drawerDetail?.content ?? "");
                 }}
-                onSave={saveAsset}
+                onSave={() => void saveAsset()}
                 onDelete={deleteAsset}
               />
             ) : null}
@@ -586,15 +701,14 @@ export function App() {
 
       <footer className="statusbar">
         <span>
-          doctor:{" "}
           {doctor
-            ? `${doctor.broken + doctor.wrong_source + doctor.wrong_type} 异常`
-            : "..."}
+            ? t("statusbar.doctor", { count: doctorIssueCount })
+            : t("statusbar.doctorLoading")}
         </span>
-        <span>secrets: {doctor?.missing_secrets.length ?? 0} 缺</span>
-        <span>projects: {projects.length} 注册</span>
-        <span>broken: {list?.broken_links ?? 0}</span>
-        <span className="right">Phase 3 · W9</span>
+        <span>{t("statusbar.secrets", { count: doctor?.missing_secrets.length ?? 0 })}</span>
+        <span>{t("statusbar.projects", { count: projects.length })}</span>
+        <span>{t("statusbar.broken", { count: list?.broken_links ?? 0 })}</span>
+        <span className="right">{t("app.phase")}</span>
       </footer>
 
       {toast ? (
