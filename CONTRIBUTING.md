@@ -46,6 +46,7 @@ Version numbers must stay in sync across:
 
 - `Cargo.toml` (`[workspace.package].version`)
 - `apps/ai-config-gui/package.json`
+- `apps/ai-config-gui/tauri.conf.json`（**tauri-action / GUI 安装包版本**）
 - `apps/ai-config-gui/src-tauri/tauri.conf.json`
 
 Release checklist:

@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "ai-config",
-    "version": "v0.1.0 · M3 (W9)",
+    "version": "v0.2.0 · M3 (W9)",
     "daemonStopped": "守护进程已停止",
     "phase": "Phase 3 · W9"
   },

@@ -24,20 +24,23 @@ read_version() {
 
 CARGO_VERSION="$(read_version "$ROOT/Cargo.toml" '^version = ')"
 PKG_VERSION="$(read_version "$ROOT/apps/ai-config-gui/package.json" '"version"')"
-TAURI_VERSION="$(read_version "$ROOT/apps/ai-config-gui/src-tauri/tauri.conf.json" '"version"')"
+TAURI_ROOT="$(read_version "$ROOT/apps/ai-config-gui/tauri.conf.json" '"version"')"
+TAURI_SRC="$(read_version "$ROOT/apps/ai-config-gui/src-tauri/tauri.conf.json" '"version"')"
 
 fail=0
-for label in Cargo.toml package.json tauri.conf.json; do
-  case "$label" in
-    Cargo.toml) got="$CARGO_VERSION" ;;
-    package.json) got="$PKG_VERSION" ;;
-    tauri.conf.json) got="$TAURI_VERSION" ;;
-  esac
+check() {
+  local label="$1"
+  local got="$2"
   if [[ "$got" != "$VERSION" ]]; then
     echo "Version mismatch: tag $TAG expects $VERSION but $label has $got" >&2
     fail=1
   fi
-done
+}
+
+check "Cargo.toml" "$CARGO_VERSION"
+check "package.json" "$PKG_VERSION"
+check "apps/ai-config-gui/tauri.conf.json (tauri-action)" "$TAURI_ROOT"
+check "apps/ai-config-gui/src-tauri/tauri.conf.json" "$TAURI_SRC"
 
 if [[ "$fail" -ne 0 ]]; then
   exit 1

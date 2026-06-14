@@ -197,4 +197,4 @@ jobs:
           if ((${#files[@]})); then
             gh release upload "$TAG" "${files[@]}" --clobber
           fi
-          gh release edit "$TAG" --notes-file release-body.md --draft=false
+          gh release edit "$TAG" --title "ai-config v${{ needs.validate.outputs.version }}" --notes-file release-body.md --draft=false
