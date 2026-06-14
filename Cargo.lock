@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-bus"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai-config-core",
  "anyhow",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "camino",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-daemon"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai-config-bus",
  "ai-config-core",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-gui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai-config-core",
  "ai-config-store",
@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ai-config-core",
  "anyhow",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-watcher"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "camino",
