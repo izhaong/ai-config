@@ -366,6 +366,15 @@ fn agent_edit_path(src: &Utf8Path) -> Option<Utf8PathBuf> {
     None
 }
 
+/// Agent 源路径 → 实际读取的 markdown 文件(单文件或目录内主文件)。
+fn agent_read_path(src: &Utf8Path) -> Utf8PathBuf {
+    if src.is_dir() {
+        agent_edit_path(src).unwrap_or_else(|| src.join("AGENT.md"))
+    } else {
+        src.to_path_buf()
+    }
+}
+
 /// skill 下发目标为整个目录(`skills/<name>/`),非单文件 `SKILL.md`。
 fn skill_link_src(skill_md: &Utf8Path) -> Utf8PathBuf {
     skill_md
@@ -433,19 +442,10 @@ fn parse_skill_meta(content: &str) -> (Option<String>, String) {
 /// 从 SKILL.md / mcp.json 等源文件抽"一句话描述"。
 ///
 /// - Skill:frontmatter `description:` 或 H1 回退
-/// - Rule:`rules/*.mdc` H1;失败回退空
+/// - Rule:frontmatter `description:` 或 H1 回退(与 skill 同解析)
 /// - Mcp:读 mcp server JSON 的 `description` 字段(可选)
-/// - Agent:`agents/<name>/AGENT.md` H1(若有)
+/// - Agent:frontmatter `description:` 或 H1 回退(与 skill 同解析)
 fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
-    fn first_h1(content: &str) -> String {
-        for line in content.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("# ") {
-                return rest.chars().take(80).collect::<String>().trim().to_string();
-            }
-        }
-        String::new()
-    }
     match kind {
         AssetKind::Skill => std::fs::read_to_string(src)
             .ok()
@@ -453,7 +453,7 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
             .unwrap_or_default(),
         AssetKind::Rule => std::fs::read_to_string(src)
             .ok()
-            .map(|c| first_h1(&c))
+            .map(|c| parse_skill_meta(&c).1)
             .unwrap_or_default(),
         AssetKind::Mcp => std::fs::read_to_string(src)
             .ok()
@@ -464,18 +464,10 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
                     .map(|s| s.chars().take(80).collect::<String>())
             })
             .unwrap_or_default(),
-        AssetKind::Agent => {
-            // agent 可能是目录或单文件;目录找 AGENT.md,单文件直接读 H1
-            let target: Utf8PathBuf = if src.is_dir() {
-                src.join("AGENT.md")
-            } else {
-                src.to_path_buf()
-            };
-            std::fs::read_to_string(&target)
-                .ok()
-                .map(|c| first_h1(&c))
-                .unwrap_or_default()
-        }
+        AssetKind::Agent => std::fs::read_to_string(agent_read_path(src))
+            .ok()
+            .map(|c| parse_skill_meta(&c).1)
+            .unwrap_or_default(),
     }
 }
 
@@ -1259,6 +1251,41 @@ fn core_err_to_string(e: CoreError) -> String {
 }
 
 // ── Tauri 主入口 ──────────────────────────────────────────────────
+
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+
+    #[test]
+    fn agent_description_uses_frontmatter_like_skill() {
+        let content = r#"---
+name: frontend-dev
+description: zh-cloud Web frontend expert
+---
+
+你是专家。
+"#;
+        assert_eq!(parse_skill_meta(content).1, "zh-cloud Web frontend expert");
+    }
+
+    #[test]
+    fn rule_description_uses_frontmatter() {
+        let content = r#"---
+description: 跨端 UX 默认偏好
+alwaysApply: false
+---
+
+## 一般原则
+"#;
+        assert_eq!(parse_skill_meta(content).1, "跨端 UX 默认偏好");
+    }
+
+    #[test]
+    fn agent_description_falls_back_to_h1_without_frontmatter() {
+        let content = "# My Agent Title\n\nbody";
+        assert_eq!(parse_skill_meta(content).1, "My Agent Title");
+    }
+}
 
 /// Tauri 主入口。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
