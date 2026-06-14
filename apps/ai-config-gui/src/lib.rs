@@ -517,7 +517,8 @@ async fn cmd_skill_get(
     name: String,
     project: Option<String>,
 ) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
     let content =
         std::fs::read_to_string(&skill_md).map_err(|e| format!("读取 SKILL.md 失败: {e}"))?;
@@ -540,7 +541,8 @@ async fn cmd_skill_save(
     content: String,
     project: Option<String>,
 ) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
     let path = skill_md.to_string();
     tokio::task::spawn_blocking(move || std::fs::write(&path, &content))
@@ -558,7 +560,13 @@ async fn cmd_skill_delete(
     project: Option<String>,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(&default_root, &asset_root, &deploy_base, AssetKind::Skill, &name);
+    retract_all_platforms_best_effort(
+        &default_root,
+        &asset_root,
+        &deploy_base,
+        AssetKind::Skill,
+        &name,
+    );
     let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
     let skill_dir = skill_md
         .parent()
@@ -644,7 +652,8 @@ async fn cmd_rule_get(
     name: String,
     project: Option<String>,
 ) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
     let content = std::fs::read_to_string(&src).map_err(|e| format!("读取 rule 失败: {e}"))?;
     let (fm_name, description) = parse_skill_meta(&content);
@@ -665,7 +674,8 @@ async fn cmd_rule_save(
     content: String,
     project: Option<String>,
 ) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
     let path = src.to_string();
     tokio::task::spawn_blocking(move || std::fs::write(&path, &content))
@@ -682,7 +692,13 @@ async fn cmd_rule_delete(
     project: Option<String>,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(&default_root, &asset_root, &deploy_base, AssetKind::Rule, &name);
+    retract_all_platforms_best_effort(
+        &default_root,
+        &asset_root,
+        &deploy_base,
+        AssetKind::Rule,
+        &name,
+    );
     let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
     let path = src.to_path_buf();
     let path_str = path.to_string();
@@ -699,7 +715,8 @@ async fn cmd_mcp_get(
     name: String,
     project: Option<String>,
 ) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
     let asset_root = mcp_asset_root(&mcp_path)?;
     let config = mcp_json::get_server_config(asset_root, &name)
@@ -783,7 +800,8 @@ async fn cmd_mcp_save(
     content: String,
     project: Option<String>,
 ) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
     let asset_root = mcp_asset_root(&mcp_path)?;
     let config = serde_json::from_str::<serde_json::Value>(&content)
@@ -809,7 +827,13 @@ async fn cmd_mcp_delete(
     project: Option<String>,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(&default_root, &asset_root, &deploy_base, AssetKind::Mcp, &name);
+    retract_all_platforms_best_effort(
+        &default_root,
+        &asset_root,
+        &deploy_base,
+        AssetKind::Mcp,
+        &name,
+    );
     let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
     let asset_root = mcp_asset_root(&mcp_path)?;
     let asset_root_for_blocking = asset_root.to_path_buf();
@@ -829,7 +853,8 @@ async fn cmd_agent_get(
     name: String,
     project: Option<String>,
 ) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
     let read_path = agent_edit_path(&src).unwrap_or_else(|| src.clone());
     let content =
@@ -855,7 +880,8 @@ async fn cmd_agent_save(
     content: String,
     project: Option<String>,
 ) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (default_root, asset_root, _deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
     let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
     let write_path = agent_edit_path(&src).unwrap_or_else(|| src.clone());
     let path = write_path.to_string();
@@ -873,7 +899,13 @@ async fn cmd_agent_delete(
     project: Option<String>,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(&default_root, &asset_root, &deploy_base, AssetKind::Agent, &name);
+    retract_all_platforms_best_effort(
+        &default_root,
+        &asset_root,
+        &deploy_base,
+        AssetKind::Agent,
+        &name,
+    );
     let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
     let path = src.to_path_buf();
     let path_str = path.to_string();
@@ -1179,10 +1211,7 @@ fn scan_assets_for_scope(
 }
 
 /// 定位当前作用域的 `mcp.json` 源路径。
-fn locate_mcp_json(
-    default_root: &Utf8Path,
-    asset_root: &Utf8Path,
-) -> Result<Utf8PathBuf, String> {
+fn locate_mcp_json(default_root: &Utf8Path, asset_root: &Utf8Path) -> Result<Utf8PathBuf, String> {
     let scan = scan_assets_for_scope(default_root, asset_root)?;
     scan.mcp_json
         .ok_or_else(|| format!("源 `{}` 找不到", mcp_json::MCP_ASSET_NAME))

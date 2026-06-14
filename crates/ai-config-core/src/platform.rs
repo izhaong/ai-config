@@ -206,7 +206,10 @@ pub fn for_id(id: PlatformId) -> Result<Box<dyn PlatformAdapter>, CoreError> {
 ///
 /// - `deploy_base == $HOME`:与 `for_id` 相同(Hermes 尊重 `HERMES_SKILLS_DIR`)。
 /// - 项目作用域:`deploy_base` 为仓库根,平台目录在 `<repo>/.cursor` 等。
-pub fn for_scope(id: PlatformId, deploy_base: &camino::Utf8Path) -> Result<Box<dyn PlatformAdapter>, CoreError> {
+pub fn for_scope(
+    id: PlatformId,
+    deploy_base: &camino::Utf8Path,
+) -> Result<Box<dyn PlatformAdapter>, CoreError> {
     if deploy_base == home() {
         return match id {
             PlatformId::Cursor => cursor_adapter(),

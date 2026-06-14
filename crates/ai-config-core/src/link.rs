@@ -755,7 +755,8 @@ mod tests {
     fn link_creates_missing_parent_dir_for_rule_like_dest() {
         let tmp = tempfile::tempdir().unwrap();
         let src = Utf8PathBuf::from_path_buf(tmp.path().join("source.mdc")).unwrap();
-        let dest = Utf8PathBuf::from_path_buf(tmp.path().join(".cursor/rules/my-rule.mdc")).unwrap();
+        let dest =
+            Utf8PathBuf::from_path_buf(tmp.path().join(".cursor/rules/my-rule.mdc")).unwrap();
         fs::write(&src, b"rule").unwrap();
         assert!(!dest.parent().unwrap().exists());
 
