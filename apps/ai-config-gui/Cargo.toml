@@ -17,6 +17,7 @@ tauri-build = { workspace = true }
 [dependencies]
 ai-config-core = { path = "../../crates/ai-config-core" }
 ai-config-store = { path = "../../crates/ai-config-store" }
+ai-config-watcher = { path = "../../crates/ai-config-watcher" }
 tauri = { workspace = true, features = [] }
 tauri-plugin-shell = { workspace = true }
 camino = { workspace = true }

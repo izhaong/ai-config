@@ -1,0 +1,200 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: validate tag & changelog
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve tag
+        id: meta
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+            git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" || true
+            git checkout "$TAG"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Verify tag matches workspace version
+        run: bash .github/scripts/verify-tag-version.sh "${{ steps.meta.outputs.tag }}"
+      - name: Extract CHANGELOG section
+        run: bash .github/scripts/extract-changelog.sh "${{ steps.meta.outputs.version }}" release-notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+
+  build-cli:
+    name: build cli (${{ matrix.target }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build & package CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p ai-config-cli --release --target "${{ matrix.target }}"
+          VERSION="${{ needs.validate.outputs.version }}"
+          TRIPLE="${{ matrix.target }}"
+          mkdir -p artifacts/cli
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "target/${TRIPLE}/release/ai-config.exe" "artifacts/cli/"
+            powershell Compress-Archive -Path "artifacts/cli/ai-config.exe" -DestinationPath "artifacts/cli/ai-config-${VERSION}-${TRIPLE}.zip" -Force
+            rm "artifacts/cli/ai-config.exe"
+          else
+            cp "target/${TRIPLE}/release/ai-config" "artifacts/cli/ai-config"
+            tar -C artifacts/cli -czf "artifacts/cli/ai-config-${VERSION}-${TRIPLE}.tar.gz" ai-config
+            rm "artifacts/cli/ai-config"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: artifacts/cli/*
+          if-no-files-found: error
+
+  build-gui:
+    name: build gui (${{ matrix.platform }})
+    needs: validate
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/ai-config-gui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+      - name: Install frontend dependencies
+        working-directory: apps/ai-config-gui
+        run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/ai-config-gui
+          tauriScript: npm run tauri
+          args: --target ${{ matrix.target }}
+          tagName: ${{ needs.validate.outputs.tag }}
+          releaseName: ai-config v__VERSION__
+          releaseBody: |
+            Automated release for ${{ needs.validate.outputs.tag }}.
+            Full notes are attached when the release job completes.
+          releaseDraft: true
+          prerelease: false
+
+  publish:
+    name: publish GitHub Release
+    needs: [validate, build-cli, build-gui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: dist/cli
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+      - name: Assemble release body
+        run: |
+          set -euo pipefail
+          {
+            echo "# ai-config v${{ needs.validate.outputs.version }}"
+            echo
+            cat release-notes.md
+            echo
+            echo "## Downloads"
+            echo
+            echo "### CLI"
+            echo "- Linux / macOS: \`ai-config-*-*.tar.gz\`"
+            echo "- Windows: \`ai-config-*-*.zip\`"
+            echo
+            echo "### Desktop (Tauri)"
+            echo "- Platform installers are attached by the Tauri build (deb/app/dmg/msi/exe)."
+          } > release-body.md
+      - name: Upload CLI artifacts to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.validate.outputs.tag }}"
+          RELEASE_ID="$(gh release view "$TAG" --json databaseId -q .databaseId)"
+          shopt -s nullglob
+          files=(dist/cli/*)
+          if ((${#files[@]})); then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          fi
+          gh release edit "$TAG" --notes-file release-body.md --draft=false

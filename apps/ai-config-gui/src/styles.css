@@ -97,11 +97,30 @@ button.primary:hover:not(:disabled) {
 }
 
 .topbar .status {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
   color: var(--fg-dim);
+}
+
+.topbar .spacer {
+  flex: 1;
+}
+
+.lang-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+}
+
+.lang-switch select {
+  background: var(--bg-elev-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
 }
 
 .topbar .status .dot {
@@ -540,11 +559,21 @@ button.danger:disabled {
 }
 
 .skill-drawer-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 16px;
+  position: relative;
+  padding: 14px 44px 14px 16px;
   border-bottom: 1px solid var(--border);
+}
+
+.skill-drawer-header > div:first-child {
+  min-width: 0;
+}
+
+.skill-drawer-header .icon-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  flex-shrink: 0;
+  z-index: 1;
 }
 
 .skill-drawer-header h4 {
@@ -564,6 +593,7 @@ button.danger:disabled {
   padding: 4px 8px;
   font-size: 14px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .skill-drawer-body {

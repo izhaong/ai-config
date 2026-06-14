@@ -1,5 +1,7 @@
+import { useTranslation } from "react-i18next";
+
 import type { AssetDetail, AssetKind } from "./types";
-import { ASSET_LABEL } from "./types";
+import { assetKindLabel } from "./i18n/labels";
 
 interface AssetDrawerProps {
   kind: AssetKind;
@@ -30,7 +32,8 @@ export function AssetDrawer({
   onSave,
   onDelete,
 }: AssetDrawerProps) {
-  const label = ASSET_LABEL[kind];
+  const { t } = useTranslation();
+  const label = assetKindLabel(t, kind);
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
@@ -49,7 +52,7 @@ export function AssetDrawer({
 
         <div className="skill-drawer-body">
           {loading && !detail ? (
-            <div className="empty">加载中…</div>
+            <div className="empty">{t("drawer.loading")}</div>
           ) : editing ? (
             <textarea
               className="skill-editor"
@@ -72,19 +75,19 @@ export function AssetDrawer({
           {editing ? (
             <>
               <button disabled={loading} onClick={onCancelEdit}>
-                取消
+                {t("drawer.cancel")}
               </button>
               <button className="primary" disabled={loading} onClick={onSave}>
-                保存
+                {t("drawer.save")}
               </button>
             </>
           ) : (
             <>
               <button className="danger" disabled={loading} onClick={onDelete}>
-                删除{label}
+                {t("drawer.delete", { label })}
               </button>
               <button disabled={loading || !detail} onClick={onEdit}>
-                编辑
+                {t("drawer.edit")}
               </button>
             </>
           )}

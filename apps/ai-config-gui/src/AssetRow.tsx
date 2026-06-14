@@ -1,5 +1,8 @@
+import { useTranslation } from "react-i18next";
+
+import { platformUiLabel } from "./i18n/labels";
 import type { AssetEntry, Platform } from "./types";
-import { isPlatformActive, platformUiLabel } from "./types";
+import { isPlatformActive } from "./types";
 import { PLATFORM_FAVICON, PLATFORM_NAME } from "./platformIcons";
 
 interface AssetRowProps {
@@ -23,6 +26,8 @@ export function AssetRow({
   onOpen,
   onPlatformToggle,
 }: AssetRowProps) {
+  const { t } = useTranslation();
+
   return (
     <div className={`asset-row${selected ? " selected" : ""}${checked ? " checked" : ""}`}>
       {onCheckedChange ? (
@@ -51,7 +56,7 @@ export function AssetRow({
         tabIndex={onOpen ? 0 : undefined}
       >
         <div className="name">{entry.name}</div>
-        <div className="desc">{entry.description || "(无描述)"}</div>
+        <div className="desc">{entry.description || t("drawer.noDescription")}</div>
       </div>
 
       <div className="platform-actions">
@@ -62,8 +67,11 @@ export function AssetRow({
           const platUnsupported = !!issueReason;
           const disabled = loading || platUnsupported;
           const title = platUnsupported
-            ? `${PLATFORM_NAME[p]}: ${issueReason}`
-            : `${PLATFORM_NAME[p]} · ${platformUiLabel(active)} · ${active ? "点击移除" : "点击下发"}`;
+            ? t("platform.unsupported", {
+                platform: PLATFORM_NAME[p],
+                reason: issueReason,
+              })
+            : `${PLATFORM_NAME[p]} · ${platformUiLabel(t, active)} · ${active ? t("platform.clickRemove") : t("platform.clickDeploy")}`;
 
           return (
             <button

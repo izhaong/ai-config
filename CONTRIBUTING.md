@@ -40,6 +40,31 @@ docs: 更新 README Quick Start
 - Keep PRs focused; prefer several small PRs over one large diff.
 - Ensure CI passes (fmt, clippy, tests).
 
+## Releases (GitHub)
+
+Version numbers must stay in sync across:
+
+- `Cargo.toml` (`[workspace.package].version`)
+- `apps/ai-config-gui/package.json`
+- `apps/ai-config-gui/src-tauri/tauri.conf.json`
+
+Release checklist:
+
+1. Move notes under `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section in [CHANGELOG.md](CHANGELOG.md).
+2. Bump all version fields above to `X.Y.Z`.
+3. Commit on `develop`, push to Gitea (`origin`) and GitHub (`github`).
+4. Create and push an annotated tag:
+
+   ```bash
+   git tag -a vX.Y.Z -m "release: vX.Y.Z"
+   git push origin vX.Y.Z
+   git push github vX.Y.Z
+   ```
+
+5. GitHub Actions **Release** workflow validates the tag, builds CLI + Tauri GUI artifacts, and publishes [GitHub Releases](https://github.com/izhaong/ai-config/releases) with CHANGELOG notes.
+
+To rebuild an existing tag manually: Actions → **Release** → **Run workflow** → enter `vX.Y.Z`.
+
 ## Dual remotes (optional)
 
 If you also push to a private Gitea instance:

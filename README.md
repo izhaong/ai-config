@@ -1,6 +1,7 @@
 # ai-config
 
-[![CI](https://img.shields.io/github/actions/workflow/status/izhaong/ai-config/ci.yml?branch=develop&label=CI)](https://github.com/izhaong/ai-config/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/izhaong/ai-config/ci.yml?branch=develop&label=CI)](https://github.com/izhaong/ai-config/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/izhaong/ai-config?label=release)](https://github.com/izhaong/ai-config/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.78%2B-orange.svg)](https://www.rust-lang.org/)
 
@@ -12,12 +13,12 @@
 
 ## Supported IDEs
 
-| IDE | Typical paths (after `install`) |
-| --- | --- |
-| **Cursor** | `~/.cursor/skills/`, `~/.cursor/mcp.json` |
-| **Codex** | `~/.codex/skills/` |
-| **Claude Code** | `~/.claude/skills/`, rules via project symlinks |
-| **Hermes** | `~/.hermes/skills/` (optional `HERMES_SKILLS_DIR`) |
+| IDE             | Typical paths (after `install`)                    |
+| --------------- | -------------------------------------------------- |
+| **Cursor**      | `~/.cursor/skills/`, `~/.cursor/mcp.json`          |
+| **Codex**       | `~/.codex/skills/`                                 |
+| **Claude Code** | `~/.claude/skills/`, rules via project symlinks    |
+| **Hermes**      | `~/.hermes/skills/` (optional `HERMES_SKILLS_DIR`) |
 
 ---
 
@@ -84,19 +85,19 @@ Put real API keys in `~/.config/ai-config/secrets.env` (see `templates/project` 
 
 ## CLI commands
 
-| Command | Purpose |
-| --- | --- |
-| `install` | One-shot setup: dirs, symlinks, optional migration |
-| `uninstall` | Remove managed links; backup MCP files |
-| `sync` | Push skills/rules/MCP to all configured platforms |
-| `status` | Show last sync state |
-| `list` / `show` | List or inspect managed assets |
-| `doctor` | Health check (`--json` for agents) |
-| `secrets` | Manage `secrets.env` helpers |
+| Command                  | Purpose                                               |
+| ------------------------ | ----------------------------------------------------- |
+| `install`                | One-shot setup: dirs, symlinks, optional migration    |
+| `uninstall`              | Remove managed links; backup MCP files                |
+| `sync`                   | Push skills/rules/MCP to all configured platforms     |
+| `status`                 | Show last sync state                                  |
+| `list` / `show`          | List or inspect managed assets                        |
+| `doctor`                 | Health check (`--json` for agents)                    |
+| `secrets`                | Manage `secrets.env` helpers                          |
 | `skill` / `rule` / `mcp` | Per-asset operations (incl. `mcp deploy` / `retract`) |
-| `daemon` | Background watcher (when enabled) |
-| `gui` | Launch Tauri UI |
-| `completion` | Shell completions |
+| `daemon`                 | Background watcher (when enabled)                     |
+| `gui`                    | Launch Tauri UI                                       |
+| `completion`             | Shell completions                                     |
 
 Global flags: `--json`, `--quiet`, `--root <PATH>` (or `AI_CONFIG_ROOT`).
 
@@ -118,10 +119,16 @@ ai-config mcp --help
 ```bash
 cargo fmt
 cargo clippy -p ai-config-core -p ai-config-cli -p ai-config-store -p ai-config-daemon -p ai-config-bus -p ai-config-watcher -- -D warnings
-cargo test -p ai-config-core -p ai-config-cli
+cargo test -p ai-config-core -p ai-config-cli -p ai-config-store
 ```
 
-GUI (Tauri) builds locally with extra deps; CI runs Rust library/CLI crates on Ubuntu.
+**GUI (Tauri)** — bilingual UI (中文 / English), language switcher in the top bar; locale files under `apps/ai-config-gui/src/i18n/locales/`. While the app is running, it watches `~/.ai-config/{skills,rules,agents}` and `mcp.json` (plus registered project asset roots) and refreshes the asset list and per-platform link status automatically (~200ms debounce).
+
+```bash
+cd apps/ai-config-gui && npm install && npm run tauri:dev
+```
+
+CI runs on **Ubuntu + macOS**; GUI (Tauri) desktop bundles are built on **tagged releases** (`vX.Y.Z`). See [CONTRIBUTING.md](CONTRIBUTING.md#releases-github).
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security: [SECURITY.md](SECURITY.md)
 
@@ -131,10 +138,10 @@ Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Security: [SECURITY.md](SECU
 
 This project is developed on Gitea and mirrored to GitHub.
 
-| Remote | URL |
-| --- | --- |
+| Remote   | URL                                                                   |
+| -------- | --------------------------------------------------------------------- |
 | `origin` | `https://gitea.example.com/your-org/ai-config.git` (primary internal) |
-| `github` | `https://github.com/izhaong/ai-config.git` (public mirror) |
+| `github` | `https://github.com/izhaong/ai-config.git` (public mirror)            |
 
 ```bash
 git remote add github https://github.com/izhaong/ai-config.git   # once
@@ -152,11 +159,11 @@ git push origin develop && git push github develop
 
 ## Troubleshooting
 
-| Issue | Action |
-| --- | --- |
-| Cursor cannot see a skill | Run `ai-config install`, restart Cursor |
-| MCP missing env vars | Fill `secrets.env`, then `ai-config sync` |
-| Empty skill list | Add folders under `~/.ai-config/skills/` |
+| Issue                     | Action                                    |
+| ------------------------- | ----------------------------------------- |
+| Cursor cannot see a skill | Run `ai-config install`, restart Cursor   |
+| MCP missing env vars      | Fill `secrets.env`, then `ai-config sync` |
+| Empty skill list          | Add folders under `~/.ai-config/skills/`  |
 
 ---
 

@@ -6,9 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-14
+
 ### Added
 
-- GitHub open-source docs: README, CONTRIBUTING, CI workflow, issue/PR templates.
+- GitHub CI: fmt / clippy / test on Ubuntu & macOS; GUI frontend smoke build.
+- GitHub Release workflow: tag `vX.Y.Z` builds CLI (Linux/macOS/Windows) + Tauri GUI installers; release notes from `CHANGELOG.md`.
+- GitHub open-source docs: README, CONTRIBUTING, issue/PR templates.
 - MIT `LICENSE`.
 
 ### Changed
@@ -19,3 +23,5 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Security
 
 - Documented vulnerability reporting via GitHub Security Advisories.
+
+[0.1.0]: https://github.com/izhaong/ai-config/releases/tag/v0.1.0
