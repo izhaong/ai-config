@@ -5,7 +5,6 @@ use serde_json::{Map, Value};
 
 use crate::error::CoreError;
 use crate::model::PlatformId;
-use crate::platform;
 use crate::template::{
     atomic_write_json, mcp_server_sync_state, read_mcp_json, remove_mcp_server_entry,
     upsert_mcp_server_entry, McpSyncState,
@@ -270,7 +269,17 @@ pub fn mcp_server_sync_state_for_platform(
     server_name: &str,
     plat: PlatformId,
 ) -> McpSyncState {
-    let Ok(adapter) = platform::for_id(plat) else {
+    mcp_server_sync_state_for_platform_at(asset_root, server_name, plat, &crate::paths::global_deploy_base())
+}
+
+/// 指定下发根目录的 MCP 同步状态(项目作用域传仓库根)。
+pub fn mcp_server_sync_state_for_platform_at(
+    asset_root: &Utf8Path,
+    server_name: &str,
+    plat: PlatformId,
+    deploy_base: &Utf8Path,
+) -> McpSyncState {
+    let Ok(adapter) = crate::platform::for_scope(plat, deploy_base) else {
         return McpSyncState::Broken;
     };
     mcp_server_sync_state_on_platform(asset_root, server_name, &adapter.mcp_json_path())

@@ -42,6 +42,9 @@
     "items": "{{count}} items",
     "selected": " · {{count}} selected",
     "processing": " (working…)",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "refreshTitle": "Reload asset list and link status for the current project",
     "batchDeploy": "Deploy all",
     "batchRetract": "Retract all",
     "batchDelete": "Delete selected",
@@ -49,8 +52,10 @@
   },
   "empty": {
     "loading": "Loading…",
-    "mcp": "No MCP servers yet. Edit mcp.json or add one.",
-    "assets": "No assets yet. Add files under <code>~/.ai-config/{{kindDir}}/</code> and refresh."
+    "mcp": "No MCP servers yet. Add entries in <code>{{assetRoot}}/mcp.json</code>",
+    "mcpGlobal": "No MCP servers yet. Add entries in <code>~/.ai-config/mcp.json</code>",
+    "assets": "No assets yet. Add files under <code>{{assetRoot}}/{{kindDir}}/</code>",
+    "assetsGlobal": "No assets yet. Add files under <code>~/.ai-config/{{kindDir}}/</code>"
   },
   "drawer": {
     "loading": "Loading…",
@@ -68,7 +73,16 @@
     "deleteSourceMessage": "Permanently delete {{label}} “{{name}}”",
     "delete": "Delete",
     "batchDelete": "Batch delete",
-    "batchDeleteMessage": "Permanently delete {{count}} {{label}} source file(s) and best-effort retract from all platforms."
+    "batchDeleteMessage": "Permanently delete {{count}} {{label}} source file(s) and best-effort retract from all platforms.",
+    "removeProject": "Remove project",
+    "removeProjectMessage": "Remove project `{{name}}` from this tool?"
+  },
+  "registerProject": {
+    "title": "Register project",
+    "nameLabel": "Project name (unique in store)",
+    "rootLabel": "Absolute root path",
+    "rootHint": "Repo root; creates <repo>/.ai-config/ (same layout as ~/.ai-config: skills, rules, agents, mcp.json)",
+    "submit": "Register"
   },
   "statusbar": {
     "doctor": "doctor: {{count}} issues",

@@ -676,10 +676,10 @@ fn describe_for(
             (dest, src)
         }
         AssetKind::Agent => {
-            let ext = "md";
-            let dest = adapter.agents_dir().join(format!("{name}.{ext}"));
-            let src = default_root.join("agents").join(format!("{name}.{ext}"));
-            (dest, src)
+            let dest = sync::asset_dest_for(platform, kind, name, _src)
+                .unwrap_or_else(|| adapter.agents_dir().join(name));
+            let expected_src = sync::agent_link_src(_src);
+            (dest, expected_src)
         }
         AssetKind::Mcp => {
             let state = match mcp_json::mcp_json_file_sync_state(_src, &adapter.mcp_json_path()) {
