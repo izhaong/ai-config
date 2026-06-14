@@ -99,6 +99,18 @@ pub fn agent_link_src(src: &Utf8Path) -> camino::Utf8PathBuf {
     src.to_path_buf()
 }
 
+/// `Create` 动作执行链接时使用的源路径(skill 链目录而非 `SKILL.md`)。
+pub fn link_src_for_create(kind: AssetKind, src: &Utf8Path) -> camino::Utf8PathBuf {
+    match kind {
+        AssetKind::Skill => src
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| src.to_path_buf()),
+        AssetKind::Agent => agent_link_src(src),
+        AssetKind::Rule | AssetKind::Mcp => src.to_path_buf(),
+    }
+}
+
 fn dest_for(
     plat: PlatformId,
     kind: AssetKind,
@@ -139,7 +151,12 @@ pub fn compute_for_project(
     default_root: &Utf8Path,
 ) -> Result<Vec<SyncAction>, CoreError> {
     let (repo_root, asset_root) = paths::resolve_project_roots(&project.root_path);
-    let deploy_base = paths::project_deploy_base(&repo_root);
+    // 历史 CLI `--root` 直接指向资产根(skills/ 在顶层)时,下发到 $HOME 而非自环到同目录。
+    let deploy_base = if repo_root == asset_root && paths::is_asset_root(&asset_root) {
+        paths::global_deploy_base()
+    } else {
+        paths::project_deploy_base(&repo_root)
+    };
     let merged = source::scan_with_override(&asset_root, default_root)?;
     let mut out: Vec<SyncAction> = Vec::new();
     let platforms = all_platforms();
@@ -208,6 +225,7 @@ pub fn compute_for_project(
                             item_id,
                             platform: *plat,
                             dest,
+                            src: src.clone(),
                         });
                     }
                 }

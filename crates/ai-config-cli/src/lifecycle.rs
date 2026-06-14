@@ -134,36 +134,6 @@ impl Outcome {
     }
 }
 
-/// 反推 src 路径:dest 在 `<home>/.cursor/skills/foo` 之类,src 在 `<root>/skills/foo/SKILL.md`。
-fn infer_src_for_create(
-    dest: &camino::Utf8Path,
-    platform: PlatformId,
-    kind: &str,
-    default_root: &Utf8Path,
-) -> camino::Utf8PathBuf {
-    let adapter = match platform::for_id(platform) {
-        Ok(a) => a,
-        Err(_) => return dest.to_path_buf(),
-    };
-    let dir = match kind {
-        "skill" => adapter.skills_dir(),
-        "rule" => adapter.rules_dir(),
-        "agent" => adapter.agents_dir(),
-        _ => return dest.to_path_buf(),
-    };
-    if let Ok(rel) = dest.strip_prefix(dir.as_path()) {
-        return default_root
-            .join(match kind {
-                "skill" => "skills",
-                "rule" => "rules",
-                "agent" => "agents",
-                _ => "",
-            })
-            .join(rel);
-    }
-    dest.to_path_buf()
-}
-
 fn infer_kind_from_dest(dest: &camino::Utf8Path) -> &'static str {
     let s = dest.as_str();
     if s.contains("/skills/") || s.ends_with("/skills") {
@@ -187,10 +157,16 @@ fn execute_all_actions(ctx: &SyncContext, default_root: &Utf8Path) -> Vec<Outcom
             SyncAction::Create {
                 platform,
                 dest,
+                src,
                 item_id: _,
             } => {
                 let kind = infer_kind_from_dest(dest);
-                let src = infer_src_for_create(dest, *platform, kind, default_root);
+                let link_src = match kind {
+                    "skill" => ai_config_core::sync::link_src_for_create(AssetKind::Skill, src),
+                    "rule" => ai_config_core::sync::link_src_for_create(AssetKind::Rule, src),
+                    "agent" => ai_config_core::sync::link_src_for_create(AssetKind::Agent, src),
+                    _ => src.clone(),
+                };
                 let label = format!("Create {} → {}", kind, dest);
                 // 确保父目录存在
                 if let Some(parent) = dest.parent() {
@@ -208,7 +184,7 @@ fn execute_all_actions(ctx: &SyncContext, default_root: &Utf8Path) -> Vec<Outcom
                         }
                     }
                 }
-                match link::link(&src, dest, LinkKind::auto()) {
+                match link::link(&link_src, dest, LinkKind::auto()) {
                     Ok(()) => out.push(Outcome::ok(label, *platform, kind)),
                     Err(e) => out.push(Outcome::failed(label, *platform, kind, &e)),
                 }
