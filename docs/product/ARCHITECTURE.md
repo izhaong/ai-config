@@ -44,13 +44,13 @@
 
 ## 2. 组件清单
 
-| 组件 | 形态 | 何时跑 | 谁启动 |
-| --- | --- | --- | --- |
-| `ai-configd-core` | Rust lib | 编译时 | — |
-| `ai-configd-cli` | Rust bin | 一次性 | 人类 / agent 调 |
-| `ai-configd-daemon` | Rust bin（与 cli 同二进制 `ai-configd watch`） | 长驻 | 用户手动启 / 未来 launchd |
-| `ai-configd-gui` | Tauri 2 应用 | 用户开窗时 | 人类点图标 / `ai-configd gui` |
-| **发布形态** | 单二进制 `ai-configd` + macOS `.app` | — | — |
+| 组件                | 形态                                           | 何时跑     | 谁启动                        |
+| ------------------- | ---------------------------------------------- | ---------- | ----------------------------- |
+| `ai-configd-core`   | Rust lib                                       | 编译时     | —                             |
+| `ai-configd-cli`    | Rust bin                                       | 一次性     | 人类 / agent 调               |
+| `ai-configd-daemon` | Rust bin（与 cli 同二进制 `ai-configd watch`） | 长驻       | 用户手动启 / 未来 launchd     |
+| `ai-configd-gui`    | Tauri 2 应用                                   | 用户开窗时 | 人类点图标 / `ai-configd gui` |
+| **发布形态**        | 单二进制 `ai-configd` + macOS `.app`           | —          | —                             |
 
 ### 2.1 单二进制 vs 多二进制
 
@@ -171,7 +171,9 @@ mcp/servers/<name>.json (逐项)          secrets.env (0600, git 外)
     ~/.cursor/mcp.json   (原子写：tmp + rename)
     ~/.codex/mcp.json    (同上)
     ~/.claude/mcp.json   (同上)
-    ~/.hermes/mcp.json   (同上)
+    ~/.hermes/config.yaml  (YAML `mcp_servers:` 段 merge；保留 model/provider 等其它键)
+    ~/.hermes/skills/      (全局 skills；项目作用域也写 $HOME)
+    <repo>/.cursor/rules/  (Hermes 仅项目级 rules)
 ```
 
 ---
@@ -186,7 +188,8 @@ pub trait PlatformAdapter {
     fn skills_dir(&self) -> PathBuf;         // ~/.cursor/skills
     fn rules_dir(&self) -> PathBuf;          // ~/.cursor/rules
     fn agents_dir(&self) -> PathBuf;         // ~/.cursor/agents   (注：Codex 叫 subagents)
-    fn mcp_json_path(&self) -> PathBuf;      // ~/.cursor/mcp.json
+    fn mcp_json_path(&self) -> PathBuf;      // ~/.cursor/mcp.json（Hermes → ~/.hermes/config.yaml）
+    fn mcp_deploy_path(&self) -> PathBuf;     // 同上；Hermes 项目作用域仍返回 $HOME/.hermes/config.yaml
     fn supports(&self, asset: AssetKind) -> bool {  // 平台级能力探测
         match asset {
             AssetKind::Mcp => true,
@@ -209,38 +212,38 @@ pub trait PlatformAdapter {
 
 ### 6.1 为啥 Rust（不 Go / 不 Python）
 
-| 维度 | Rust | Go | Python |
-|---|---|---|---|
-| 跨平台编译 | 一等公民 | 一等公民 | 痛 |
-| 单二进制分发 | 静态链接天然 | 静态链接天然 | 需 PyInstaller / 类似 |
-| Tauri 集成 | 原生 | 不能用 Tauri | 不能用 Tauri |
-| 文件 IO 性能 | 优 | 优 | 一般 |
-| 学习曲线 | 陡 | 缓 | 缓 |
-| 与现有 Rust 工具（redis-cli 类似）一致 | ✅ | — | — |
+| 维度                                   | Rust         | Go           | Python                |
+| -------------------------------------- | ------------ | ------------ | --------------------- |
+| 跨平台编译                             | 一等公民     | 一等公民     | 痛                    |
+| 单二进制分发                           | 静态链接天然 | 静态链接天然 | 需 PyInstaller / 类似 |
+| Tauri 集成                             | 原生         | 不能用 Tauri | 不能用 Tauri          |
+| 文件 IO 性能                           | 优           | 优           | 一般                  |
+| 学习曲线                               | 陡           | 缓           | 缓                    |
+| 与现有 Rust 工具（redis-cli 类似）一致 | ✅           | —            | —                     |
 
 **结论**：Tauri 2 强绑 Rust + 单二进制诉求 → 选 Rust。学习曲线是代价，但**这是技术债不是产品债**。
 
 ### 6.2 为啥 Tauri 2（不 Slint / 不 egui / 不 Electron）
 
-| 维度 | Tauri 2 | Slint | egui | Electron |
-|---|---|---|---|---|
-| 二进制大小 | ~10MB | ~5MB | ~5MB | ~100MB |
-| 前端 TS 生态 | 完整 | 无 | 无 | 完整 |
-| IPC 类型安全 | ✅ | callback | direct call | IPC |
-| 打包工具成熟度 | 高 | 中 | 中 | 极高 |
-| 学习曲线 | 中（前端零） | 中 | 中 | 低（前端熟） |
+| 维度           | Tauri 2      | Slint    | egui        | Electron     |
+| -------------- | ------------ | -------- | ----------- | ------------ |
+| 二进制大小     | ~10MB        | ~5MB     | ~5MB        | ~100MB       |
+| 前端 TS 生态   | 完整         | 无       | 无          | 完整         |
+| IPC 类型安全   | ✅           | callback | direct call | IPC          |
+| 打包工具成熟度 | 高           | 中       | 中          | 极高         |
+| 学习曲线       | 中（前端零） | 中       | 中          | 低（前端熟） |
 
 **结论**：内部工具对二进制大小有要求（10MB 比 100MB 易分发），Tauri 2 同时给到 TS 生态 + 强类型 IPC。egui/Slint 强但前端工作量翻倍，Electron 太重。
 
 ### 6.3 为啥 SQLite（不 JSON / 不 sled / 不纯文件）
 
-| 维度 | SQLite | JSON 文件 | sled |
-|---|---|---|---|
-| 关系查询（"X 项目下 Y 平台 Z 状态条目"） | ✅ | ❌ | 弱 |
-| 并发安全 | WAL | 文件锁 | ✅ |
-| 跨进程 | ✅ | ❌ | ❌ |
-| 体积 | ~2MB lib | 0 | 中 |
-| Rust 生态 | rusqlite / sqlx | serde_json | sled |
+| 维度                                     | SQLite          | JSON 文件  | sled |
+| ---------------------------------------- | --------------- | ---------- | ---- |
+| 关系查询（"X 项目下 Y 平台 Z 状态条目"） | ✅              | ❌         | 弱   |
+| 并发安全                                 | WAL             | 文件锁     | ✅   |
+| 跨进程                                   | ✅              | ❌         | ❌   |
+| 体积                                     | ~2MB lib        | 0          | 中   |
+| Rust 生态                                | rusqlite / sqlx | serde_json | sled |
 
 **结论**：需要"按项目 × 资产 × 平台 × 状态"维度查 —— 这是关系型查询，SQLite 是显然答案。WAL 模式让 daemon 写 / CLI 读不冲突。
 
@@ -250,12 +253,12 @@ pub trait PlatformAdapter {
 
 ### 6.5 为啥 Unix socket（不 HTTP / 不命名管道 / 不 Tauri IPC 复用）
 
-| 通道 | 谁能连 | 鉴权 | 跨平台 |
-|---|---|---|---|
-| **Unix socket** | 任何本地进程 | 0600 权限 = 鉴权 | macOS/Linux 有，Win 用 `AF_UNIX` 模拟 |
-| HTTP localhost:port | 任何能 HTTP 的（含远程） | 需 token | 三平台都有 |
-| 命名管道 | 同机进程 | ACL | Win 原生，Unix 模拟 |
-| Tauri IPC | 只 Tauri 前端 | Tauri 权限系统 | 仅 Tauri |
+| 通道                | 谁能连                   | 鉴权             | 跨平台                                |
+| ------------------- | ------------------------ | ---------------- | ------------------------------------- |
+| **Unix socket**     | 任何本地进程             | 0600 权限 = 鉴权 | macOS/Linux 有，Win 用 `AF_UNIX` 模拟 |
+| HTTP localhost:port | 任何能 HTTP 的（含远程） | 需 token         | 三平台都有                            |
+| 命名管道            | 同机进程                 | ACL              | Win 原生，Unix 模拟                   |
+| Tauri IPC           | 只 Tauri 前端            | Tauri 权限系统   | 仅 Tauri                              |
 
 **结论**：agent 走 socket（独立于 Tauri 进程）；GUI 走 Tauri IPC（绑在 Tauri 进程内）；不互相串。HTTP **不**用（增加鉴权负担、模糊本地/远程边界）。
 
@@ -265,11 +268,11 @@ MCP 模板就一个文件、< 100 行、变量替换用。minijinja 是 Rust 写
 
 ### 6.7 为啥 notify + debouncer-mini（不 hotwatch / 不 dnotify）
 
-| crate | 跨平台 | debounce | rename 检测 | 维护 |
-|---|---|---|---|---|
-| **notify + debouncer-mini** | ✅ | 内置 | ✅ | 活跃 |
-| hotwatch | ✅ | ❌（自己写） | 弱 | 半弃 |
-| dnotify | ❌ | — | — | — |
+| crate                       | 跨平台 | debounce     | rename 检测 | 维护 |
+| --------------------------- | ------ | ------------ | ----------- | ---- |
+| **notify + debouncer-mini** | ✅     | 内置         | ✅          | 活跃 |
+| hotwatch                    | ✅     | ❌（自己写） | 弱          | 半弃 |
+| dnotify                     | ❌     | —            | —           | —    |
 
 notify 是事实标准，debouncer-mini 是官方推荐搭档。200ms debounce 是行业经验值（IDE 文件保存事件常见双发）。
 
@@ -347,16 +350,16 @@ pub enum Error {
 
 ### 9.1 secrets 边界
 
-| 位置 | secrets 明文 | 备注 |
-|---|---|---|
-| `~/.config/ai-config/secrets.env` | ✅ | 唯一持久位置 |
-| 内存中 | ✅ | 渲染 MCP 时 |
-| SQLite | ❌ | 只存"是否设置"元数据 |
-| 日志（daemon.log） | ❌ | 过滤器拦 |
-| GUI 屏幕 | ❌ | `••••••` 占位 |
-| CLI stdout | ❌ | secrets 子命令默认 redact |
-| `--json` 输出 | ❌ | 同上 |
-| Unix socket | ❌ | secrets 不走事件流 |
+| 位置                              | secrets 明文 | 备注                      |
+| --------------------------------- | ------------ | ------------------------- |
+| `~/.config/ai-config/secrets.env` | ✅           | 唯一持久位置              |
+| 内存中                            | ✅           | 渲染 MCP 时               |
+| SQLite                            | ❌           | 只存"是否设置"元数据      |
+| 日志（daemon.log）                | ❌           | 过滤器拦                  |
+| GUI 屏幕                          | ❌           | `••••••` 占位             |
+| CLI stdout                        | ❌           | secrets 子命令默认 redact |
+| `--json` 输出                     | ❌           | 同上                      |
+| Unix socket                       | ❌           | secrets 不走事件流        |
 
 ### 9.2 进程边界
 
@@ -397,14 +400,14 @@ pub enum Error {
 
 ## 11. 跨平台差异表
 
-| 维度 | macOS | Linux | Windows |
-|---|---|---|---|
-| 软链 | symlink | symlink | junction（fallback） |
-| Skills 目录 | `~/.cursor/skills` 等 | 同 | `%USERPROFILE%\.cursor\skills` 等 |
-| secrets 路径 | `~/.config/ai-config/` | `~/.config/ai-config/` 或 `$XDG_CONFIG_HOME/ai-config/` | `%APPDATA%\ai-config\` |
-| Unix socket | ✅ | ✅ | ❌（用 TCP localhost 或命名管道） |
-| `notify` | 完整 | 完整 | 完整（junctions） |
-| Tauri 2 webview | WKWebView（系统自带） | webkit2gtk（需装） | WebView2（Win10+ 自带） |
+| 维度            | macOS                  | Linux                                                   | Windows                           |
+| --------------- | ---------------------- | ------------------------------------------------------- | --------------------------------- |
+| 软链            | symlink                | symlink                                                 | junction（fallback）              |
+| Skills 目录     | `~/.cursor/skills` 等  | 同                                                      | `%USERPROFILE%\.cursor\skills` 等 |
+| secrets 路径    | `~/.config/ai-config/` | `~/.config/ai-config/` 或 `$XDG_CONFIG_HOME/ai-config/` | `%APPDATA%\ai-config\`            |
+| Unix socket     | ✅                     | ✅                                                      | ❌（用 TCP localhost 或命名管道） |
+| `notify`        | 完整                   | 完整                                                    | 完整（junctions）                 |
+| Tauri 2 webview | WKWebView（系统自带）  | webkit2gtk（需装）                                      | WebView2（Win10+ 自带）           |
 
 **Windows 抽象层**：
 

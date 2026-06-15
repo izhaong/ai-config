@@ -15,11 +15,14 @@
 //! 完整架构说明(包含 ASCII 图)见 [`docs/product/ARCHITECTURE.md`](../../docs/product/ARCHITECTURE.md)。
 
 pub mod error;
+pub mod hermes_config;
 pub mod link;
+pub mod materialize;
 pub mod mcp_json;
 pub mod model;
 pub mod paths;
 pub mod platform;
+pub mod platform_scan;
 pub mod secrets;
 pub mod source;
 pub mod sync;

@@ -4,6 +4,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::{Map, Value};
 
 use crate::error::CoreError;
+use crate::hermes_config::{self, HermesMigrateReport};
 use crate::model::PlatformId;
 use crate::template::{
     atomic_write_json, mcp_server_sync_state, read_mcp_json, remove_mcp_server_entry,
@@ -140,8 +141,15 @@ pub fn migrate_legacy_mcp_layout(asset_root: &Utf8Path) -> Result<(), CoreError>
     Ok(())
 }
 
-/// 整文件下发:将源 `mcp.json` 写入平台路径。
-pub fn deploy_mcp_json_file(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
+/// 整文件下发:将源 `mcp.json` 写入平台路径（Hermes → `config.yaml` 的 `mcp_servers`）。
+pub fn deploy_mcp_json_file(
+    src: &Utf8Path,
+    dest: &Utf8Path,
+    plat: PlatformId,
+) -> Result<(), CoreError> {
+    if plat == PlatformId::Hermes {
+        return hermes_config::deploy_all_from_mcp_json(src, dest);
+    }
     let Some(doc) = read_mcp_json(src)? else {
         return Err(CoreError::TemplateRender {
             template: src.to_string(),
@@ -152,16 +160,47 @@ pub fn deploy_mcp_json_file(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreE
     atomic_write_json(dest, &normalize_mcp_document(doc))
 }
 
-/// 收回:删除平台 `mcp.json`。
-pub fn retract_platform_mcp_json(dest: &Utf8Path) -> Result<(), CoreError> {
+/// 收回平台 MCP（Hermes 仅移除 `mcp_servers` 中 ai-config 管理的条目，见 per-server retract）。
+pub fn retract_platform_mcp_json(dest: &Utf8Path, plat: PlatformId) -> Result<(), CoreError> {
+    if plat == PlatformId::Hermes {
+        // 整文件 retract 不删除 config.yaml；per-server 用 remove_server_on_platform。
+        return Ok(());
+    }
     if dest.is_file() {
         std::fs::remove_file(dest.as_std_path()).map_err(CoreError::Io)?;
     }
     Ok(())
 }
 
-/// 源与平台 `mcp.json` 是否一致。
-pub fn mcp_json_file_sync_state(src: &Utf8Path, dest: &Utf8Path) -> McpSyncState {
+/// 源与平台 MCP 是否一致（Hermes 比较 `mcp_servers` 全集）。
+pub fn mcp_json_file_sync_state(src: &Utf8Path, dest: &Utf8Path, plat: PlatformId) -> McpSyncState {
+    if plat == PlatformId::Hermes {
+        let Some(asset_root) = src.parent() else {
+            return McpSyncState::Broken;
+        };
+        let Ok(names) = list_server_names(asset_root) else {
+            return McpSyncState::Broken;
+        };
+        if names.is_empty() {
+            return McpSyncState::Unlinked;
+        }
+        let mut any_linked = false;
+        let mut any_wrong = false;
+        for name in names {
+            match mcp_server_sync_state_on_platform(asset_root, &name, plat, dest) {
+                McpSyncState::Linked => any_linked = true,
+                McpSyncState::WrongValue | McpSyncState::Broken => any_wrong = true,
+                McpSyncState::Unlinked => {}
+            }
+        }
+        if any_wrong {
+            return McpSyncState::WrongValue;
+        }
+        if any_linked {
+            return McpSyncState::Linked;
+        }
+        return McpSyncState::Unlinked;
+    }
     let Ok(Some(expected)) = read_mcp_json(src) else {
         return McpSyncState::Broken;
     };
@@ -237,30 +276,45 @@ pub fn server_transport_summary(config: &Value) -> String {
     }
 }
 
-/// 向平台 `mcp.json` 写入/更新单条 server(保留其它 key)。
+/// 向平台 MCP 写入/更新单条 server(保留其它 key)。
 pub fn upsert_server_on_platform(
+    plat: PlatformId,
     dest: &Utf8Path,
     name: &str,
     config: &Value,
 ) -> Result<(), CoreError> {
-    upsert_mcp_server_entry(dest, name, config.clone())
+    match plat {
+        PlatformId::Hermes => hermes_config::upsert_mcp_server(dest, name, config),
+        _ => upsert_mcp_server_entry(dest, name, config.clone()),
+    }
 }
 
-/// 从平台 `mcp.json` 移除单条 server(文件不存在则 noop)。
-pub fn remove_server_on_platform(dest: &Utf8Path, name: &str) -> Result<(), CoreError> {
-    remove_mcp_server_entry(dest, name)
+/// 从平台 MCP 移除单条 server(文件不存在则 noop)。
+pub fn remove_server_on_platform(
+    plat: PlatformId,
+    dest: &Utf8Path,
+    name: &str,
+) -> Result<(), CoreError> {
+    match plat {
+        PlatformId::Hermes => hermes_config::remove_mcp_server(dest, name),
+        _ => remove_mcp_server_entry(dest, name),
+    }
 }
 
-/// 源 `mcp.json` 中该 server 与平台 `mcp.json` 是否一致(key + 值)。
+/// 源 `mcp.json` 中该 server 与平台 MCP 是否一致(key + 值)。
 pub fn mcp_server_sync_state_on_platform(
     asset_root: &Utf8Path,
     server_name: &str,
+    plat: PlatformId,
     dest: &Utf8Path,
 ) -> McpSyncState {
     let Ok(Some(expected)) = get_server_config(asset_root, server_name) else {
         return McpSyncState::Broken;
     };
-    mcp_server_sync_state(dest, server_name, &expected)
+    match plat {
+        PlatformId::Hermes => hermes_config::mcp_server_sync_state(dest, server_name, &expected),
+        _ => mcp_server_sync_state(dest, server_name, &expected),
+    }
 }
 
 /// 包装:按平台 ID 比对单条 server 同步状态。
@@ -287,7 +341,12 @@ pub fn mcp_server_sync_state_for_platform_at(
     let Ok(adapter) = crate::platform::for_scope(plat, deploy_base) else {
         return McpSyncState::Broken;
     };
-    mcp_server_sync_state_on_platform(asset_root, server_name, &adapter.mcp_json_path())
+    mcp_server_sync_state_on_platform(asset_root, server_name, plat, &adapter.mcp_deploy_path())
+}
+
+/// 遗留 `~/.hermes/mcp.json` 合并进 `config.yaml`。
+pub fn migrate_legacy_hermes_mcp_json(home: &Utf8Path) -> Result<HermesMigrateReport, CoreError> {
+    hermes_config::migrate_legacy_hermes_mcp_json(home)
 }
 
 #[cfg(test)]
@@ -320,15 +379,39 @@ mod tests {
         let cfg = serde_json::json!({ "command": "uvx", "args": ["mcp-server"] });
         upsert_server_in_document(&root, "svc-a", cfg.clone()).unwrap();
         let plat_mcp = root.join("plat-mcp.json");
-        upsert_server_on_platform(&plat_mcp, "svc-a", &cfg).unwrap();
+        upsert_server_on_platform(PlatformId::Cursor, &plat_mcp, "svc-a", &cfg).unwrap();
         assert_eq!(
-            mcp_server_sync_state_on_platform(&root, "svc-a", &plat_mcp),
+            mcp_server_sync_state_on_platform(&root, "svc-a", PlatformId::Cursor, &plat_mcp),
             McpSyncState::Linked
         );
-        remove_server_on_platform(&plat_mcp, "svc-a").unwrap();
+        remove_server_on_platform(PlatformId::Cursor, &plat_mcp, "svc-a").unwrap();
         assert_eq!(
-            mcp_server_sync_state_on_platform(&root, "svc-a", &plat_mcp),
+            mcp_server_sync_state_on_platform(&root, "svc-a", PlatformId::Cursor, &plat_mcp),
             McpSyncState::Unlinked
         );
+    }
+
+    #[test]
+    fn hermes_upsert_writes_config_yaml() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        fs::create_dir_all(home.join(".hermes")).unwrap();
+        let root = home.join("ai-config-asset");
+        fs::create_dir_all(&root).unwrap();
+        let cfg = serde_json::json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "pkg"]
+        });
+        upsert_server_in_document(&root, "svc-a", cfg.clone()).unwrap();
+        let dest = hermes_config::hermes_config_path_at(&home);
+        upsert_server_on_platform(PlatformId::Hermes, &dest, "svc-a", &cfg).unwrap();
+        assert_eq!(
+            mcp_server_sync_state_on_platform(&root, "svc-a", PlatformId::Hermes, &dest),
+            McpSyncState::Linked
+        );
+        let raw = fs::read_to_string(dest.as_std_path()).unwrap();
+        assert!(raw.contains("mcp_servers:"));
+        assert!(!raw.contains("type:"));
     }
 }

@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- CLI `ai-config mcp migrate-hermes`：将遗留 `~/.hermes/mcp.json` 合并进 `~/.hermes/config.yaml` 的 `mcp_servers`。
+- Core `hermes_config` 模块：YAML 读/写/比对、原子写、备份、`normalize_server_for_hermes`、`ensure_external_skills_dir`。
+
+### Fixed
+
+- **Hermes MCP 路径**：deploy/retract/sync 改为写入官方 `~/.hermes/config.yaml` 的 `mcp_servers:`，不再写 `~/.hermes/mcp.json`（Hermes 不读取该文件）。项目作用域同样写 `$HOME`，不再创建 `<repo>/.hermes/mcp.json`。
+- **Hermes Skills**：项目作用域改为始终写 `$HOME/.hermes/skills`；自定义 `HERMES_SKILLS_DIR` 时自动写入 `config.yaml` → `skills.external_dirs`。
+- **Hermes Rules**：项目级 deploy 目标改为 `<repo>/.cursor/rules/`（与 Hermes CWD 加载一致）；user-global 不下发。
+- **Hermes Agents**：关闭 deploy（官方无 `~/.hermes/agents` 静态目录）。
+- **Breaking**：若你曾依赖 ai-config 写入的 `~/.hermes/mcp.json`，请运行 `ai-config mcp migrate-hermes` 或手动合并到 `config.yaml`。请手动 retract 遗留 `~/.hermes/agents` 软链。
+
+### Changed
+
+- Hermes 整文件 `uninstall` retract 跳过 `config.yaml`（MCP 须 per-server `mcp retract <name> hermes`）。
+- 写 `config.yaml` 前自动备份；全文件 YAML 重序列化可能丢失注释（见 `HERMES.md`）。
+
 ## [0.2.0] - 2026-06-14
 
 ### Added

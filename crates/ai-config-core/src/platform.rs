@@ -1,12 +1,17 @@
-//! 4 平台适配器:暴露每个平台的 skills / rules / agents / mcp.json 目录约定。
+//! 5 平台适配器:ai-config 资产源 + 4 个 IDE 下发目标。
 //!
 //! 目录约定(PRD §7.1 + ARCHITECTURE §4.3 + §5):
-//! - `~/.{platform}/skills/`
-//! - `~/.{platform}/rules/`
-//! - `~/.{platform}/agents/` (Cursor/Hermes);Codex/Claude 叫 `subagents/`
-//! - `~/.{platform}/mcp.json`
+//! - **ai-config**: `<asset_root>/skills|rules|agents/` + `<asset_root>/mcp.json`
+//! - **Cursor**: `<base>/.cursor/skills|rules|agents/` + `mcp.json`
+//! - **Codex**: `<base>/.codex/skills|rules|subagents/` + `mcp.json`
+//! - **Claude**: `<base>/.claude/skills|rules|subagents/` + `mcp.json`
+//! - **Hermes**: skills 恒 `$HOME/.hermes/skills`;rules 仅项目 `<repo>/.cursor/rules/`;MCP 为 `config.yaml`
 //!
-//! Hermes 例外:skills 目录可由 `HERMES_SKILLS_DIR` env 覆盖(PRD §5.x)。
+//! Hermes 例外:
+//! - **Skills**：始终 `$HOME/.hermes/skills`（或 `HERMES_SKILLS_DIR`）；项目作用域也写 `$HOME`。
+//!   非默认路径须同步进 `config.yaml` → `skills.external_dirs`（见 `hermes_config`）。
+//! - **Rules**：仅项目级 `<repo>/.cursor/rules/`（CWD 加载）；全局 user-global 不下发。
+//! - **Agents**：Hermes 无静态 agents 目录（用 `AGENTS.md` / `delegate_task`），不下发。
 
 use camino::Utf8PathBuf;
 use std::sync::OnceLock;
@@ -22,14 +27,18 @@ pub trait PlatformAdapter: Send + Sync {
     fn agents_dir(&self) -> Utf8PathBuf;
     fn mcp_json_path(&self) -> Utf8PathBuf;
 
+    /// Hermes 等平台 MCP 实际写入路径（Hermes 恒为 `$HOME/.hermes/config.yaml`）。
+    fn mcp_deploy_path(&self) -> Utf8PathBuf {
+        self.mcp_json_path()
+    }
+
     /// 平台级能力探测(PRD §6.3)。
     ///
-    /// 默认实现:Skill / Mcp / Agent 全平台支持;Rule 在 Codex / Hermes 上**不**直接
-    /// 消费 — Codex Rule 通过 AGENTS.md 间接;Hermes Rule 仅 CWD `.cursor/rules/`。
+    /// 默认实现:Skill / Mcp / Agent 全平台支持;Rule 在 Codex 上**不**直接消费。
     fn supports(&self, asset: AssetKind) -> bool {
         match asset {
             AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent => true,
-            AssetKind::Rule => !matches!(self.id(), PlatformId::Codex | PlatformId::Hermes),
+            AssetKind::Rule => self.id() != PlatformId::Codex,
         }
     }
 }
@@ -52,14 +61,57 @@ fn home() -> Utf8PathBuf {
     Utf8PathBuf::from(".")
 }
 
-/// Hermes 的 skills 目录(PRD §5.x):优先 `HERMES_SKILLS_DIR` env,退回
-/// `$HOME/.hermes/skills`。
-fn hermes_skills_dir() -> Utf8PathBuf {
+/// Hermes 官方默认 skills 目录：`$HOME/.hermes/skills`。
+pub fn default_hermes_skills_dir() -> Utf8PathBuf {
+    crate::hermes_config::default_hermes_skills_dir_at(&home())
+}
+
+/// ai-config 写入目标：优先 `HERMES_SKILLS_DIR`，退回官方默认。
+fn hermes_skills_deploy_dir() -> Utf8PathBuf {
     std::env::var("HERMES_SKILLS_DIR")
         .ok()
         .filter(|s| !s.is_empty())
         .map(Utf8PathBuf::from)
-        .unwrap_or_else(|| home().join(".hermes/skills"))
+        .unwrap_or_else(default_hermes_skills_dir)
+}
+
+/// 按平台 + 作用域判断是否支持该资产种类（`for_scope` 构造的适配器已含作用域语义）。
+pub fn supports_at_scope(
+    plat: PlatformId,
+    kind: AssetKind,
+    deploy_base: &camino::Utf8Path,
+) -> bool {
+    for_scope(plat, deploy_base)
+        .map(|a| a.supports(kind))
+        .unwrap_or(false)
+}
+
+// ── ai-config（资产源）────────────────────────────────────────────
+
+struct AiConfigAdapter {
+    asset_root: Utf8PathBuf,
+}
+
+impl PlatformAdapter for AiConfigAdapter {
+    fn id(&self) -> PlatformId {
+        PlatformId::AiConfig
+    }
+    fn skills_dir(&self) -> Utf8PathBuf {
+        self.asset_root.join("skills")
+    }
+    fn rules_dir(&self) -> Utf8PathBuf {
+        self.asset_root.join("rules")
+    }
+    fn agents_dir(&self) -> Utf8PathBuf {
+        self.asset_root.join("agents")
+    }
+    fn mcp_json_path(&self) -> Utf8PathBuf {
+        crate::mcp_json::mcp_json_path(&self.asset_root)
+    }
+    fn supports(&self, asset: AssetKind) -> bool {
+        let _ = asset;
+        true
+    }
 }
 
 // ── Cursor ──────────────────────────────────────────────────────────
@@ -141,17 +193,17 @@ impl PlatformAdapter for ClaudeAdapter {
 // ── Hermes ──────────────────────────────────────────────────────────
 
 struct HermesAdapter {
-    home: Utf8PathBuf,
-    /// skills 目录独立存储(可能与 home 解耦,env 覆盖场景)。
+    /// 全局为 `$HOME`；项目为仓库根（仅用于 rules → `.cursor/rules`）。
+    deploy_base: Utf8PathBuf,
+    /// 始终为全局 skills 根（`HERMES_SKILLS_DIR` 或 `$HOME/.hermes/skills`）。
     skills_root: Utf8PathBuf,
 }
 
 impl HermesAdapter {
-    /// 默认构造:从 env 读 `HERMES_SKILLS_DIR`(失败退回 `$HOME/.hermes/skills`)。
-    fn from_env() -> Self {
+    fn for_deploy_base(deploy_base: Utf8PathBuf) -> Self {
         Self {
-            home: home(),
-            skills_root: hermes_skills_dir(),
+            deploy_base,
+            skills_root: hermes_skills_deploy_dir(),
         }
     }
 }
@@ -162,27 +214,37 @@ impl PlatformAdapter for HermesAdapter {
     }
     fn supports(&self, asset: AssetKind) -> bool {
         match asset {
-            AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent => true,
-            // Hermes 只在工作目录读 `.cursor/rules/*.mdc`,不消费全局 ~/.hermes/rules
-            AssetKind::Rule => false,
+            AssetKind::Skill | AssetKind::Mcp => true,
+            // Hermes 仅在项目 CWD 读 `.cursor/rules/*.mdc`（与 Cursor 项目级路径一致）
+            AssetKind::Rule => self.deploy_base != home(),
+            // 无 `~/.hermes/agents`；子代理为运行时 delegate_task
+            AssetKind::Agent => false,
         }
     }
     fn skills_dir(&self) -> Utf8PathBuf {
         self.skills_root.clone()
     }
     fn rules_dir(&self) -> Utf8PathBuf {
-        // 保留路径约定供文档/未来扩展;`supports(Rule)==false` 时不会写入
-        self.home.join(".hermes/rules")
+        self.deploy_base.join(".cursor/rules")
     }
     fn agents_dir(&self) -> Utf8PathBuf {
-        self.home.join(".hermes/agents")
+        self.deploy_base.join(".hermes/agents")
     }
     fn mcp_json_path(&self) -> Utf8PathBuf {
-        self.home.join(".hermes/mcp.json")
+        crate::hermes_config::hermes_config_path()
+    }
+    fn mcp_deploy_path(&self) -> Utf8PathBuf {
+        crate::hermes_config::hermes_config_path()
     }
 }
 
 // ── 工厂 + 全局 registry ────────────────────────────────────────────
+
+pub fn aiconfig_adapter(asset_root: &camino::Utf8Path) -> Box<dyn PlatformAdapter> {
+    Box::new(AiConfigAdapter {
+        asset_root: asset_root.to_path_buf(),
+    })
+}
 
 pub fn cursor_adapter() -> Result<Box<dyn PlatformAdapter>, CoreError> {
     Ok(Box::new(CursorAdapter { home: home() }))
@@ -194,7 +256,7 @@ pub fn claude_adapter() -> Result<Box<dyn PlatformAdapter>, CoreError> {
     Ok(Box::new(ClaudeAdapter { home: home() }))
 }
 pub fn hermes_adapter() -> Result<Box<dyn PlatformAdapter>, CoreError> {
-    Ok(Box::new(HermesAdapter::from_env()))
+    Ok(Box::new(HermesAdapter::for_deploy_base(home())))
 }
 
 /// 按 `PlatformId` 工厂(供 CLI / 同步层按平台拉一个适配器)。
@@ -202,16 +264,75 @@ pub fn for_id(id: PlatformId) -> Result<Box<dyn PlatformAdapter>, CoreError> {
     for_scope(id, &home())
 }
 
+/// GUI / 浏览用 5 平台（含 ai-config 源），固定顺序。
+pub fn ui_platform_ids() -> [PlatformId; 5] {
+    [
+        PlatformId::AiConfig,
+        PlatformId::Cursor,
+        PlatformId::Codex,
+        PlatformId::Claude,
+        PlatformId::Hermes,
+    ]
+}
+
+/// deploy / retract / 链接状态仅针对 4 个 IDE 目标。
+pub fn deploy_platform_ids() -> [PlatformId; 4] {
+    [
+        PlatformId::Cursor,
+        PlatformId::Codex,
+        PlatformId::Claude,
+        PlatformId::Hermes,
+    ]
+}
+
+/// 按作用域 + 资产根解析平台目录（ai-config 读 `asset_root`，其余读 `deploy_base`）。
+pub fn for_scope_with_asset(
+    id: PlatformId,
+    deploy_base: &camino::Utf8Path,
+    asset_root: &camino::Utf8Path,
+) -> Result<Box<dyn PlatformAdapter>, CoreError> {
+    if id == PlatformId::AiConfig {
+        return Ok(aiconfig_adapter(asset_root));
+    }
+    for_scope(id, deploy_base)
+}
+
+/// 某平台在某作用域下、某资产种类的根路径（skills/rules/agents 为目录，mcp 为配置文件路径）。
+pub fn kind_asset_path(
+    plat: PlatformId,
+    kind: AssetKind,
+    deploy_base: &camino::Utf8Path,
+    asset_root: &camino::Utf8Path,
+) -> Option<Utf8PathBuf> {
+    let adapter = for_scope_with_asset(plat, deploy_base, asset_root).ok()?;
+    if !adapter.supports(kind) {
+        return None;
+    }
+    match kind {
+        AssetKind::Skill => Some(adapter.skills_dir()),
+        AssetKind::Rule => Some(adapter.rules_dir()),
+        AssetKind::Agent => Some(adapter.agents_dir()),
+        AssetKind::Mcp => Some(adapter.mcp_deploy_path()),
+    }
+}
+
 /// 按作用域解析平台目录。
 ///
 /// - `deploy_base == $HOME`:与 `for_id` 相同(Hermes 尊重 `HERMES_SKILLS_DIR`)。
 /// - 项目作用域:`deploy_base` 为仓库根,平台目录在 `<repo>/.cursor` 等。
+/// - **不含** ai-config；请用 `for_scope_with_asset`。
 pub fn for_scope(
     id: PlatformId,
     deploy_base: &camino::Utf8Path,
 ) -> Result<Box<dyn PlatformAdapter>, CoreError> {
+    if id == PlatformId::AiConfig {
+        return Err(CoreError::InvalidPath(
+            "ai-config 平台需 asset_root，请使用 for_scope_with_asset".into(),
+        ));
+    }
     if deploy_base == home() {
         return match id {
+            PlatformId::AiConfig => unreachable!(),
             PlatformId::Cursor => cursor_adapter(),
             PlatformId::Codex => codex_adapter(),
             PlatformId::Claude => claude_adapter(),
@@ -220,13 +341,11 @@ pub fn for_scope(
     }
     let base = deploy_base.to_path_buf();
     Ok(match id {
+        PlatformId::AiConfig => unreachable!(),
         PlatformId::Cursor => Box::new(CursorAdapter { home: base.clone() }),
         PlatformId::Codex => Box::new(CodexAdapter { home: base.clone() }),
         PlatformId::Claude => Box::new(ClaudeAdapter { home: base.clone() }),
-        PlatformId::Hermes => Box::new(HermesAdapter {
-            home: base.clone(),
-            skills_root: base.join(".hermes/skills"),
-        }),
+        PlatformId::Hermes => Box::new(HermesAdapter::for_deploy_base(base)),
     })
 }
 
@@ -353,15 +472,14 @@ mod tests {
         let a = hermes_adapter().unwrap();
         assert_eq!(a.id(), PlatformId::Hermes);
         assert!(a.skills_dir().as_str().ends_with(".hermes/skills"));
-        assert!(a.rules_dir().as_str().ends_with(".hermes/rules"));
-        assert!(a.agents_dir().as_str().ends_with(".hermes/agents"));
-        assert!(a.mcp_json_path().as_str().ends_with(".hermes/mcp.json"));
-        for p in [
-            a.skills_dir(),
-            a.rules_dir(),
-            a.agents_dir(),
-            a.mcp_json_path(),
-        ] {
+        assert!(a.rules_dir().as_str().ends_with(".cursor/rules"));
+        assert!(!a.supports(AssetKind::Rule));
+        assert!(!a.supports(AssetKind::Agent));
+        assert!(a
+            .mcp_deploy_path()
+            .as_str()
+            .ends_with(".hermes/config.yaml"));
+        for p in [a.skills_dir(), a.rules_dir(), a.mcp_deploy_path()] {
             assert_starts_with_home(&p);
         }
 
@@ -410,12 +528,27 @@ mod tests {
     }
 
     #[test]
-    fn hermes_supports_skill_mcp_and_agent() {
+    fn hermes_supports_skill_and_mcp_only_at_global() {
         let a = hermes_adapter().unwrap();
         assert!(a.supports(AssetKind::Skill));
         assert!(a.supports(AssetKind::Mcp));
-        assert!(a.supports(AssetKind::Agent));
+        assert!(!a.supports(AssetKind::Agent));
         assert!(!a.supports(AssetKind::Rule));
+    }
+
+    #[test]
+    fn hermes_project_scope_rules_and_global_skills() {
+        let prev = std::env::var("HERMES_SKILLS_DIR").ok();
+        std::env::remove_var("HERMES_SKILLS_DIR");
+        let repo = Utf8PathBuf::from("/tmp/hermes-repo-fixture");
+        let a = for_scope(PlatformId::Hermes, &repo).unwrap();
+        assert!(a.supports(AssetKind::Rule));
+        assert_eq!(a.rules_dir(), repo.join(".cursor/rules"));
+        assert!(a.skills_dir().as_str().ends_with(".hermes/skills"));
+        assert_ne!(a.skills_dir(), repo.join(".hermes/skills"));
+        if let Some(v) = prev {
+            std::env::set_var("HERMES_SKILLS_DIR", v);
+        }
     }
 
     // ── HermesAdapter 读 HERMES_SKILLS_DIR env(PRD §5.x) ───────────
@@ -429,10 +562,12 @@ mod tests {
             Utf8PathBuf::from("/opt/hermes/custom-skills"),
             "skills 目录应走 HERMES_SKILLS_DIR env"
         );
-        // rules / agents / mcp 仍走 home(与 skills 解耦)
-        assert!(a.rules_dir().as_str().ends_with(".hermes/rules"));
-        assert!(a.agents_dir().as_str().ends_with(".hermes/agents"));
-        assert!(a.mcp_json_path().as_str().ends_with(".hermes/mcp.json"));
+        assert!(a.rules_dir().as_str().ends_with(".cursor/rules"));
+        assert!(!a.supports(AssetKind::Agent));
+        assert!(a
+            .mcp_deploy_path()
+            .as_str()
+            .ends_with(".hermes/config.yaml"));
         // _g drop 时自动恢复
     }
 
@@ -507,12 +642,11 @@ mod tests {
     }
 
     #[test]
-    fn for_id_hermes_has_agents_dir() {
-        // 显式清 env 避免与 hermes_reads_* 测试相互污染
+    fn for_id_hermes_has_no_agent_deploy() {
         let prev = std::env::var("HERMES_SKILLS_DIR").ok();
         std::env::remove_var("HERMES_SKILLS_DIR");
         let a = for_id(PlatformId::Hermes).unwrap();
-        assert!(a.agents_dir().as_str().ends_with(".hermes/agents"));
+        assert!(!a.supports(AssetKind::Agent));
         if let Some(v) = prev {
             std::env::set_var("HERMES_SKILLS_DIR", v);
         }

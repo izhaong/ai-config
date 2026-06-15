@@ -12,6 +12,7 @@
   "nav": {
     "projects": "Projects",
     "assets": "Assets",
+    "platforms": "Platforms",
     "userGlobal": "user-global",
     "registerProject": "+ Register project",
     "registerProjectTitle": "Register a new project",
@@ -29,11 +30,30 @@
     "broken": "Link broken",
     "missing": "Target missing"
   },
+  "sourceState": {
+    "managed": "Managed",
+    "linked": "Linked",
+    "unmanaged": "Unmanaged",
+    "orphan": "Broken link"
+  },
+  "platformView": {
+    "dockTitle": "Platform browse",
+    "sourceView": "Source view",
+    "viewingPlatform": "{{platform}} platform",
+    "empty": "No {{label}} on this platform",
+    "emptyUnsupported": "{{platform}} does not support {{label}}",
+    "importHint": "Import from platform into ai-config source",
+    "importManaged": "Already managed in ai-config source",
+    "importUnavailable": "Cannot import",
+    "unsupportedOnPlatform": "Asset kind not supported on this platform"
+  },
   "platform": {
     "active": "Active",
     "inactive": "Inactive",
     "clickDeploy": "Click to deploy",
     "clickRemove": "Click to retract",
+    "clickRemoveSource": "Remove from ai-config source",
+    "clickImportSource": "Import into ai-config source",
     "unsupported": "{{platform}}: {{reason}}"
   },
   "toolbar": {
@@ -47,7 +67,11 @@
     "batchDeploy": "Deploy all",
     "batchRetract": "Retract all",
     "batchDelete": "Delete selected",
-    "batchDeleteTitle": "Check rows on the left, then delete source files"
+    "batchDeleteTitle": "Select rows on the left, then batch delete",
+    "batchDeployPlatform": "Deploy to {{platform}}",
+    "batchRetractPlatform": "Retract from {{platform}}",
+    "openFolder": "Open folder",
+    "openFolderTitle": "Reveal current browse path in the file manager"
   },
   "empty": {
     "loading": "Loading…",
@@ -73,6 +97,7 @@
     "delete": "Delete",
     "batchDelete": "Batch delete",
     "batchDeleteMessage": "Permanently delete {{count}} {{label}} source file(s) and best-effort retract from all platforms.",
+    "batchDeletePlatformMessage": "Process {{count}} selected item(s): delete source and retract all platforms if managed, otherwise retract from {{platform}} only.",
     "removeProject": "Remove project",
     "removeProjectMessage": "Remove project `{{name}}` from this tool?"
   },
@@ -107,11 +132,17 @@
     "batchRetractItemFailed": "{{name}} ← {{platform}} failed: {{error}}",
     "batchDeployed": "Batch deployed {{count}} item(s)",
     "batchRetracted": "Batch retracted {{count}} item(s)",
-    "selectRowsFirst": "Select rows with the checkboxes first (opening details does not select)",
+    "batchDeleted": "Processed {{count}} item(s)",
+    "selectRowsFirst": "Select rows to operate on first",
+    "noBrowsePath": "No path to open in the current view",
+    "openFolderFailed": "Failed to open folder: {{error}}",
     "projectRegistered": "Project `{{name}}` registered",
     "registerProjectFailed": "Failed to register project: {{error}}",
     "projectRemoved": "Project `{{name}}` removed",
-    "removeProjectFailed": "Failed to remove project: {{error}}"
+    "removeProjectFailed": "Failed to remove project: {{error}}",
+    "platformListFailed": "Failed to load platform list: {{error}}",
+    "importSuccess": "{{message}}",
+    "importFailed": "Import failed: {{error}}"
   },
   "prompt": {
     "projectName": "Project name (unique in store):",

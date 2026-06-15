@@ -1,14 +1,14 @@
 import { useTranslation } from "react-i18next";
 
 import { platformUiLabel } from "./i18n/labels";
-import type { AssetEntry, Platform } from "./types";
-import { isPlatformActive } from "./types";
+import type { DeployPlatform, Platform, PlatformAssetEntry } from "./types";
+import { ALL_PLATFORMS, isPlatformActive } from "./types";
 import { PLATFORM_FAVICON, PLATFORM_NAME } from "./platformIcons";
 
 interface AssetRowProps {
-  entry: AssetEntry;
+  entry: PlatformAssetEntry;
   loading: boolean;
-  issueReasonFor?: (plat: Platform) => string | undefined;
+  issueReasonFor?: (plat: DeployPlatform) => string | undefined;
   selected?: boolean;
   checked?: boolean;
   onCheckedChange?: (checked: boolean) => void;
@@ -60,10 +60,11 @@ export function AssetRow({
       </div>
 
       <div className="platform-actions">
-        {(["cursor", "codex", "claude", "hermes"] as Platform[]).map((p) => {
+        {ALL_PLATFORMS.map((p) => {
           const state = entry.states[p];
           const active = isPlatformActive(state);
-          const issueReason = issueReasonFor?.(p);
+          const isDeploy = p !== "aiconfig";
+          const issueReason = isDeploy ? issueReasonFor?.(p) : undefined;
           const platUnsupported = !!issueReason;
           const disabled = loading || platUnsupported;
           const title = platUnsupported
@@ -71,7 +72,13 @@ export function AssetRow({
                 platform: PLATFORM_NAME[p],
                 reason: issueReason,
               })
-            : `${PLATFORM_NAME[p]} · ${platformUiLabel(t, active)} · ${active ? t("platform.clickRemove") : t("platform.clickDeploy")}`;
+            : p === "aiconfig"
+              ? `${PLATFORM_NAME[p]} · ${platformUiLabel(t, active)} · ${
+                  active ? t("platform.clickRemoveSource") : t("platform.clickImportSource")
+                }`
+              : `${PLATFORM_NAME[p]} · ${platformUiLabel(t, active)} · ${
+                  active ? t("platform.clickRemove") : t("platform.clickDeploy")
+                }`;
 
           return (
             <button

@@ -1,18 +1,27 @@
 export type AssetKind = "skill" | "rule" | "mcp" | "agent";
-export type Platform = "cursor" | "codex" | "claude" | "hermes";
+/** 5 平台：ai-config 为资产源，其余为 IDE 下发目标 */
+export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
+/** 可向 IDE deploy / retract 的 4 个目标 */
+export type DeployPlatform = Exclude<Platform, "aiconfig">;
 export type LinkState = "linked" | "unlinked" | "broken" | "missing";
 
-export interface AssetEntry {
+export interface PlatformAssetEntry {
   name: string;
   kind: AssetKind;
   description: string;
-  source_path: string;
+  platform_path: string;
   states: Record<Platform, LinkState>;
 }
 
-export interface AssetList {
-  entries: AssetEntry[];
-  broken_links: number;
+export interface PlatformAssetList {
+  entries: PlatformAssetEntry[];
+  platform: Platform;
+}
+
+export interface PlatformKindPath {
+  platform: Platform;
+  path: string;
+  supported: boolean;
 }
 
 export interface ProjectItem {
@@ -29,7 +38,7 @@ export interface DoctorSummary {
   missing_secrets: string[];
   unregistered_projects: string[];
   platform_capability_issues: Array<{
-    platform: Platform;
+    platform: DeployPlatform;
     kind: AssetKind;
     reason: string;
   }>;
@@ -44,12 +53,27 @@ export interface AssetDetail {
   parent_path: string;
 }
 
-/** @deprecated 使用 AssetDetail */
-export type SkillDetail = AssetDetail;
+/** GUI 平台 dock 固定 5 个 */
+export const ALL_PLATFORMS: Platform[] = [
+  "aiconfig",
+  "cursor",
+  "codex",
+  "claude",
+  "hermes",
+];
 
-export const PLATFORMS: Platform[] = ["cursor", "codex", "claude", "hermes"];
+export const DEPLOY_PLATFORMS: DeployPlatform[] = [
+  "cursor",
+  "codex",
+  "claude",
+  "hermes",
+];
 
 export const ASSET_KINDS: AssetKind[] = ["skill", "rule", "mcp", "agent"];
+
+export function isSourcePlatform(platform: Platform): boolean {
+  return platform === "aiconfig";
+}
 
 export function canDeploy(state: LinkState): boolean {
   return state === "unlinked" || state === "broken" || state === "missing";
@@ -59,7 +83,10 @@ export function canRetract(state: LinkState): boolean {
   return state === "linked";
 }
 
-/** UI 仅两种态：已同步到平台 = 激活，否则 = 未激活 */
 export function isPlatformActive(state: LinkState): boolean {
   return state === "linked";
+}
+
+export function hasSourceEntry(entry: PlatformAssetEntry): boolean {
+  return isPlatformActive(entry.states.aiconfig);
 }

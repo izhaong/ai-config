@@ -149,6 +149,12 @@ enum McpCmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// 遗留 `~/.hermes/mcp.json` → `~/.hermes/config.yaml` 的 `mcp_servers`
+    MigrateHermes {
+        /// 只输出报告,不真写盘
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -248,6 +254,7 @@ fn main() -> ExitCode {
                 McpCmd::Deploy { name, to } => mcp::McpCmd::Deploy { name, to },
                 McpCmd::Retract { name, from } => mcp::McpCmd::Retract { name, from },
                 McpCmd::Migrate { source, dry_run } => mcp::McpCmd::Migrate { source, dry_run },
+                McpCmd::MigrateHermes { dry_run } => mcp::McpCmd::MigrateHermes { dry_run },
             };
             mapped.run(mode, &default_root)
         }

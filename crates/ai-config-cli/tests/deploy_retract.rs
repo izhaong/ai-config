@@ -127,6 +127,74 @@ fn deploy_overwrites_existing_platform_mcp_json() {
 }
 
 #[test]
+fn deploy_hermes_writes_config_yaml_preserving_other_keys() {
+    let (home, root) = setup();
+    let hermes_dir = home.path().join(".hermes");
+    fs::create_dir_all(&hermes_dir).unwrap();
+    let config_yaml = hermes_dir.join("config.yaml");
+    fs::write(&config_yaml, "model: gpt-test\n").unwrap();
+
+    cmd(home.path(), root.path())
+        .args(["mcp", "deploy", "minio", "hermes"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&config_yaml).expect("config.yaml updated");
+    assert!(content.contains("model: gpt-test"));
+    assert!(content.contains("mcp_servers:"));
+    assert!(content.contains("minio:"));
+    assert!(content.contains("minio.example.com:443"));
+}
+
+#[test]
+fn retract_hermes_removes_server_only() {
+    let (home, root) = setup();
+    let hermes_dir = home.path().join(".hermes");
+    fs::create_dir_all(&hermes_dir).unwrap();
+    let config_yaml = hermes_dir.join("config.yaml");
+    fs::write(&config_yaml, "model: gpt-test\n").unwrap();
+
+    cmd(home.path(), root.path())
+        .args(["mcp", "deploy", "minio", "hermes"])
+        .assert()
+        .success();
+
+    cmd(home.path(), root.path())
+        .args(["mcp", "retract", "minio", "hermes"])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&config_yaml).expect("config.yaml still exists");
+    assert!(content.contains("model: gpt-test"));
+    assert!(!content.contains("minio:"));
+}
+
+#[test]
+fn migrate_hermes_merges_legacy_mcp_json() {
+    let (home, root) = setup();
+    let hermes_dir = home.path().join(".hermes");
+    fs::create_dir_all(&hermes_dir).unwrap();
+    fs::write(
+        hermes_dir.join("mcp.json"),
+        r#"{"mcpServers":{"legacy-svc":{"command":"echo","args":["legacy"]}}}"#,
+    )
+    .unwrap();
+
+    cmd(home.path(), root.path())
+        .args(["mcp", "migrate-hermes"])
+        .assert()
+        .success();
+
+    let config_yaml = hermes_dir.join("config.yaml");
+    let content = fs::read_to_string(&config_yaml).expect("config.yaml created");
+    assert!(content.contains("legacy-svc:"));
+    assert!(
+        !hermes_dir.join("mcp.json").exists(),
+        "legacy mcp.json should be renamed after migrate"
+    );
+}
+
+#[test]
 fn secrets_validate_always_ok_without_mcp_placeholders() {
     let (home, root) = setup();
     cmd(home.path(), root.path())
