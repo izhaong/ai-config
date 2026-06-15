@@ -888,80 +888,90 @@ export function App() {
 
         <main className="content">
           <div className="toolbar">
-            <div className="toolbar-primary">
-              <label className="toolbar-check" title={t("toolbar.selectAllTitle")}>
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected && visible.length > 0}
-                  onChange={toggleSelectAll}
-                  disabled={visible.length === 0 || loading}
-                />
-              </label>
-              <div className="toolbar-info">
-                <div className="toolbar-title-row">
-                  <h3 className="toolbar-title">{toolbarTitle}</h3>
-                  <div className="toolbar-utils">
-                    <button
-                      className="toolbar-btn-ghost"
-                      disabled={loading || busy}
-                      title={t("toolbar.refreshTitle")}
-                      onClick={() => void refreshView(true)}
-                    >
-                      {loading ? t("toolbar.refreshing") : t("toolbar.refresh")}
-                    </button>
-                    <button
-                      className="toolbar-btn-ghost"
-                      disabled={!browsePath || loading || busy}
-                      title={t("toolbar.openFolderTitle")}
-                      onClick={() => void openBrowseFolder()}
-                    >
-                      {t("toolbar.openFolder")}
-                    </button>
-                  </div>
-                </div>
-                <div className="toolbar-sub">
-                  {browsePath ? (
-                    <code className="toolbar-path" title={browsePath}>
-                      {browsePath}
-                    </code>
-                  ) : null}
-                  <span className="toolbar-meta">
-                    {t("toolbar.items", { count: visible.length })}
-                    {selectedEntries.length > 0
-                      ? t("toolbar.selected", { count: selectedEntries.length })
-                      : ""}
-                    {loading || busy ? t("toolbar.processing") : ""}
-                  </span>
+            <label className="toolbar-check" title={t("toolbar.selectAllTitle")}>
+              <input
+                type="checkbox"
+                checked={allVisibleSelected && visible.length > 0}
+                onChange={toggleSelectAll}
+                disabled={visible.length === 0 || loading}
+              />
+            </label>
+            <div className="toolbar-body">
+              <div className="toolbar-row">
+                <h3 className="toolbar-title">{toolbarTitle}</h3>
+                <div className="toolbar-actions">
+                  <button
+                    className="toolbar-btn"
+                    disabled={batchDisabled}
+                    title={
+                      browsingSource
+                        ? t("toolbar.batchDeploy")
+                        : t("toolbar.batchDeployPlatform", {
+                            platform: PLATFORM_NAME[activePlatform],
+                          })
+                    }
+                    onClick={() => void batchDeploy()}
+                  >
+                    {t("toolbar.batchDeploy")}
+                  </button>
+                  <button
+                    className="toolbar-btn"
+                    disabled={batchDisabled}
+                    title={
+                      browsingSource
+                        ? t("toolbar.batchRetract")
+                        : t("toolbar.batchRetractPlatform", {
+                            platform: PLATFORM_NAME[activePlatform],
+                          })
+                    }
+                    onClick={() => void batchRetract()}
+                  >
+                    {t("toolbar.batchRetract")}
+                  </button>
+                  <button
+                    className="toolbar-btn toolbar-btn-warn"
+                    disabled={batchDisabled}
+                    title={t("toolbar.batchDeleteTitle")}
+                    onClick={requestBatchDelete}
+                  >
+                    {t("toolbar.batchDelete")}
+                  </button>
                 </div>
               </div>
-            </div>
-            <div className="toolbar-batch">
-              <button
-                className="primary"
-                disabled={batchDisabled}
-                onClick={() => void batchDeploy()}
-              >
-                {browsingSource
-                  ? t("toolbar.batchDeploy")
-                  : t("toolbar.batchDeployPlatform", {
-                      platform: PLATFORM_NAME[activePlatform],
-                    })}
-              </button>
-              <button disabled={batchDisabled} onClick={() => void batchRetract()}>
-                {browsingSource
-                  ? t("toolbar.batchRetract")
-                  : t("toolbar.batchRetractPlatform", {
-                      platform: PLATFORM_NAME[activePlatform],
-                    })}
-              </button>
-              <button
-                className="danger"
-                disabled={batchDisabled}
-                title={t("toolbar.batchDeleteTitle")}
-                onClick={requestBatchDelete}
-              >
-                {t("toolbar.batchDelete")}
-              </button>
+              <div className="toolbar-row toolbar-row-sub">
+                {browsePath ? (
+                  <code className="toolbar-path" title={browsePath}>
+                    {browsePath}
+                  </code>
+                ) : (
+                  <span className="toolbar-path toolbar-path-empty" />
+                )}
+                <button
+                  className="toolbar-btn"
+                  disabled={loading || busy}
+                  title={
+                    loading ? t("toolbar.refreshing") : t("toolbar.refreshTitle")
+                  }
+                  onClick={() => void refreshView(true)}
+                >
+                  {t("toolbar.refresh")}
+                </button>
+                <button
+                  className="toolbar-btn"
+                  disabled={!browsePath || loading || busy}
+                  title={t("toolbar.openFolderTitle")}
+                  onClick={() => void openBrowseFolder()}
+                >
+                  {t("toolbar.openFolder")}
+                </button>
+                <span className="toolbar-meta">
+                  {t("toolbar.items", { count: visible.length })}
+                  {selectedEntries.length > 0
+                    ? t("toolbar.selected", { count: selectedEntries.length })
+                    : ""}
+                  {loading || busy ? t("toolbar.processing") : ""}
+                </span>
+              </div>
             </div>
           </div>
 
