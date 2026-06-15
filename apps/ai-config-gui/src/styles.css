@@ -316,9 +316,9 @@ button.primary:hover:not(:disabled) {
 
 .content .toolbar {
   display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 0;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 12px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
   flex-shrink: 0;
@@ -326,101 +326,88 @@ button.primary:hover:not(:disabled) {
   z-index: 20;
 }
 
-.toolbar-primary {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px 14px 10px;
-}
-
-.toolbar-info {
+.toolbar-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
-.toolbar-title-row {
+.toolbar-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
+}
+
+.toolbar-row-sub {
+  gap: 6px;
 }
 
 .toolbar-title {
   margin: 0;
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.toolbar-utils {
+.toolbar-actions {
   display: flex;
   flex-shrink: 0;
   gap: 4px;
   align-items: center;
 }
 
-.toolbar-btn-ghost {
-  padding: 4px 10px;
+.toolbar-btn {
+  padding: 2px 8px;
   font-size: 11px;
+  line-height: 1.35;
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.toolbar-btn:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.toolbar-btn-warn {
   color: var(--fg-dim);
 }
 
-.toolbar-btn-ghost:hover:not(:disabled) {
-  color: var(--fg);
-  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
-  border-color: var(--border);
-}
-
-.toolbar-sub {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  flex-wrap: wrap;
+.toolbar-btn-warn:hover:not(:disabled) {
+  color: var(--err);
+  border-color: rgba(229, 116, 116, 0.35);
 }
 
 .toolbar-path {
   flex: 1;
   min-width: 0;
-  max-width: 100%;
   margin: 0;
-  padding: 3px 8px;
+  padding: 0;
   font-size: 11px;
-  line-height: 1.4;
+  line-height: 1.35;
   color: var(--fg-dim);
-  background: var(--bg, rgba(0, 0, 0, 0.2));
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  background: none;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.toolbar-batch {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  padding: 8px 14px 10px;
-  border-top: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 40%, var(--bg-elev));
-}
-
-.toolbar-batch button {
-  min-width: 88px;
+.toolbar-path-empty {
+  min-height: 1.35em;
 }
 
 .content-pane {

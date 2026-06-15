@@ -70,7 +70,7 @@
     "batchDeleteTitle": "勾选左侧复选框后执行批量删除",
     "batchDeployPlatform": "批量下发到 {{platform}}",
     "batchRetractPlatform": "从 {{platform}} 批量收回",
-    "openFolder": "打开文件夹",
+    "openFolder": "打开目录",
     "openFolderTitle": "在系统文件管理器中打开当前浏览路径"
   },
   "empty": {
