@@ -341,10 +341,7 @@ async fn cmd_list_platform(
     let plat = parse_plat(&platform)?;
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
 
-    let filter_kind = kind
-        .as_deref()
-        .map(parse_kind)
-        .transpose()?;
+    let filter_kind = kind.as_deref().map(parse_kind).transpose()?;
 
     let kinds: Vec<AssetKind> = match filter_kind {
         Some(k) => vec![k],
@@ -358,14 +355,9 @@ async fn cmd_list_platform(
 
     let mut entries: Vec<PlatformAssetEntry> = Vec::new();
     for k in kinds {
-        let mut batch = platform_scan::scan_platform_assets(
-            plat,
-            k,
-            &deploy_base,
-            &default_root,
-            &asset_root,
-        )
-        .map_err(|e| e.to_string())?;
+        let mut batch =
+            platform_scan::scan_platform_assets(plat, k, &deploy_base, &default_root, &asset_root)
+                .map_err(|e| e.to_string())?;
         entries.append(&mut batch);
     }
 
@@ -435,7 +427,13 @@ async fn cmd_skill_import(
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
     let name_for_msg = name.clone();
     let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_skill_from_platform(&name, plat, &default_root, &asset_root, &deploy_base)
+        platform_scan::import_skill_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
     })
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))?
@@ -457,7 +455,13 @@ async fn cmd_rule_import(
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
     let name_for_msg = name.clone();
     let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_rule_from_platform(&name, plat, &default_root, &asset_root, &deploy_base)
+        platform_scan::import_rule_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
     })
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))?
@@ -479,7 +483,13 @@ async fn cmd_agent_import(
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
     let name_for_msg = name.clone();
     let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_agent_from_platform(&name, plat, &default_root, &asset_root, &deploy_base)
+        platform_scan::import_agent_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
     })
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))?
@@ -501,7 +511,13 @@ async fn cmd_mcp_import(
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
     let name_for_msg = name.clone();
     let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_mcp_from_platform(&name, plat, &default_root, &asset_root, &deploy_base)
+        platform_scan::import_mcp_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
     })
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))?
@@ -1249,22 +1265,32 @@ async fn cmd_reveal_path(path: String) -> Result<(), String> {
 
 fn reveal_path_in_file_manager(path: &str) -> Result<(), String> {
     let p = Utf8Path::new(path);
-    let target = if p.is_file() { p.parent().unwrap_or(p) } else { p };
+    let target = if p.is_file() {
+        p.parent().unwrap_or(p)
+    } else {
+        p
+    };
     if !target.exists() {
         return Err(format!("路径不存在: {target}"));
     }
     let status = {
         #[cfg(target_os = "macos")]
         {
-            std::process::Command::new("open").arg(target.as_str()).status()
+            std::process::Command::new("open")
+                .arg(target.as_str())
+                .status()
         }
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("explorer").arg(target.as_str()).status()
+            std::process::Command::new("explorer")
+                .arg(target.as_str())
+                .status()
         }
         #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
         {
-            std::process::Command::new("xdg-open").arg(target.as_str()).status()
+            std::process::Command::new("xdg-open")
+                .arg(target.as_str())
+                .status()
         }
     }
     .map_err(|e| format!("打开文件夹失败: {e}"))?;
@@ -1294,12 +1320,7 @@ async fn cmd_assets_transfer(
         for item in &items {
             let kind = parse_kind(&item.kind)?;
             platform_scan::copy_asset_to_asset_root(
-                kind,
-                &item.name,
-                &from_def,
-                &from_root,
-                &to_def,
-                &to_root,
+                kind, &item.name, &from_def, &from_root, &to_def, &to_root,
             )
             .map_err(|e| e.to_string())?;
         }

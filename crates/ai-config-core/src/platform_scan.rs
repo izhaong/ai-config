@@ -82,14 +82,8 @@ pub fn scan_platform_assets(
 
     let mut out = Vec::with_capacity(raw.len());
     for (name, platform_path, description) in raw {
-        let states = compute_entry_states(
-            plat,
-            kind,
-            &name,
-            &platform_path,
-            deploy_base,
-            &source_scan,
-        );
+        let states =
+            compute_entry_states(plat, kind, &name, &platform_path, deploy_base, &source_scan);
         let source_state = if states.get(&PlatformId::AiConfig) == Some(&LinkState::Linked) {
             SourceState::Managed
         } else {
@@ -165,7 +159,10 @@ fn scan_source_for_scope(
 
 type RawEntry = (String, Utf8PathBuf, String);
 
-fn scan_platform_raw(adapter: &dyn PlatformAdapter, kind: AssetKind) -> Result<Vec<RawEntry>, CoreError> {
+fn scan_platform_raw(
+    adapter: &dyn PlatformAdapter,
+    kind: AssetKind,
+) -> Result<Vec<RawEntry>, CoreError> {
     match kind {
         AssetKind::Skill => scan_platform_skills(adapter),
         AssetKind::Rule => scan_platform_rules(adapter),
@@ -259,9 +256,8 @@ fn scan_platform_agents(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, 
         if name_os.starts_with('.') {
             continue;
         }
-        let path = Utf8PathBuf::from_path_buf(entry.into_path()).map_err(|_| {
-            CoreError::InvalidPath("agents 路径非 UTF-8".into())
-        })?;
+        let path = Utf8PathBuf::from_path_buf(entry.into_path())
+            .map_err(|_| CoreError::InvalidPath("agents 路径非 UTF-8".into()))?;
         let name = if path.is_dir() {
             path.file_name().map(|s| s.to_string())
         } else {
@@ -366,11 +362,7 @@ fn scan_hermes_mcp_servers(config_path: &Utf8Path) -> Result<Vec<RawEntry>, Core
         .collect())
 }
 
-fn find_source_path(
-    kind: AssetKind,
-    name: &str,
-    source_scan: &ScanResult,
-) -> Option<Utf8PathBuf> {
+fn find_source_path(kind: AssetKind, name: &str, source_scan: &ScanResult) -> Option<Utf8PathBuf> {
     match kind {
         AssetKind::Skill => source_scan.skills.iter().find(|p| {
             p.parent()
@@ -392,7 +384,9 @@ fn find_source_path(
         }),
         AssetKind::Mcp => {
             let asset_root = source_scan.mcp_json.as_ref()?.parent()?;
-            mcp_json::get_server_config(asset_root, name).ok().flatten()?;
+            mcp_json::get_server_config(asset_root, name)
+                .ok()
+                .flatten()?;
             source_scan.mcp_json.as_ref()
         }
     }
@@ -586,9 +580,7 @@ pub fn import_rule_from_platform(
     let platform_path = find_rule_on_platform(&rules_dir, name)?;
     let source_scan = scan_source_for_scope(default_root, asset_root)?;
     if find_source_path(AssetKind::Rule, name, &source_scan).is_some() {
-        return Err(CoreError::InvalidPath(format!(
-            "源中已存在 rule `{name}`"
-        )));
+        return Err(CoreError::InvalidPath(format!("源中已存在 rule `{name}`")));
     }
     let dest = asset_root.join("rules").join(format!("{name}.mdc"));
     crate::paths::ensure_parent_dir(&dest)?;
@@ -628,9 +620,7 @@ pub fn import_agent_from_platform(
     let platform_path = find_agent_on_platform(&agents_dir, name)?;
     let source_scan = scan_source_for_scope(default_root, asset_root)?;
     if find_source_path(AssetKind::Agent, name, &source_scan).is_some() {
-        return Err(CoreError::InvalidPath(format!(
-            "源中已存在 agent `{name}`"
-        )));
+        return Err(CoreError::InvalidPath(format!("源中已存在 agent `{name}`")));
     }
     let dest = if platform_path.is_dir() {
         asset_root.join("agents").join(name)
@@ -745,12 +735,13 @@ pub fn copy_asset_to_asset_root(
         }
         AssetKind::Mcp => {
             let asset_root = src.parent().unwrap_or(&src);
-            let config = mcp_json::get_server_config(asset_root, name)?
-                .ok_or_else(|| CoreError::AssetNotFound {
+            let config = mcp_json::get_server_config(asset_root, name)?.ok_or_else(|| {
+                CoreError::AssetNotFound {
                     kind,
                     name: name.into(),
                     hint: format!("MCP `{name}` 配置缺失"),
-                })?;
+                }
+            })?;
             mcp_json::ensure_mcp_json(to_root)?;
             mcp_json::upsert_server_in_document(to_root, name, config)?;
             mcp_json::mcp_json_path(to_root)
@@ -766,11 +757,12 @@ fn read_platform_mcp_server_config(
     if adapter.id() == PlatformId::Hermes {
         let path = adapter.mcp_deploy_path();
         let raw = fs::read_to_string(path.as_std_path()).map_err(CoreError::Io)?;
-        let doc: serde_yaml::Value = serde_yaml::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-            template: path.to_string(),
-            reason: format!("解析 config.yaml: {e}"),
-            hint: "修复 Hermes config.yaml".into(),
-        })?;
+        let doc: serde_yaml::Value =
+            serde_yaml::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+                template: path.to_string(),
+                reason: format!("解析 config.yaml: {e}"),
+                hint: "修复 Hermes config.yaml".into(),
+            })?;
         let serde_yaml::Value::Mapping(map) = doc else {
             return Err(CoreError::AssetNotFound {
                 kind: AssetKind::Mcp,
@@ -1016,7 +1008,10 @@ mod tests {
             root,
             &ScanResult::default(),
         );
-        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Unlinked));
+        assert_eq!(
+            states.get(&PlatformId::AiConfig),
+            Some(&LinkState::Unlinked)
+        );
         assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Linked));
     }
 }

@@ -450,9 +450,7 @@ mod tests {
         let actions = compute_for_project(&project, &default).unwrap();
         for a in &actions {
             if let SyncAction::Create { dest, platform, .. } = a {
-                if *platform == PlatformId::Hermes
-                    && dest.as_str().contains(".hermes/skills/")
-                {
+                if *platform == PlatformId::Hermes && dest.as_str().contains(".hermes/skills/") {
                     continue;
                 }
                 assert!(
@@ -518,9 +516,7 @@ mod tests {
         let rule_creates: Vec<_> = actions
             .iter()
             .filter_map(|a| match a {
-                SyncAction::Create { dest, .. }
-                    if dest.as_str().ends_with("rules/r-one.mdc") =>
-                {
+                SyncAction::Create { dest, .. } if dest.as_str().ends_with("rules/r-one.mdc") => {
                     Some(dest.clone())
                 }
                 _ => None,

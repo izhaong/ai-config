@@ -300,9 +300,7 @@ pub fn check(dest: &Utf8Path, expected_src: &Utf8Path) -> DeployHealth {
     }
 
     if content_matches_source_for_dest(expected_src, dest) {
-        return DeployHealth::Linked {
-            src: expected,
-        };
+        return DeployHealth::Linked { src: expected };
     }
 
     DeployHealth::Unlinked
@@ -501,7 +499,11 @@ mod tests {
         fs::write(dest.join("SKILL.md").as_std_path(), "same").unwrap();
 
         assert!(matches!(check(&dest, &src), DeployHealth::Linked { .. }));
-        assert!(content_matches_source(AssetKind::Skill, &src.join("SKILL.md"), &dest));
+        assert!(content_matches_source(
+            AssetKind::Skill,
+            &src.join("SKILL.md"),
+            &dest
+        ));
     }
 
     #[test]
