@@ -124,7 +124,11 @@
 - 列表（GUI）：选中项目时**仅**展示 `<repo>/.ai-config/` 内条目；user-global 仅展示 `~/.ai-config/`（列表不混入另一侧）
 - 同步计划（`compute_for_project`）：仍为 `scan_with_override` 合并（同 name 覆盖，供批量 sync）
 - 项目作用域 deploy **不得**写入 `$HOME` 平台目录；不得把仓库根当资产根直接扫 `skills/`（须经 `.ai-config/`）
-- **Hermes（仅全局）**：`HERMES_SKILLS_DIR` 可覆盖全局 skills 路径；项目作用域固定 `<repo>/.hermes/skills`
+- **Hermes（官方路径对齐）**：
+  - **Skills**：始终 `$HOME/.hermes/skills`（`HERMES_SKILLS_DIR` 可选；非默认路径同步进 `config.yaml` → `skills.external_dirs`）。项目作用域也写 `$HOME`，不写 `<repo>/.hermes/skills`。
+  - **Rules**：仅项目级 `<repo>/.cursor/rules/*.mdc`（Hermes 从 CWD 加载；user-global 不下发）。
+  - **Agents**：不下发（Hermes 用 `AGENTS.md` / `delegate_task`，无 `~/.hermes/agents`）。
+  - **MCP**：始终 `~/.hermes/config.yaml` 的 `mcp_servers:`（见 [Hermes MCP 文档](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)）。
 
 ### 3.3 持久化
 

@@ -24,7 +24,9 @@ use camino::Utf8Path;
 use serde::Serialize;
 
 use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::link::{self, LinkHealth, LinkKind};
+use ai_config_core::hermes_config;
+use ai_config_core::link::{self, LinkHealth};
+use ai_config_core::materialize;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{AssetKind, PlatformId, SyncAction};
 use ai_config_core::platform;
@@ -79,6 +81,7 @@ fn all_platforms() -> [PlatformId; 4] {
 
 fn platform_label(p: PlatformId) -> &'static str {
     match p {
+        PlatformId::AiConfig => "aiconfig",
         PlatformId::Cursor => "cursor",
         PlatformId::Codex => "codex",
         PlatformId::Claude => "claude",
@@ -184,8 +187,23 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
                         }
                     }
                 }
-                match link::link(&link_src, dest, LinkKind::auto()) {
-                    Ok(()) => out.push(Outcome::ok(label, *platform, kind)),
+                match materialize::deploy(&link_src, dest) {
+                    Ok(()) => {
+                        if *platform == PlatformId::Hermes && kind == "skill" {
+                            if let Some(skills_root) = dest.parent() {
+                                if let Err(e) = hermes_config::after_skill_deploy(skills_root) {
+                                    out.push(Outcome::failed(
+                                        format!("Hermes skills external_dirs ({skills_root})"),
+                                        *platform,
+                                        kind,
+                                        &e,
+                                    ));
+                                    continue;
+                                }
+                            }
+                        }
+                        out.push(Outcome::ok(label, *platform, kind));
+                    }
                     Err(e) => out.push(Outcome::failed(label, *platform, kind, &e)),
                 }
             }
@@ -202,8 +220,8 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
                             continue;
                         }
                     };
-                    let dest = adapter.mcp_json_path();
-                    match mcp_json::deploy_mcp_json_file(src, &dest) {
+                    let dest = adapter.mcp_deploy_path();
+                    match mcp_json::deploy_mcp_json_file(src, &dest, *platform) {
                         Ok(_) => out.push(Outcome::ok(label, *platform, "mcp")),
                         Err(e) => out.push(Outcome::failed(label, *platform, "mcp", &e)),
                     }
@@ -369,12 +387,11 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
         if let SyncAction::Create { platform, dest, .. } = action {
             let kind = infer_kind_from_dest(dest);
             let label = format!("Retract {kind} {dest}");
-            match link::unlink(dest) {
+            match materialize::retract(dest) {
                 Ok(()) => outcomes.push(Outcome::ok(label, *platform, kind)),
                 Err(e) => {
-                    // 目标不是链接(可能用户手写):**不**擅改,记为 skipped
                     let s = e.to_string();
-                    if s.contains("不是链接") {
+                    if s.contains("不是本工具下发") {
                         outcomes.push(Outcome::skipped(label, *platform, kind, &s));
                     } else {
                         outcomes.push(Outcome::failed(label, *platform, kind, &e));
@@ -394,7 +411,16 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
                 continue;
             }
         };
-        let mcp_path = adapter.mcp_json_path();
+        let mcp_path = adapter.mcp_deploy_path();
+        if plat == PlatformId::Hermes {
+            outcomes.push(Outcome::skipped(
+                label,
+                plat,
+                "mcp",
+                "Hermes MCP 在 config.yaml 中 per-server 管理,请用 mcp retract <name> hermes",
+            ));
+            continue;
+        }
         if !mcp_path.exists() {
             outcomes.push(Outcome::skipped(
                 label,
@@ -404,7 +430,7 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
             ));
             continue;
         }
-        match mcp_json::retract_platform_mcp_json(&mcp_path) {
+        match mcp_json::retract_platform_mcp_json(&mcp_path, plat) {
             Ok(()) => outcomes.push(Outcome::ok(label, plat, "mcp")),
             Err(e) => outcomes.push(Outcome::failed(label, plat, "mcp", &e)),
         }
@@ -658,24 +684,32 @@ fn describe_for(
             (dest, expected_src)
         }
         AssetKind::Mcp => {
-            let state = match mcp_json::mcp_json_file_sync_state(_src, &adapter.mcp_json_path()) {
+            let dest = adapter.mcp_deploy_path();
+            let state = match mcp_json::mcp_json_file_sync_state(_src, &dest, platform) {
                 McpSyncState::Linked => "linked",
                 McpSyncState::Unlinked => "missing",
                 McpSyncState::WrongValue => "wrong_source",
                 McpSyncState::Broken => "broken",
             };
-            return (state.to_string(), adapter.mcp_json_path());
+            return (state.to_string(), dest);
         }
     };
     if !dest.exists() && dest.as_std_path().symlink_metadata().is_err() {
         return ("missing".to_string(), dest);
     }
-    let health = link::check(&dest, &expected_src);
+    let health = materialize::check(&dest, &expected_src);
     let state = match health {
-        LinkHealth::Linked { .. } => "linked",
-        LinkHealth::Broken { .. } => "broken",
-        LinkHealth::WrongSource { .. } => "wrong_source",
-        LinkHealth::WrongType { .. } => "wrong_type",
+        materialize::DeployHealth::Linked { .. } => "linked",
+        materialize::DeployHealth::Broken => "broken",
+        materialize::DeployHealth::Unlinked => {
+            // 兼容历史 symlink 状态展示
+            match link::check(&dest, &expected_src) {
+                LinkHealth::Linked { .. } => "linked",
+                LinkHealth::Broken { .. } => "broken",
+                LinkHealth::WrongSource { .. } => "wrong_source",
+                LinkHealth::WrongType { .. } => "wrong_type",
+            }
+        }
     };
     (state.to_string(), dest)
 }

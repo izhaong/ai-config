@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "repository": "https://github.com/ant-design/ant-design-cli",
+  "path": "skills/antd",
+  "ref": "main",
+  "commit": "ede23a8dc40e",
+  "vendoredAt": "2026-06-15"
+}

@@ -5,37 +5,45 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Trans, useTranslation } from "react-i18next";
+import { useTranslation } from "react-i18next";
 import { AssetDrawer } from "./AssetDrawer";
 import { AssetRow } from "./AssetRow";
 import { ConfirmModal } from "./ConfirmModal";
 import { RegisterProjectModal } from "./RegisterProjectModal";
 import { LanguageSwitcher } from "./LanguageSwitcher";
-import { assetKindLabel, kindDirName } from "./i18n/labels";
+import { assetKindLabel } from "./i18n/labels";
 import {
+  ALL_PLATFORMS,
   ASSET_KINDS,
   canDeploy,
   canRetract,
-  PLATFORMS,
+  DEPLOY_PLATFORMS,
+  hasSourceEntry,
+  isSourcePlatform,
   type AssetDetail,
-  type AssetEntry,
   type AssetKind,
-  type AssetList,
+  type DeployPlatform,
   type DoctorSummary,
   type Platform,
+  type PlatformAssetEntry,
+  type PlatformAssetList,
+  type PlatformKindPath,
   type ProjectItem,
 } from "./types";
+import { PLATFORM_FAVICON, PLATFORM_NAME } from "./platformIcons";
 
-function entryKey(entry: AssetEntry): string {
+function entryKey(entry: { kind: AssetKind; name: string }): string {
   return `${entry.kind}:${entry.name}`;
 }
 
 export function App() {
   const { t } = useTranslation();
   const [activeProject, setActiveProject] = useState<string>("user-global");
+  const [activePlatform, setActivePlatform] = useState<Platform>("cursor");
   const [activeKind, setActiveKind] = useState<AssetKind>("skill");
   const [projects, setProjects] = useState<ProjectItem[]>([]);
-  const [list, setList] = useState<AssetList | null>(null);
+  const [platformList, setPlatformList] = useState<PlatformAssetList | null>(null);
+  const [platformKindPaths, setPlatformKindPaths] = useState<PlatformKindPath[]>([]);
   const [doctor, setDoctor] = useState<DoctorSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -60,6 +68,7 @@ export function App() {
   const drawerNameRef = useRef<string | null>(null);
   const drawerEditingRef = useRef(false);
   const kindLabel = assetKindLabel(t, activeKind);
+  const browsingSource = isSourcePlatform(activePlatform);
 
   useEffect(() => {
     drawerNameRef.current = drawerName;
@@ -80,26 +89,47 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    invoke<Array<{ platform: string; path: string; supported: boolean }>>(
+      "cmd_platform_kind_paths",
+      { project: activeProject, kind: activeKind }
+    )
+      .then((rows) =>
+        setPlatformKindPaths(
+          rows.map((r) => ({
+            platform: r.platform as Platform,
+            path: r.path,
+            supported: r.supported,
+          }))
+        )
+      )
+      .catch(() => setPlatformKindPaths([]));
+  }, [activeProject, activeKind]);
+
+  useEffect(() => {
     const myReq = ++reqIdRef.current;
     setLoading(true);
-    invoke<AssetList>("cmd_list", { project: activeProject })
+    invoke<PlatformAssetList>("cmd_list_platform", {
+      project: activeProject,
+      platform: activePlatform,
+      kind: activeKind,
+    })
       .then((r) => {
-        if (reqIdRef.current === myReq) setList(r);
+        if (reqIdRef.current === myReq) setPlatformList(r);
       })
       .catch((e) => {
         if (reqIdRef.current === myReq) {
-          setToast({ kind: "err", text: t("toast.listFailed", { error: e }) });
-          setList(null);
+          setToast({ kind: "err", text: t("toast.platformListFailed", { error: e }) });
+          setPlatformList(null);
         }
       })
       .finally(() => {
         if (reqIdRef.current === myReq) setLoading(false);
       });
-  }, [activeProject]);
+  }, [activeProject, activePlatform, activeKind, t]);
 
   const visible = useMemo(
-    () => list?.entries.filter((e) => e.kind === activeKind) ?? [],
-    [list, activeKind]
+    () => platformList?.entries ?? [],
+    [platformList]
   );
 
   const visibleKeys = useMemo(
@@ -112,23 +142,19 @@ export function App() {
     [visible, selectedKeys]
   );
 
-  const deleteTargets = selectedEntries;
-
   const allVisibleSelected =
     visible.length > 0 && visible.every((e) => selectedKeys.has(entryKey(e)));
 
-  const emptyAssetRoot = useMemo(() => {
-    if (activeProject === "user-global") return null;
-    const p = projects.find((q) => q.name === activeProject);
-    if (!p?.root_path) return null;
-    return `${p.root_path}/.ai-config`;
-  }, [activeProject, projects]);
+  const browsePath = useMemo(() => {
+    const row = platformKindPaths.find((p) => p.platform === activePlatform);
+    return row?.path ?? "";
+  }, [platformKindPaths, activePlatform]);
 
   const issues = doctor?.platform_capability_issues ?? [];
   const issueMap = new Map(issues.map((i) => [`${i.platform}:${i.kind}`, i.reason]));
 
   const issueReasonFor = useCallback(
-    (entry: AssetEntry, plat: Platform) =>
+    (entry: PlatformAssetEntry, plat: DeployPlatform) =>
       issueMap.get(`${plat}:${entry.kind}`),
     [issueMap]
   );
@@ -136,8 +162,12 @@ export function App() {
   const refresh = useCallback(async () => {
     const myReq = ++reqIdRef.current;
     try {
-      const r = await invoke<AssetList>("cmd_list", { project: activeProject });
-      if (reqIdRef.current === myReq) setList(r);
+      const r = await invoke<PlatformAssetList>("cmd_list_platform", {
+        project: activeProject,
+        platform: activePlatform,
+        kind: activeKind,
+      });
+      if (reqIdRef.current === myReq) setPlatformList(r);
       return r;
     } catch (e) {
       if (reqIdRef.current === myReq) {
@@ -145,7 +175,7 @@ export function App() {
       }
       return null;
     }
-  }, [activeProject, t]);
+  }, [activeProject, activePlatform, activeKind, t]);
 
   const closeDrawer = useCallback(() => {
     setDrawerName(null);
@@ -155,22 +185,15 @@ export function App() {
   }, []);
 
   const reloadDrawerIfOpen = useCallback(
-    async (listResult: AssetList | null) => {
+    async (listResult: PlatformAssetList | null) => {
       const name = drawerNameRef.current;
       if (!name || !listResult) return;
 
       const stillExists = listResult.entries.some(
-        (e) => e.kind === activeKind && e.name === name
+        (e) => e.kind === activeKind && e.name === name && hasSourceEntry(e)
       );
       if (!stillExists) {
         closeDrawer();
-        setToast({
-          kind: "err",
-          text: t("toast.loadAssetFailed", {
-            label: assetKindLabel(t, activeKind),
-            error: t("toast.assetRemovedExternally"),
-          }),
-        });
         return;
       }
 
@@ -236,7 +259,7 @@ export function App() {
     setDrawerDetail(null);
     setDrawerEditing(false);
     setDrawerDraft("");
-  }, [activeKind, activeProject]);
+  }, [activeKind, activeProject, activePlatform]);
 
   const openAsset = useCallback(
     async (name: string) => {
@@ -293,7 +316,7 @@ export function App() {
   }, [drawerName, drawerDraft, activeKind, activeProject, refresh, t]);
 
   const runDeleteEntries = useCallback(
-    async (entries: AssetEntry[]) => {
+    async (entries: PlatformAssetEntry[]) => {
       setBusy(true);
       let ok = 0;
       const failed: string[] = [];
@@ -340,7 +363,7 @@ export function App() {
   );
 
   const requestDeleteAsset = useCallback(() => {
-    if (!drawerName) return;
+    if (!drawerName || !browsingSource) return;
     const entry = visible.find((e) => e.name === drawerName);
     if (!entry) {
       setToast({ kind: "err", text: t("toast.entryNotFound") });
@@ -355,12 +378,32 @@ export function App() {
       confirmLabel: t("confirm.delete"),
       onConfirm: () => runDeleteEntries([entry]),
     });
-  }, [drawerName, visible, kindLabel, runDeleteEntries, t]);
+  }, [drawerName, visible, kindLabel, runDeleteEntries, t, browsingSource]);
 
   const deleteAsset = requestDeleteAsset;
 
+  const deleteFromSource = useCallback(
+    async (entry: PlatformAssetEntry) => {
+      setBusy(true);
+      try {
+        await invoke<string>(`cmd_${entry.kind}_delete`, {
+          name: entry.name,
+          project: activeProject,
+        });
+        if (drawerName === entry.name) closeDrawer();
+        setToast({ kind: "ok", text: t("toast.deletedCount", { count: 1 }) });
+        await refresh();
+      } catch (e) {
+        setToast({ kind: "err", text: t("toast.deleteFailed", { errors: String(e) }) });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [activeProject, drawerName, closeDrawer, refresh, t]
+  );
+
   const deployOne = useCallback(
-    async (entry: AssetEntry, plat: Platform) => {
+    async (entry: PlatformAssetEntry, plat: DeployPlatform) => {
       try {
         const r = await invoke<string>(`cmd_${entry.kind}_deploy`, {
           name: entry.name,
@@ -377,7 +420,7 @@ export function App() {
   );
 
   const retractOne = useCallback(
-    async (entry: AssetEntry, plat: Platform) => {
+    async (entry: PlatformAssetEntry, plat: DeployPlatform) => {
       try {
         const r = await invoke<string>(`cmd_${entry.kind}_retract`, {
           name: entry.name,
@@ -393,18 +436,53 @@ export function App() {
     [activeProject, refresh, t]
   );
 
-  const handlePlatformToggle = useCallback(
-    (entry: AssetEntry, plat: Platform) => {
-      if (issueMap.has(`${plat}:${entry.kind}`)) return;
-      const state = entry.states[plat];
-      if (canRetract(state)) {
-        void retractOne(entry, plat);
-      } else if (canDeploy(state)) {
-        void deployOne(entry, plat);
+  const importFromPlatform = useCallback(
+    async (name: string, kind: AssetKind) => {
+      if (isSourcePlatform(activePlatform)) return;
+      setBusy(true);
+      try {
+        const r = await invoke<string>(`cmd_${kind}_import`, {
+          name,
+          project: activeProject,
+          fromPlatform: activePlatform,
+        });
+        setToast({ kind: "ok", text: t("toast.importSuccess", { message: r }) });
+        await refreshView(false);
+      } catch (e) {
+        setToast({ kind: "err", text: t("toast.importFailed", { error: e }) });
+      } finally {
+        setBusy(false);
       }
     },
-    [issueMap, retractOne, deployOne]
+    [activePlatform, activeProject, refreshView, t]
   );
+
+  const handlePlatformToggle = useCallback(
+    (entry: PlatformAssetEntry, plat: Platform) => {
+      if (plat === "aiconfig") {
+        const state = entry.states.aiconfig;
+        if (canRetract(state)) {
+          void deleteFromSource(entry);
+        } else if (canDeploy(state) && !isSourcePlatform(activePlatform)) {
+          void importFromPlatform(entry.name, entry.kind);
+        }
+        return;
+      }
+      const deployPlat = plat as DeployPlatform;
+      if (issueMap.has(`${deployPlat}:${entry.kind}`)) return;
+      const state = entry.states[deployPlat];
+      if (canRetract(state)) {
+        void retractOne(entry, deployPlat);
+      } else if (canDeploy(state)) {
+        void deployOne(entry, deployPlat);
+      }
+    },
+    [issueMap, retractOne, deployOne, deleteFromSource, importFromPlatform, activePlatform]
+  );
+
+  const togglePlatformBrowse = useCallback((plat: Platform) => {
+    setActivePlatform(plat);
+  }, []);
 
   const toggleSelect = useCallback((key: string, checked: boolean) => {
     setSelectedKeys((prev) => {
@@ -425,91 +503,197 @@ export function App() {
 
   const batchDeploy = useCallback(async () => {
     if (selectedEntries.length === 0) return;
-    setLoading(true);
+    setBusy(true);
     try {
-      for (const entry of selectedEntries) {
-        for (const p of PLATFORMS) {
-          if (canDeploy(entry.states[p]) && !issueMap.has(`${p}:${entry.kind}`)) {
-            try {
-              await invoke<string>(`cmd_${entry.kind}_deploy`, {
-                name: entry.name,
-                project: activeProject,
-                to: p,
-              });
-            } catch (e) {
-              setToast({
-                kind: "err",
-                text: t("toast.batchDeployItemFailed", {
+      if (browsingSource) {
+        for (const entry of selectedEntries) {
+          for (const p of DEPLOY_PLATFORMS) {
+            if (canDeploy(entry.states[p]) && !issueMap.has(`${p}:${entry.kind}`)) {
+              try {
+                await invoke<string>(`cmd_${entry.kind}_deploy`, {
                   name: entry.name,
-                  platform: p,
-                  error: e,
-                }),
-              });
+                  project: activeProject,
+                  to: p,
+                });
+              } catch (e) {
+                setToast({
+                  kind: "err",
+                  text: t("toast.batchDeployItemFailed", {
+                    name: entry.name,
+                    platform: p,
+                    error: e,
+                  }),
+                });
+              }
             }
           }
         }
+      } else if (!isSourcePlatform(activePlatform)) {
+        const plat = activePlatform as DeployPlatform;
+        for (const entry of selectedEntries) {
+          if (issueMap.has(`${plat}:${entry.kind}`)) continue;
+          try {
+            if (!hasSourceEntry(entry)) {
+              await invoke<string>(`cmd_${entry.kind}_import`, {
+                name: entry.name,
+                project: activeProject,
+                fromPlatform: activePlatform,
+              });
+            }
+            await invoke<string>(`cmd_${entry.kind}_deploy`, {
+              name: entry.name,
+              project: activeProject,
+              to: plat,
+            });
+          } catch (e) {
+            setToast({
+              kind: "err",
+              text: t("toast.batchDeployItemFailed", {
+                name: entry.name,
+                platform: plat,
+                error: e,
+              }),
+            });
+          }
+        }
       }
-      await refresh();
+      await refreshView(false);
       setToast({
         kind: "ok",
         text: t("toast.batchDeployed", { count: selectedEntries.length }),
       });
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }, [selectedEntries, activeProject, issueMap, refresh, t]);
+  }, [selectedEntries, browsingSource, activePlatform, activeProject, issueMap, refreshView, t]);
 
   const batchRetract = useCallback(async () => {
     if (selectedEntries.length === 0) return;
-    setLoading(true);
+    setBusy(true);
     try {
-      for (const entry of selectedEntries) {
-        for (const p of PLATFORMS) {
-          if (canRetract(entry.states[p])) {
-            try {
-              await invoke<string>(`cmd_${entry.kind}_retract`, {
-                name: entry.name,
-                project: activeProject,
-                from: p,
-              });
-            } catch (e) {
-              setToast({
-                kind: "err",
-                text: t("toast.batchRetractItemFailed", {
+      if (browsingSource) {
+        for (const entry of selectedEntries) {
+          for (const p of DEPLOY_PLATFORMS) {
+            if (canRetract(entry.states[p])) {
+              try {
+                await invoke<string>(`cmd_${entry.kind}_retract`, {
                   name: entry.name,
-                  platform: p,
-                  error: e,
-                }),
-              });
+                  project: activeProject,
+                  from: p,
+                });
+              } catch (e) {
+                setToast({
+                  kind: "err",
+                  text: t("toast.batchRetractItemFailed", {
+                    name: entry.name,
+                    platform: p,
+                    error: e,
+                  }),
+                });
+              }
             }
           }
         }
+      } else if (!isSourcePlatform(activePlatform)) {
+        const plat = activePlatform as DeployPlatform;
+        for (const entry of selectedEntries) {
+          if (!canRetract(entry.states[plat])) continue;
+          try {
+            await invoke<string>(`cmd_${entry.kind}_retract`, {
+              name: entry.name,
+              project: activeProject,
+              from: plat,
+            });
+          } catch (e) {
+            setToast({
+              kind: "err",
+              text: t("toast.batchRetractItemFailed", {
+                name: entry.name,
+                platform: plat,
+                error: e,
+              }),
+            });
+          }
+        }
       }
-      await refresh();
+      await refreshView(false);
       setToast({
         kind: "ok",
         text: t("toast.batchRetracted", { count: selectedEntries.length }),
       });
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
-  }, [selectedEntries, activeProject, refresh, t]);
+  }, [selectedEntries, browsingSource, activePlatform, activeProject, refreshView, t]);
+
+  const runBatchDelete = useCallback(async () => {
+    setBusy(true);
+    try {
+      if (browsingSource) {
+        await runDeleteEntries(selectedEntries);
+      } else if (!isSourcePlatform(activePlatform)) {
+        const plat = activePlatform as DeployPlatform;
+        for (const entry of selectedEntries) {
+          try {
+            if (hasSourceEntry(entry)) {
+              await invoke<string>(`cmd_${entry.kind}_delete`, {
+                name: entry.name,
+                project: activeProject,
+              });
+            } else if (canRetract(entry.states[plat])) {
+              await invoke<string>(`cmd_${entry.kind}_retract`, {
+                name: entry.name,
+                project: activeProject,
+                from: plat,
+              });
+            }
+          } catch (e) {
+            setToast({ kind: "err", text: t("toast.deleteFailed", { errors: String(e) }) });
+          }
+        }
+        await refreshView(false);
+        setToast({
+          kind: "ok",
+          text: t("toast.batchDeleted", { count: selectedEntries.length }),
+        });
+      }
+    } finally {
+      setBusy(false);
+    }
+  }, [selectedEntries, browsingSource, activePlatform, activeProject, runDeleteEntries, refreshView, t]);
 
   const requestBatchDelete = useCallback(() => {
-    if (deleteTargets.length === 0) {
+    if (selectedEntries.length === 0) {
       setToast({ kind: "err", text: t("toast.selectRowsFirst") });
       return;
     }
     setConfirm({
       title: t("confirm.batchDelete"),
-      message: t("confirm.batchDeleteMessage", {
-        count: deleteTargets.length,
-        label: kindLabel,
-      }),
+      message: browsingSource
+        ? t("confirm.batchDeleteMessage", {
+            count: selectedEntries.length,
+            label: kindLabel,
+          })
+        : t("confirm.batchDeletePlatformMessage", {
+            count: selectedEntries.length,
+            platform: PLATFORM_NAME[activePlatform],
+          }),
       confirmLabel: t("confirm.delete"),
-      onConfirm: () => runDeleteEntries(deleteTargets),
+      onConfirm: () => runBatchDelete(),
     });
-  }, [deleteTargets, kindLabel, runDeleteEntries, t]);
+  }, [selectedEntries, browsingSource, activePlatform, kindLabel, runBatchDelete, t]);
+
+  const openBrowseFolder = useCallback(async () => {
+    if (!browsePath) {
+      setToast({ kind: "err", text: t("toast.noBrowsePath") });
+      return;
+    }
+    try {
+      await invoke("cmd_reveal_path", { path: browsePath });
+    } catch (e) {
+      setToast({ kind: "err", text: t("toast.openFolderFailed", { error: e }) });
+    }
+  }, [browsePath, t]);
 
   const submitRegisterProject = useCallback(
     async (name: string, rootPath: string) => {
@@ -575,10 +759,22 @@ export function App() {
   }, [visibleKeys]);
 
   const batchDisabled = loading || busy || selectedEntries.length === 0;
-  const batchDeleteDisabled = loading || busy;
   const doctorIssueCount = doctor
     ? doctor.broken + doctor.wrong_source + doctor.wrong_type
     : 0;
+
+  const platformPathMap = useMemo(
+    () => new Map(platformKindPaths.map((r) => [r.platform, r])),
+    [platformKindPaths]
+  );
+
+  const platformKindUnsupported =
+    !isSourcePlatform(activePlatform) &&
+    !!issueMap.get(`${activePlatform}:${activeKind}`);
+
+  const toolbarTitle = `${kindLabel} · ${PLATFORM_NAME[activePlatform]} · ${
+    activeProject === "user-global" ? t("nav.userGlobal") : activeProject
+  }`;
 
   return (
     <div className="app">
@@ -594,144 +790,200 @@ export function App() {
       </header>
 
       <div className="main">
-        <aside className="column">
-          <h2>{t("nav.projects")}</h2>
-          <ul>
-            <li
-              className={activeProject === "user-global" ? "active" : ""}
-              onClick={() => setActiveProject("user-global")}
-            >
-              {t("nav.userGlobal")}
-            </li>
-            {projects.map((p) => (
+        <aside className="sidebar">
+          <section className="sidebar-section sidebar-projects">
+            <h2>{t("nav.projects")}</h2>
+            <ul className="project-list">
               <li
-                key={p.id || p.name}
-                className={activeProject === p.name ? "active" : ""}
-                onClick={() => setActiveProject(p.name)}
-                title={p.root_path}
+                className={activeProject === "user-global" ? "active" : ""}
+                onClick={() => setActiveProject("user-global")}
               >
-                <span className="project-name">{p.name}</span>
-                <span className="badge">.</span>
-                <span
-                  className="remove"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    requestRemoveProject(p.name);
-                  }}
-                  title={t("nav.removeProject", { name: p.name })}
+                {t("nav.userGlobal")}
+              </li>
+              {projects.map((p) => (
+                <li
+                  key={p.id || p.name}
+                  className={activeProject === p.name ? "active" : ""}
+                  onClick={() => setActiveProject(p.name)}
+                  title={p.root_path}
                 >
-                  ×
-                </span>
-              </li>
-            ))}
-            <li
-              className="add"
-              onClick={() => setRegisterProjectOpen(true)}
-              title={t("nav.registerProjectTitle")}
-            >
-              {t("nav.registerProject")}
-            </li>
-          </ul>
-        </aside>
-
-        <aside className="column">
-          <h2>{t("nav.assets")}</h2>
-          <ul>
-            {ASSET_KINDS.map((k) => (
+                  <span className="project-name">{p.name}</span>
+                  <span className="badge">.</span>
+                  <span
+                    className="remove"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      requestRemoveProject(p.name);
+                    }}
+                    title={t("nav.removeProject", { name: p.name })}
+                  >
+                    ×
+                  </span>
+                </li>
+              ))}
               <li
-                key={k}
-                className={activeKind === k ? "active" : ""}
-                onClick={() => setActiveKind(k)}
+                className="add"
+                onClick={() => setRegisterProjectOpen(true)}
+                title={t("nav.registerProjectTitle")}
               >
-                {assetKindLabel(t, k)}
-                {issueMap.has(`cursor:${k}`) || issueMap.has(`codex:${k}`) ? (
-                  <span className="badge">⚠</span>
-                ) : null}
+                {t("nav.registerProject")}
               </li>
-            ))}
-          </ul>
+            </ul>
+          </section>
+
+          <section className="sidebar-section sidebar-assets">
+            <h2>{t("nav.assets")}</h2>
+            <ul>
+              {ASSET_KINDS.map((k) => (
+                <li
+                  key={k}
+                  className={activeKind === k ? "active" : ""}
+                  onClick={() => setActiveKind(k)}
+                >
+                  {assetKindLabel(t, k)}
+                  {issueMap.has(`cursor:${k}`) || issueMap.has(`codex:${k}`) ? (
+                    <span className="badge">⚠</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="sidebar-section sidebar-platforms">
+            <h2>{t("nav.platforms")}</h2>
+            <ul className="platform-list">
+              {ALL_PLATFORMS.map((p) => {
+                const pathInfo = platformPathMap.get(p);
+                const pathHint = pathInfo?.path
+                  ? pathInfo.supported
+                    ? pathInfo.path
+                    : t("platformView.unsupportedOnPlatform")
+                  : "";
+                return (
+                  <li
+                    key={p}
+                    className={`platform-item${activePlatform === p ? " active" : ""}${
+                      pathInfo && !pathInfo.supported ? " unsupported" : ""
+                    }`}
+                    title={
+                      pathHint
+                        ? `${PLATFORM_NAME[p]} · ${pathHint}`
+                        : PLATFORM_NAME[p]
+                    }
+                    onClick={() => togglePlatformBrowse(p)}
+                  >
+                    <img
+                      src={PLATFORM_FAVICON[p]}
+                      alt=""
+                      className="platform-item-icon"
+                      draggable={false}
+                    />
+                    <span className="platform-item-name">{PLATFORM_NAME[p]}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         </aside>
 
         <main className="content">
           <div className="toolbar">
-            <label className="toolbar-check" title={t("toolbar.selectAllTitle")}>
-              <input
-                type="checkbox"
-                checked={allVisibleSelected && visible.length > 0}
-                onChange={toggleSelectAll}
-                disabled={visible.length === 0 || loading}
-              />
-            </label>
-            <h3>
-              {kindLabel} · {activeProject === "user-global" ? t("nav.userGlobal") : activeProject}
-            </h3>
-            <span className="toolbar-meta">
-              {t("toolbar.items", { count: visible.length })}
-              {selectedEntries.length > 0
-                ? t("toolbar.selected", { count: selectedEntries.length })
-                : ""}
-              {loading || busy ? t("toolbar.processing") : ""}
-            </span>
-            <div className="spacer" />
-            <button
-              disabled={loading || busy}
-              title={t("toolbar.refreshTitle")}
-              onClick={() => void refreshView(true)}
-            >
-              {loading ? t("toolbar.refreshing") : t("toolbar.refresh")}
-            </button>
-            <button className="primary" disabled={batchDisabled} onClick={() => void batchDeploy()}>
-              {t("toolbar.batchDeploy")}
-            </button>
-            <button disabled={batchDisabled} onClick={() => void batchRetract()}>
-              {t("toolbar.batchRetract")}
-            </button>
-            <button
-              className="danger"
-              disabled={batchDeleteDisabled}
-              title={t("toolbar.batchDeleteTitle")}
-              onClick={requestBatchDelete}
-            >
-              {t("toolbar.batchDelete")}
-            </button>
+            <div className="toolbar-primary">
+              <label className="toolbar-check" title={t("toolbar.selectAllTitle")}>
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected && visible.length > 0}
+                  onChange={toggleSelectAll}
+                  disabled={visible.length === 0 || loading}
+                />
+              </label>
+              <div className="toolbar-info">
+                <div className="toolbar-title-row">
+                  <h3 className="toolbar-title">{toolbarTitle}</h3>
+                  <div className="toolbar-utils">
+                    <button
+                      className="toolbar-btn-ghost"
+                      disabled={loading || busy}
+                      title={t("toolbar.refreshTitle")}
+                      onClick={() => void refreshView(true)}
+                    >
+                      {loading ? t("toolbar.refreshing") : t("toolbar.refresh")}
+                    </button>
+                    <button
+                      className="toolbar-btn-ghost"
+                      disabled={!browsePath || loading || busy}
+                      title={t("toolbar.openFolderTitle")}
+                      onClick={() => void openBrowseFolder()}
+                    >
+                      {t("toolbar.openFolder")}
+                    </button>
+                  </div>
+                </div>
+                <div className="toolbar-sub">
+                  {browsePath ? (
+                    <code className="toolbar-path" title={browsePath}>
+                      {browsePath}
+                    </code>
+                  ) : null}
+                  <span className="toolbar-meta">
+                    {t("toolbar.items", { count: visible.length })}
+                    {selectedEntries.length > 0
+                      ? t("toolbar.selected", { count: selectedEntries.length })
+                      : ""}
+                    {loading || busy ? t("toolbar.processing") : ""}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="toolbar-batch">
+              <button
+                className="primary"
+                disabled={batchDisabled}
+                onClick={() => void batchDeploy()}
+              >
+                {browsingSource
+                  ? t("toolbar.batchDeploy")
+                  : t("toolbar.batchDeployPlatform", {
+                      platform: PLATFORM_NAME[activePlatform],
+                    })}
+              </button>
+              <button disabled={batchDisabled} onClick={() => void batchRetract()}>
+                {browsingSource
+                  ? t("toolbar.batchRetract")
+                  : t("toolbar.batchRetractPlatform", {
+                      platform: PLATFORM_NAME[activePlatform],
+                    })}
+              </button>
+              <button
+                className="danger"
+                disabled={batchDisabled}
+                title={t("toolbar.batchDeleteTitle")}
+                onClick={requestBatchDelete}
+              >
+                {t("toolbar.batchDelete")}
+              </button>
+            </div>
           </div>
 
           <div className="content-pane">
-            {list === null ? (
+            {platformList === null ? (
               <div className="empty">{t("empty.loading")}</div>
             ) : visible.length === 0 ? (
               <div className="empty">
-                {activeKind === "mcp" ? (
-                  emptyAssetRoot ? (
-                    <Trans
-                      i18nKey="empty.mcp"
-                      values={{ assetRoot: emptyAssetRoot }}
-                      components={{ code: <code /> }}
-                    />
-                  ) : (
-                    t("empty.mcpGlobal")
-                  )
-                ) : emptyAssetRoot ? (
-                  <Trans
-                    i18nKey="empty.assets"
-                    values={{
-                      assetRoot: emptyAssetRoot,
-                      kindDir: kindDirName(t, activeKind),
-                    }}
-                    components={{ code: <code /> }}
-                  />
+                {platformKindUnsupported ? (
+                  t("platformView.emptyUnsupported", {
+                    platform: PLATFORM_NAME[activePlatform],
+                    label: kindLabel,
+                  })
                 ) : (
-                  <Trans
-                    i18nKey="empty.assetsGlobal"
-                    values={{ kindDir: kindDirName(t, activeKind) }}
-                    components={{ code: <code /> }}
-                  />
+                  t("platformView.empty", { label: kindLabel })
                 )}
               </div>
             ) : (
               <div className="asset-list">
                 {visible.map((entry) => {
                   const key = entryKey(entry);
+                  const canOpen = hasSourceEntry(entry);
                   return (
                     <AssetRow
                       key={key}
@@ -740,7 +992,7 @@ export function App() {
                       checked={selectedKeys.has(key)}
                       onCheckedChange={(checked) => toggleSelect(key, checked)}
                       selected={drawerName === entry.name}
-                      onOpen={() => void openAsset(entry.name)}
+                      onOpen={canOpen ? () => void openAsset(entry.name) : undefined}
                       issueReasonFor={(plat) => issueReasonFor(entry, plat)}
                       onPlatformToggle={(plat) => handlePlatformToggle(entry, plat)}
                     />
@@ -749,7 +1001,7 @@ export function App() {
               </div>
             )}
 
-            {drawerName ? (
+            {drawerName && browsingSource ? (
               <AssetDrawer
                 kind={activeKind}
                 name={drawerName}
@@ -780,7 +1032,7 @@ export function App() {
         </span>
         <span>{t("statusbar.secrets", { count: doctor?.missing_secrets.length ?? 0 })}</span>
         <span>{t("statusbar.projects", { count: projects.length })}</span>
-        <span>{t("statusbar.broken", { count: list?.broken_links ?? 0 })}</span>
+        <span>{t("statusbar.broken", { count: 0 })}</span>
       </footer>
 
       {toast ? (

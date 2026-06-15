@@ -166,14 +166,22 @@ impl Agent {
     }
 }
 
-/// 4 个目标平台。
+/// 5 个平台：ai-config 为资产源；其余 4 个为 IDE 下发目标。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum PlatformId {
+    AiConfig,
     Cursor,
     Codex,
     Claude,
     Hermes,
+}
+
+impl PlatformId {
+    /// 是否可向该平台 deploy / retract（ai-config 仅为源，不下发）。
+    pub fn is_deploy_target(self) -> bool {
+        !matches!(self, PlatformId::AiConfig)
+    }
 }
 
 /// 链接 / 渲染目标(per-item × per-platform)。

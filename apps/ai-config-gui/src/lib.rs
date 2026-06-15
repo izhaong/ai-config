@@ -33,11 +33,13 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
 use ai_config_core::error::CoreError;
-use ai_config_core::link::{self, LinkKind};
+use ai_config_core::hermes_config;
+use ai_config_core::materialize;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{AssetKind, PlatformId, Project};
 use ai_config_core::paths;
 use ai_config_core::platform;
+use ai_config_core::platform_scan::{self, PlatformAssetEntry, PlatformAssetList};
 use ai_config_core::source;
 use ai_config_core::sync::{agent_link_src, asset_dest_for_at_base};
 use ai_config_core::template::McpSyncState;
@@ -157,7 +159,7 @@ fn sync_capability_issues() -> Vec<PlatformIssue> {
             AssetKind::Mcp,
             AssetKind::Agent,
         ] {
-            if platform_supports(plat, asset) {
+            if platform_supports(plat, asset, &paths::global_deploy_base()) {
                 continue;
             }
             let reason = capability_skip_reason(plat, asset);
@@ -177,7 +179,10 @@ fn capability_skip_reason(plat: PlatformId, kind: AssetKind) -> String {
             "Codex 通过 AGENTS.md 间接引用 rules，不支持全局 symlink 下发".into()
         }
         (PlatformId::Hermes, AssetKind::Rule) => {
-            "Hermes 仅从工作目录 `.cursor/rules/*.mdc` 加载，不支持 ~/.hermes 全局 rules".into()
+            "Hermes rules 仅项目级：请选已注册项目后 deploy 到 <repo>/.cursor/rules".into()
+        }
+        (PlatformId::Hermes, AssetKind::Agent) => {
+            "Hermes 无静态 agents 目录；请用项目 AGENTS.md 或 delegate_task 子代理".into()
         }
         _ => format!(
             "platform `{}` 不支持 asset kind `{}`",
@@ -189,6 +194,7 @@ fn capability_skip_reason(plat: PlatformId, kind: AssetKind) -> String {
 
 fn platform_label(p: PlatformId) -> &'static str {
     match p {
+        PlatformId::AiConfig => "aiconfig",
         PlatformId::Cursor => "cursor",
         PlatformId::Codex => "codex",
         PlatformId::Claude => "claude",
@@ -276,7 +282,7 @@ async fn cmd_list(
             PlatformId::Claude,
             PlatformId::Hermes,
         ] {
-            if !platform_supports(plat, kind) {
+            if !platform_supports(plat, kind, &deploy_base) {
                 states.insert(plat, LinkState::Unlinked);
                 continue;
             }
@@ -296,12 +302,10 @@ async fn cmd_list(
                     AssetKind::Agent => agent_link_src(&src),
                     _ => src.clone(),
                 };
-                match link::check(&dest, &expected_src) {
-                    link::LinkHealth::Linked { .. } => LinkState::Linked,
-                    link::LinkHealth::Broken { .. } => LinkState::Broken,
-                    link::LinkHealth::WrongSource { .. } | link::LinkHealth::WrongType { .. } => {
-                        LinkState::Broken
-                    }
+                match materialize::check(&dest, &expected_src) {
+                    materialize::DeployHealth::Linked { .. } => LinkState::Linked,
+                    materialize::DeployHealth::Broken => LinkState::Broken,
+                    materialize::DeployHealth::Unlinked => LinkState::Unlinked,
                 }
             };
             if st == LinkState::Broken {
@@ -322,6 +326,203 @@ async fn cmd_list(
         entries: out,
         broken_links: broken_total,
     })
+}
+
+// ── Tauri command:平台反向列表 ─────────────────────────────────────
+
+/// 扫描指定平台上的资产（反向同步视图）。
+#[tauri::command]
+async fn cmd_list_platform(
+    state: State<'_, AppState>,
+    project: Option<String>,
+    platform: String,
+    kind: Option<String>,
+) -> Result<PlatformAssetList, String> {
+    let plat = parse_plat(&platform)?;
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+
+    let filter_kind = kind.as_deref().map(parse_kind).transpose()?;
+
+    let kinds: Vec<AssetKind> = match filter_kind {
+        Some(k) => vec![k],
+        None => vec![
+            AssetKind::Skill,
+            AssetKind::Rule,
+            AssetKind::Mcp,
+            AssetKind::Agent,
+        ],
+    };
+
+    let mut entries: Vec<PlatformAssetEntry> = Vec::new();
+    for k in kinds {
+        let mut batch =
+            platform_scan::scan_platform_assets(plat, k, &deploy_base, &default_root, &asset_root)
+                .map_err(|e| e.to_string())?;
+        entries.append(&mut batch);
+    }
+
+    Ok(PlatformAssetList {
+        entries,
+        platform: plat,
+    })
+}
+
+/// 返回当前作用域下、指定资产种类在各平台的根路径（GUI 平台 dock 提示用）。
+#[derive(Debug, Serialize)]
+struct PlatformKindPath {
+    platform: String,
+    path: String,
+    supported: bool,
+}
+
+#[tauri::command]
+async fn cmd_platform_kind_paths(
+    state: State<'_, AppState>,
+    project: Option<String>,
+    kind: String,
+) -> Result<Vec<PlatformKindPath>, String> {
+    let k = parse_kind(&kind)?;
+    let (_, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let mut out = Vec::with_capacity(5);
+    for plat in ai_config_core::platform::ui_platform_ids() {
+        let supported = if plat == PlatformId::AiConfig {
+            true
+        } else {
+            platform_supports(plat, k, &deploy_base)
+        };
+        let path = ai_config_core::platform::kind_asset_path(plat, k, &deploy_base, &asset_root)
+            .map(|p| p.to_string())
+            .unwrap_or_default();
+        out.push(PlatformKindPath {
+            platform: platform_label(plat).to_string(),
+            path,
+            supported,
+        });
+    }
+    Ok(out)
+}
+
+fn parse_kind(s: &str) -> Result<AssetKind, String> {
+    match s {
+        "skill" | "Skill" => Ok(AssetKind::Skill),
+        "rule" | "Rule" => Ok(AssetKind::Rule),
+        "mcp" | "Mcp" => Ok(AssetKind::Mcp),
+        "agent" | "Agent" => Ok(AssetKind::Agent),
+        other => Err(format!("未知资产类型 `{other}`")),
+    }
+}
+
+/// 从平台导入 skill 到 ai-config 源。
+#[tauri::command]
+async fn cmd_skill_import(
+    state: State<'_, AppState>,
+    name: String,
+    project: Option<String>,
+    from_platform: String,
+) -> Result<String, String> {
+    let plat = parse_plat(&from_platform)?;
+    if plat == PlatformId::AiConfig {
+        return Err("不能从 ai-config 源导入到自身".into());
+    }
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let name_for_msg = name.clone();
+    let dest = tokio::task::spawn_blocking(move || {
+        platform_scan::import_skill_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+    .map_err(|e| e.to_string())?;
+    Ok(format!("skill `{name_for_msg}` 已导入到 {dest}"))
+}
+
+#[tauri::command]
+async fn cmd_rule_import(
+    state: State<'_, AppState>,
+    name: String,
+    project: Option<String>,
+    from_platform: String,
+) -> Result<String, String> {
+    let plat = parse_plat(&from_platform)?;
+    if plat == PlatformId::AiConfig {
+        return Err("不能从 ai-config 源导入到自身".into());
+    }
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let name_for_msg = name.clone();
+    let dest = tokio::task::spawn_blocking(move || {
+        platform_scan::import_rule_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+    .map_err(|e| e.to_string())?;
+    Ok(format!("rule `{name_for_msg}` 已导入到 {dest}"))
+}
+
+#[tauri::command]
+async fn cmd_agent_import(
+    state: State<'_, AppState>,
+    name: String,
+    project: Option<String>,
+    from_platform: String,
+) -> Result<String, String> {
+    let plat = parse_plat(&from_platform)?;
+    if plat == PlatformId::AiConfig {
+        return Err("不能从 ai-config 源导入到自身".into());
+    }
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let name_for_msg = name.clone();
+    let dest = tokio::task::spawn_blocking(move || {
+        platform_scan::import_agent_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+    .map_err(|e| e.to_string())?;
+    Ok(format!("agent `{name_for_msg}` 已导入到 {dest}"))
+}
+
+#[tauri::command]
+async fn cmd_mcp_import(
+    state: State<'_, AppState>,
+    name: String,
+    project: Option<String>,
+    from_platform: String,
+) -> Result<String, String> {
+    let plat = parse_plat(&from_platform)?;
+    if plat == PlatformId::AiConfig {
+        return Err("不能从 ai-config 源导入到自身".into());
+    }
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let name_for_msg = name.clone();
+    let dest = tokio::task::spawn_blocking(move || {
+        platform_scan::import_mcp_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+    .map_err(|e| e.to_string())?;
+    Ok(format!("mcp `{name_for_msg}` 已导入到 {dest}"))
 }
 
 /// 资产文件详情(供前端详情抽屉)。
@@ -393,8 +594,8 @@ fn skill_link_src(skill_md: &Utf8Path) -> Utf8PathBuf {
 fn parse_skill_meta(content: &str) -> (Option<String>, String) {
     let mut name = None;
     let mut description = String::new();
-    if content.starts_with("---") {
-        let after_first = content[3..].trim_start_matches('\n');
+    if let Some(after_first) = content.strip_prefix("---") {
+        let after_first = after_first.trim_start_matches('\n');
         if let Some(end) = after_first.find("\n---") {
             for line in after_first[..end].lines() {
                 let line = line.trim();
@@ -469,10 +670,8 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
 }
 
 /// 4 平台 × 4 类资产能力矩阵;与 `PlatformAdapter::supports` 同源。
-fn platform_supports(plat: PlatformId, kind: AssetKind) -> bool {
-    platform::for_id(plat)
-        .map(|a| a.supports(kind))
-        .unwrap_or(false)
+fn platform_supports(plat: PlatformId, kind: AssetKind, deploy_base: &Utf8Path) -> bool {
+    platform::supports_at_scope(plat, kind, deploy_base)
 }
 
 /// 算一条资产在某个平台的目标路径(委托 `core::sync::asset_dest_for_at_base`)。
@@ -497,16 +696,28 @@ async fn cmd_skill_deploy(
     to: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&to)?;
+    let plat = parse_deploy_plat(&to)?;
     let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
     let src = skill_link_src(&skill_md);
     let dest = compute_dest(plat, AssetKind::Skill, &name, &skill_md, &deploy_base)
         .ok_or_else(|| format!("无法算 skill `{name}` → {plat:?} 的 dest"))?;
     let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || link::link(&src, &dest, LinkKind::auto()))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("link::link 失败: {e}"))?;
+    let plat_for_hook = plat;
+    let dest_for_hook = dest.clone();
+    tokio::task::spawn_blocking(move || {
+        materialize::deploy(&src, &dest)?;
+        if plat_for_hook == PlatformId::Hermes {
+            let skills_parent = dest_for_hook
+                .parent()
+                .unwrap_or(&dest_for_hook)
+                .to_path_buf();
+            hermes_config::after_skill_deploy(&skills_parent)?;
+        }
+        Ok::<(), CoreError>(())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+    .map_err(|e| e.to_string())?;
     Ok(format!("skill `{name}` → {plat:?} OK ({dest_str})"))
 }
 
@@ -588,15 +799,15 @@ async fn cmd_skill_retract(
     from: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&from)?;
+    let plat = parse_deploy_plat(&from)?;
     let src = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
     let dest = compute_dest(plat, AssetKind::Skill, &name, &src, &deploy_base)
         .ok_or_else(|| format!("无法算 skill `{name}` ← {plat:?} 的 dest"))?;
     let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || link::unlink(&dest))
+    tokio::task::spawn_blocking(move || materialize::retract(&dest))
         .await
         .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("link::unlink 失败: {e}"))?;
+        .map_err(|e| format!("materialize::retract 失败: {e}"))?;
     Ok(format!("skill `{name}` ← {plat:?} OK ({dest_str})"))
 }
 
@@ -608,18 +819,18 @@ async fn cmd_rule_deploy(
     to: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&to)?;
-    if !platform_supports(plat, AssetKind::Rule) {
-        return Err(format!("{plat:?} 不支持 rule"));
+    let plat = parse_deploy_plat(&to)?;
+    if !platform_supports(plat, AssetKind::Rule, &deploy_base) {
+        return Err(capability_skip_reason(plat, AssetKind::Rule));
     }
     let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
     let dest = compute_dest(plat, AssetKind::Rule, &name, &src, &deploy_base)
         .ok_or_else(|| format!("无法算 rule `{name}` → {plat:?} 的 dest"))?;
     let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || link::link(&src, &dest, LinkKind::auto()))
+    tokio::task::spawn_blocking(move || materialize::deploy(&src, &dest))
         .await
         .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("link::link 失败: {e}"))?;
+        .map_err(|e| format!("materialize::deploy 失败: {e}"))?;
     Ok(format!("rule `{name}` → {plat:?} OK ({dest_str})"))
 }
 
@@ -631,18 +842,18 @@ async fn cmd_rule_retract(
     from: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&from)?;
-    if !platform_supports(plat, AssetKind::Rule) {
-        return Err(format!("{plat:?} 不支持 rule"));
+    let plat = parse_deploy_plat(&from)?;
+    if !platform_supports(plat, AssetKind::Rule, &deploy_base) {
+        return Err(capability_skip_reason(plat, AssetKind::Rule));
     }
     let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
     let dest = compute_dest(plat, AssetKind::Rule, &name, &src, &deploy_base)
         .ok_or_else(|| format!("无法算 rule `{name}` ← {plat:?} 的 dest"))?;
     let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || link::unlink(&dest))
+    tokio::task::spawn_blocking(move || materialize::retract(&dest))
         .await
         .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("link::unlink 失败: {e}"))?;
+        .map_err(|e| format!("materialize::retract 失败: {e}"))?;
     Ok(format!("rule `{name}` ← {plat:?} OK ({dest_str})"))
 }
 
@@ -743,7 +954,7 @@ async fn cmd_mcp_deploy(
     to: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&to)?;
+    let plat = parse_deploy_plat(&to)?;
     let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
     let mcp_doc_root = mcp_asset_root(&mcp_path)?;
     let config = mcp_json::get_server_config(mcp_doc_root, &name)
@@ -751,13 +962,19 @@ async fn cmd_mcp_deploy(
         .ok_or_else(|| format!("MCP server `{name}` 找不到"))?;
     let dest_json = platform::for_scope(plat, &deploy_base)
         .map_err(|e| format!("platform 适配器失败: {e}"))?
-        .mcp_json_path();
+        .mcp_deploy_path();
     let dest_for_blocking = dest_json.clone();
+    let plat_for_blocking = plat;
     let plat_label = format!("{plat:?}");
     let name_for_blocking = name.clone();
     tokio::task::spawn_blocking(move || -> Result<String, String> {
-        mcp_json::upsert_server_on_platform(&dest_for_blocking, &name_for_blocking, &config)
-            .map_err(|e| e.to_string())?;
+        mcp_json::upsert_server_on_platform(
+            plat_for_blocking,
+            &dest_for_blocking,
+            &name_for_blocking,
+            &config,
+        )
+        .map_err(|e| e.to_string())?;
         Ok(format!(
             "mcp `{name_for_blocking}` → {plat_label} OK ({dest_for_blocking})"
         ))
@@ -774,17 +991,22 @@ async fn cmd_mcp_retract(
     from: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&from)?;
+    let plat = parse_deploy_plat(&from)?;
     let _mcp_path = locate_mcp_json(&default_root, &asset_root)?;
     let dest_json = platform::for_scope(plat, &deploy_base)
         .map_err(|e| format!("platform 适配器失败: {e}"))?
-        .mcp_json_path();
+        .mcp_deploy_path();
     let dest_for_blocking = dest_json.clone();
+    let plat_for_blocking = plat;
     let plat_label = format!("{plat:?}");
     let name_for_blocking = name.clone();
     tokio::task::spawn_blocking(move || -> Result<String, String> {
-        mcp_json::remove_server_on_platform(&dest_for_blocking, &name_for_blocking)
-            .map_err(|e| e.to_string())?;
+        mcp_json::remove_server_on_platform(
+            plat_for_blocking,
+            &dest_for_blocking,
+            &name_for_blocking,
+        )
+        .map_err(|e| e.to_string())?;
         Ok(format!(
             "mcp `{name_for_blocking}` ← {plat_label} 已移除 ({dest_for_blocking})"
         ))
@@ -930,19 +1152,19 @@ async fn cmd_agent_deploy(
     to: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&to)?;
-    if !platform_supports(plat, AssetKind::Agent) {
-        return Err(format!("{plat:?} 不支持 agent"));
+    let plat = parse_deploy_plat(&to)?;
+    if !platform_supports(plat, AssetKind::Agent, &deploy_base) {
+        return Err(capability_skip_reason(plat, AssetKind::Agent));
     }
     let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
     let link_src = agent_link_src(&src);
     let dest = compute_dest(plat, AssetKind::Agent, &name, &src, &deploy_base)
         .ok_or_else(|| format!("无法算 agent `{name}` → {plat:?} 的 dest"))?;
     let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || link::link(&link_src, &dest, LinkKind::auto()))
+    tokio::task::spawn_blocking(move || materialize::deploy(&link_src, &dest))
         .await
         .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("link::link 失败: {e}"))?;
+        .map_err(|e| format!("materialize::deploy 失败: {e}"))?;
     Ok(format!("agent `{name}` → {plat:?} OK ({dest_str})"))
 }
 
@@ -954,18 +1176,18 @@ async fn cmd_agent_retract(
     from: String,
 ) -> Result<String, String> {
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_plat(&from)?;
-    if !platform_supports(plat, AssetKind::Agent) {
-        return Err(format!("{plat:?} 不支持 agent"));
+    let plat = parse_deploy_plat(&from)?;
+    if !platform_supports(plat, AssetKind::Agent, &deploy_base) {
+        return Err(capability_skip_reason(plat, AssetKind::Agent));
     }
     let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
     let dest = compute_dest(plat, AssetKind::Agent, &name, &src, &deploy_base)
         .ok_or_else(|| format!("无法算 agent `{name}` ← {plat:?} 的 dest"))?;
     let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || link::unlink(&dest))
+    tokio::task::spawn_blocking(move || materialize::retract(&dest))
         .await
         .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("link::unlink 失败: {e}"))?;
+        .map_err(|e| format!("materialize::retract 失败: {e}"))?;
     Ok(format!("agent `{name}` ← {plat:?} OK ({dest_str})"))
 }
 
@@ -1024,6 +1246,92 @@ async fn cmd_projects_remove(
     Ok(())
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct AssetTransferItem {
+    kind: String,
+    name: String,
+}
+
+/// 在系统文件管理器中打开目录。
+#[tauri::command]
+async fn cmd_reveal_path(path: String) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("路径为空".into());
+    }
+    tokio::task::spawn_blocking(move || reveal_path_in_file_manager(&path))
+        .await
+        .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+fn reveal_path_in_file_manager(path: &str) -> Result<(), String> {
+    let p = Utf8Path::new(path);
+    let target = if p.is_file() {
+        p.parent().unwrap_or(p)
+    } else {
+        p
+    };
+    if !target.exists() {
+        return Err(format!("路径不存在: {target}"));
+    }
+    let status = {
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(target.as_str())
+                .status()
+        }
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(target.as_str())
+                .status()
+        }
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(target.as_str())
+                .status()
+        }
+    }
+    .map_err(|e| format!("打开文件夹失败: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("无法打开: {target}"))
+    }
+}
+
+/// 跨项目复制已纳管资产（粘贴到目标项目源）。
+#[tauri::command]
+async fn cmd_assets_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    from_project: String,
+    to_project: String,
+    items: Vec<AssetTransferItem>,
+) -> Result<String, String> {
+    if items.is_empty() {
+        return Err("未选择任何资产".into());
+    }
+    let (from_def, from_root, _) = resolve_scope(&state, Some(&from_project)).await?;
+    let (to_def, to_root, _) = resolve_scope(&state, Some(&to_project)).await?;
+    let count = items.len();
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        for item in &items {
+            let kind = parse_kind(&item.kind)?;
+            platform_scan::copy_asset_to_asset_root(
+                kind, &item.name, &from_def, &from_root, &to_def, &to_root,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))??;
+    restart_asset_watcher(&app, &state).await?;
+    Ok(format!("已复制 {count} 项到目标项目"))
+}
+
 // ── 内部辅助 ──────────────────────────────────────────────────────
 
 /// 收集需要监听的资产根(默认根 + 已注册项目),去重。
@@ -1065,14 +1373,26 @@ async fn restart_asset_watcher(app: &AppHandle, state: &AppState) -> Result<(), 
 /// 解析 `to` / `from` 字符串到 `PlatformId`。
 fn parse_plat(s: &str) -> Result<PlatformId, String> {
     match s {
+        "aiconfig" | "ai-config" | "AiConfig" | "ac" => Ok(PlatformId::AiConfig),
         "cursor" | "Cursor" | "cu" => Ok(PlatformId::Cursor),
         "codex" | "Codex" | "cx" => Ok(PlatformId::Codex),
         "claude" | "Claude" | "cl" => Ok(PlatformId::Claude),
         "hermes" | "Hermes" | "he" => Ok(PlatformId::Hermes),
         other => Err(format!(
-            "未知平台 `{other}`(预期 cursor/codex/claude/hermes)"
+            "未知平台 `{other}`(预期 aiconfig/cursor/codex/claude/hermes)"
         )),
     }
+}
+
+fn parse_deploy_plat(s: &str) -> Result<PlatformId, String> {
+    let p = parse_plat(s)?;
+    if !p.is_deploy_target() {
+        return Err(format!(
+            "平台 `{}` 为资产源，不能 deploy / retract",
+            platform_label(p)
+        ));
+    }
+    Ok(p)
 }
 
 /// 解析当前作用域:全局默认根、资产扫描根、平台下发根。
@@ -1165,11 +1485,11 @@ fn retract_all_platforms_best_effort(
             PlatformId::Claude,
             PlatformId::Hermes,
         ] {
-            if !platform_supports(plat, kind) {
+            if !platform_supports(plat, kind, deploy_base) {
                 continue;
             }
             if let Ok(adapter) = platform::for_scope(plat, deploy_base) {
-                let _ = mcp_json::remove_server_on_platform(&adapter.mcp_json_path(), name);
+                let _ = mcp_json::remove_server_on_platform(plat, &adapter.mcp_deploy_path(), name);
             }
         }
         return;
@@ -1183,13 +1503,13 @@ fn retract_all_platforms_best_effort(
         PlatformId::Claude,
         PlatformId::Hermes,
     ] {
-        if !platform_supports(plat, kind) {
+        if !platform_supports(plat, kind, deploy_base) {
             continue;
         }
         let Some(dest) = compute_dest(plat, kind, name, &src, deploy_base) else {
             continue;
         };
-        let _ = link::unlink(&dest);
+        let _ = materialize::retract(&dest);
     }
 }
 
@@ -1288,6 +1608,73 @@ fn core_err_to_string(e: CoreError) -> String {
 
 // ── Tauri 主入口 ──────────────────────────────────────────────────
 
+/// Tauri 主入口。
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            // 启动期 trace,前端 console 可看到 daemon 启动信息
+            let state: State<'_, AppState> = app.state();
+            tracing::info!(
+                "ai-config GUI v{} 启动;store @ {}",
+                env!("CARGO_PKG_VERSION"),
+                state.store.path()
+            );
+            let handle = app.handle().clone();
+            tauri::async_runtime::block_on(async {
+                if let Err(e) = restart_asset_watcher(&handle, &state).await {
+                    tracing::warn!("文件监听未启动: {e}");
+                }
+            });
+            #[cfg(debug_assertions)]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    tracing::info!("main webview window 已就绪: {:?}", window.title());
+                }
+            }
+            Ok(())
+        })
+        .manage(AppState::new().expect("AppState::new"))
+        .invoke_handler(tauri::generate_handler![
+            cmd_doctor,
+            cmd_list,
+            cmd_list_platform,
+            cmd_platform_kind_paths,
+            cmd_skill_import,
+            cmd_rule_import,
+            cmd_agent_import,
+            cmd_mcp_import,
+            cmd_skill_get,
+            cmd_skill_save,
+            cmd_skill_delete,
+            cmd_skill_deploy,
+            cmd_skill_retract,
+            cmd_rule_get,
+            cmd_rule_save,
+            cmd_rule_delete,
+            cmd_rule_deploy,
+            cmd_rule_retract,
+            cmd_mcp_get,
+            cmd_mcp_save,
+            cmd_mcp_delete,
+            cmd_mcp_deploy,
+            cmd_mcp_retract,
+            cmd_agent_get,
+            cmd_agent_save,
+            cmd_agent_delete,
+            cmd_agent_deploy,
+            cmd_agent_retract,
+            cmd_projects_list,
+            cmd_projects_add,
+            cmd_projects_remove,
+            cmd_reveal_path,
+            cmd_assets_transfer,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running ai-config GUI");
+}
+
 #[cfg(test)]
 mod parse_tests {
     use super::*;
@@ -1321,63 +1708,4 @@ alwaysApply: false
         let content = "# My Agent Title\n\nbody";
         assert_eq!(parse_skill_meta(content).1, "My Agent Title");
     }
-}
-
-/// Tauri 主入口。
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .setup(|app| {
-            // 启动期 trace,前端 console 可看到 daemon 启动信息
-            let state: State<'_, AppState> = app.state();
-            tracing::info!(
-                "ai-config GUI v{} 启动;store @ {}",
-                env!("CARGO_PKG_VERSION"),
-                state.store.path()
-            );
-            let handle = app.handle().clone();
-            tauri::async_runtime::block_on(async {
-                if let Err(e) = restart_asset_watcher(&handle, &state).await {
-                    tracing::warn!("文件监听未启动: {e}");
-                }
-            });
-            #[cfg(debug_assertions)]
-            {
-                if let Some(window) = app.get_webview_window("main") {
-                    tracing::info!("main webview window 已就绪: {:?}", window.title());
-                }
-            }
-            Ok(())
-        })
-        .manage(AppState::new().expect("AppState::new"))
-        .invoke_handler(tauri::generate_handler![
-            cmd_doctor,
-            cmd_list,
-            cmd_skill_get,
-            cmd_skill_save,
-            cmd_skill_delete,
-            cmd_skill_deploy,
-            cmd_skill_retract,
-            cmd_rule_get,
-            cmd_rule_save,
-            cmd_rule_delete,
-            cmd_rule_deploy,
-            cmd_rule_retract,
-            cmd_mcp_get,
-            cmd_mcp_save,
-            cmd_mcp_delete,
-            cmd_mcp_deploy,
-            cmd_mcp_retract,
-            cmd_agent_get,
-            cmd_agent_save,
-            cmd_agent_delete,
-            cmd_agent_deploy,
-            cmd_agent_retract,
-            cmd_projects_list,
-            cmd_projects_add,
-            cmd_projects_remove,
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running ai-config GUI");
 }

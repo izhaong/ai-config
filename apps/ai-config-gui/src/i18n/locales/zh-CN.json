@@ -12,7 +12,8 @@
   "nav": {
     "projects": "项目",
     "assets": "资产",
-    "userGlobal": "user-global",
+    "platforms": "平台",
+    "userGlobal": "全局",
     "registerProject": "+ 注册项目",
     "registerProjectTitle": "注册新项目",
     "removeProject": "移除 {{name}}"
@@ -29,11 +30,30 @@
     "broken": "链接异常",
     "missing": "目标缺失"
   },
+  "sourceState": {
+    "managed": "已纳管",
+    "linked": "已链接",
+    "unmanaged": "未纳管",
+    "orphan": "链接异常"
+  },
+  "platformView": {
+    "dockTitle": "平台浏览",
+    "sourceView": "源视图",
+    "viewingPlatform": "{{platform}} 平台",
+    "empty": "该平台暂无 {{label}}",
+    "emptyUnsupported": "{{platform}} 不支持 {{label}}",
+    "importHint": "从平台导入到 ai-config 源",
+    "importManaged": "已在 ai-config 源中纳管",
+    "importUnavailable": "无法导入",
+    "unsupportedOnPlatform": "当前资产类型不支持"
+  },
   "platform": {
     "active": "已激活",
     "inactive": "未激活",
     "clickDeploy": "点击下发",
     "clickRemove": "点击移除",
+    "clickRemoveSource": "从 ai-config 源收回",
+    "clickImportSource": "导入到 ai-config 源",
     "unsupported": "{{platform}}: {{reason}}"
   },
   "toolbar": {
@@ -47,7 +67,11 @@
     "batchDeploy": "批量下发",
     "batchRetract": "批量收回",
     "batchDelete": "批量删除",
-    "batchDeleteTitle": "勾选左侧复选框后删除源文件"
+    "batchDeleteTitle": "勾选左侧复选框后执行批量删除",
+    "batchDeployPlatform": "批量下发到 {{platform}}",
+    "batchRetractPlatform": "从 {{platform}} 批量收回",
+    "openFolder": "打开文件夹",
+    "openFolderTitle": "在系统文件管理器中打开当前浏览路径"
   },
   "empty": {
     "loading": "加载中…",
@@ -73,6 +97,7 @@
     "delete": "删除",
     "batchDelete": "批量删除",
     "batchDeleteMessage": "将永久删除 {{count}} 个{{label}}源文件，并尽力收回各平台链接。",
+    "batchDeletePlatformMessage": "将对已选 {{count}} 项执行删除：已纳管则删除源并收回各平台，否则仅从 {{platform}} 收回。",
     "removeProject": "移除项目",
     "removeProjectMessage": "确认从本工具中移除项目 `{{name}}`?"
   },
@@ -107,11 +132,17 @@
     "batchRetractItemFailed": "{{name}} ← {{platform}} 失败: {{error}}",
     "batchDeployed": "已批量下发 {{count}} 项",
     "batchRetracted": "已批量收回 {{count}} 项",
-    "selectRowsFirst": "请先勾选左侧复选框（打开详情不会自动选中）",
+    "batchDeleted": "已批量处理 {{count}} 项",
+    "selectRowsFirst": "请先勾选要操作的条目",
+    "noBrowsePath": "当前视图没有可打开的路径",
+    "openFolderFailed": "打开文件夹失败: {{error}}",
     "projectRegistered": "项目 `{{name}}` 已注册",
     "registerProjectFailed": "注册项目失败: {{error}}",
     "projectRemoved": "项目 `{{name}}` 已移除",
-    "removeProjectFailed": "移除项目失败: {{error}}"
+    "removeProjectFailed": "移除项目失败: {{error}}",
+    "platformListFailed": "平台列表加载失败: {{error}}",
+    "importSuccess": "{{message}}",
+    "importFailed": "导入失败: {{error}}"
   },
   "prompt": {
     "projectName": "项目名(在 store 中唯一):",
