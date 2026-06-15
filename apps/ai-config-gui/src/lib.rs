@@ -390,7 +390,7 @@ async fn cmd_platform_kind_paths(
     kind: String,
 ) -> Result<Vec<PlatformKindPath>, String> {
     let k = parse_kind(&kind)?;
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let (_, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
     let mut out = Vec::with_capacity(5);
     for plat in ai_config_core::platform::ui_platform_ids() {
         let supported = if plat == PlatformId::AiConfig {
@@ -578,8 +578,8 @@ fn skill_link_src(skill_md: &Utf8Path) -> Utf8PathBuf {
 fn parse_skill_meta(content: &str) -> (Option<String>, String) {
     let mut name = None;
     let mut description = String::new();
-    if content.starts_with("---") {
-        let after_first = content[3..].trim_start_matches('\n');
+    if let Some(after_first) = content.strip_prefix("---") {
+        let after_first = after_first.trim_start_matches('\n');
         if let Some(end) = after_first.find("\n---") {
             for line in after_first[..end].lines() {
                 let line = line.trim();
@@ -1290,7 +1290,6 @@ async fn cmd_assets_transfer(
     let (from_def, from_root, _) = resolve_scope(&state, Some(&from_project)).await?;
     let (to_def, to_root, _) = resolve_scope(&state, Some(&to_project)).await?;
     let count = items.len();
-    let items = items;
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         for item in &items {
             let kind = parse_kind(&item.kind)?;
@@ -1465,7 +1464,7 @@ fn retract_all_platforms_best_effort(
             PlatformId::Claude,
             PlatformId::Hermes,
         ] {
-            if !platform_supports(plat, kind, &deploy_base) {
+            if !platform_supports(plat, kind, deploy_base) {
                 continue;
             }
             if let Ok(adapter) = platform::for_scope(plat, deploy_base) {
@@ -1588,41 +1587,6 @@ fn core_err_to_string(e: CoreError) -> String {
 
 // ── Tauri 主入口 ──────────────────────────────────────────────────
 
-#[cfg(test)]
-mod parse_tests {
-    use super::*;
-
-    #[test]
-    fn agent_description_uses_frontmatter_like_skill() {
-        let content = r#"---
-name: frontend-dev
-description: zh-cloud Web frontend expert
----
-
-你是专家。
-"#;
-        assert_eq!(parse_skill_meta(content).1, "zh-cloud Web frontend expert");
-    }
-
-    #[test]
-    fn rule_description_uses_frontmatter() {
-        let content = r#"---
-description: 跨端 UX 默认偏好
-alwaysApply: false
----
-
-## 一般原则
-"#;
-        assert_eq!(parse_skill_meta(content).1, "跨端 UX 默认偏好");
-    }
-
-    #[test]
-    fn agent_description_falls_back_to_h1_without_frontmatter() {
-        let content = "# My Agent Title\n\nbody";
-        assert_eq!(parse_skill_meta(content).1, "My Agent Title");
-    }
-}
-
 /// Tauri 主入口。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -1688,4 +1652,39 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running ai-config GUI");
+}
+
+#[cfg(test)]
+mod parse_tests {
+    use super::*;
+
+    #[test]
+    fn agent_description_uses_frontmatter_like_skill() {
+        let content = r#"---
+name: frontend-dev
+description: zh-cloud Web frontend expert
+---
+
+你是专家。
+"#;
+        assert_eq!(parse_skill_meta(content).1, "zh-cloud Web frontend expert");
+    }
+
+    #[test]
+    fn rule_description_uses_frontmatter() {
+        let content = r#"---
+description: 跨端 UX 默认偏好
+alwaysApply: false
+---
+
+## 一般原则
+"#;
+        assert_eq!(parse_skill_meta(content).1, "跨端 UX 默认偏好");
+    }
+
+    #[test]
+    fn agent_description_falls_back_to_h1_without_frontmatter() {
+        let content = "# My Agent Title\n\nbody";
+        assert_eq!(parse_skill_meta(content).1, "My Agent Title");
+    }
 }

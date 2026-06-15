@@ -337,14 +337,11 @@ fn should_skip_tree_rel(rel: &Path) -> bool {
         return true;
     }
     for component in rel.components() {
-        match component {
-            Component::Normal(name) => {
-                let s = name.to_string_lossy();
-                if s == MARKER_NAME || s.starts_with('.') {
-                    return true;
-                }
+        if let Component::Normal(name) = component {
+            let s = name.to_string_lossy();
+            if s == MARKER_NAME || s.starts_with('.') {
+                return true;
             }
-            _ => {}
         }
     }
     false

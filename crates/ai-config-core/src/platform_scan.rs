@@ -120,7 +120,7 @@ fn scan_aiconfig_assets(
         asset_root
             .parent()
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| crate::paths::global_deploy_base())
+            .unwrap_or_else(crate::paths::global_deploy_base)
     };
     let adapter = platform::aiconfig_adapter(asset_root);
     let source_scan = scan_source_for_scope(default_root, asset_root)?;
@@ -391,17 +391,8 @@ fn find_source_path(
             candidate.as_deref() == Some(name)
         }),
         AssetKind::Mcp => {
-            if source_scan.mcp_json.is_none() {
-                return None;
-            }
             let asset_root = source_scan.mcp_json.as_ref()?.parent()?;
-            if mcp_json::get_server_config(asset_root, name)
-                .ok()
-                .flatten()
-                .is_none()
-            {
-                return None;
-            }
+            mcp_json::get_server_config(asset_root, name).ok().flatten()?;
             source_scan.mcp_json.as_ref()
         }
     }
@@ -492,8 +483,8 @@ fn is_symlink_path(path: &Utf8Path) -> bool {
 
 fn parse_skill_description(content: &str) -> String {
     let mut description = String::new();
-    if content.starts_with("---") {
-        let after_first = content[3..].trim_start_matches('\n');
+    if let Some(after_first) = content.strip_prefix("---") {
+        let after_first = after_first.trim_start_matches('\n');
         if let Some(end) = after_first.find("\n---") {
             for line in after_first[..end].lines() {
                 let line = line.trim();
