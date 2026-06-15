@@ -126,6 +126,9 @@ fn platform_dest_root(
     kind: AssetKind,
     deploy_base: &Utf8Path,
 ) -> Option<camino::Utf8PathBuf> {
+    if !plat.is_deploy_target() {
+        return None;
+    }
     let adapter = platform::for_scope(plat, deploy_base).ok()?;
     Some(match kind {
         AssetKind::Skill => adapter.skills_dir(),
@@ -206,7 +209,7 @@ pub fn compute_for_project(
         for (name, src) in entries {
             let item_id = item_id_for(project.id, kind, &name);
             for plat in &platforms {
-                if !platform_supports(*plat, kind) {
+                if !platform::supports_at_scope(*plat, kind, &deploy_base) {
                     continue;
                 }
                 match kind {
@@ -272,15 +275,6 @@ pub fn compute_global(
         }
     }
     Ok(out)
-}
-
-fn platform_supports(plat: PlatformId, kind: AssetKind) -> bool {
-    for a in platform::registry() {
-        if a.id() == plat {
-            return a.supports(kind);
-        }
-    }
-    false
 }
 
 /// 单条收回(PRD §4.2):item_id × platform → `Retract` 动作。
@@ -378,9 +372,9 @@ mod tests {
         };
         let actions = compute_for_project(&project, &default).unwrap();
 
-        // 1 skill × 4 + 1 rule × 2(Cursor/Claude) + 1 mcp × 4(RenderMcp)
-        //   + 1 agent × 4(全平台 subagents/agents)
-        // → 4 + 2 + 4 + 4 = 14
+        // 1 skill × 4 + 1 rule × 3(Cursor/Claude/Hermes) + 1 mcp × 4(RenderMcp)
+        //   + 1 agent × 3(无 Hermes)
+        // → 4 + 3 + 4 + 3 = 14
         let creates: Vec<_> = actions
             .iter()
             .filter(|a| matches!(a, SyncAction::Create { .. }))
@@ -389,7 +383,7 @@ mod tests {
             .iter()
             .filter(|a| matches!(a, SyncAction::RenderMcp { .. }))
             .collect();
-        assert_eq!(creates.len(), 10, "skill 4 + rule 2 + agent 4 = 10");
+        assert_eq!(creates.len(), 10, "skill 4 + rule 3 + agent 3 = 10");
         assert_eq!(renders.len(), 4, "mcp 4 platforms = 4 RenderMcp");
         assert_eq!(actions.len(), 14);
     }
@@ -455,10 +449,15 @@ mod tests {
         };
         let actions = compute_for_project(&project, &default).unwrap();
         for a in &actions {
-            if let SyncAction::Create { dest, .. } = a {
+            if let SyncAction::Create { dest, platform, .. } = a {
+                if *platform == PlatformId::Hermes
+                    && dest.as_str().contains(".hermes/skills/")
+                {
+                    continue;
+                }
                 assert!(
                     dest.starts_with(&repo),
-                    "dest {dest} 应在项目根 {repo} 下(非 $HOME)"
+                    "dest {dest} 应在项目根 {repo} 下(非 $HOME；Hermes skills 例外)"
                 );
             }
         }
@@ -519,14 +518,16 @@ mod tests {
         let rule_creates: Vec<_> = actions
             .iter()
             .filter_map(|a| match a {
-                SyncAction::Create { dest, .. } if dest.as_str().ends_with("rules/r-one.mdc") => {
+                SyncAction::Create { dest, .. }
+                    if dest.as_str().ends_with("rules/r-one.mdc") =>
+                {
                     Some(dest.clone())
                 }
                 _ => None,
             })
             .collect();
-        // Cursor + Claude(Hermes/Codex 不直接消费 rule)
-        assert_eq!(rule_creates.len(), 2);
+        // Cursor + Claude + Hermes(项目 `.cursor/rules`)；Codex 不消费 rule
+        assert_eq!(rule_creates.len(), 3);
     }
 
     #[test]

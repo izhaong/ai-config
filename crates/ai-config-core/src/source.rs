@@ -83,20 +83,21 @@ fn scan_skills(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, CoreError> {
     for entry in WalkDir::new(&skills_dir)
         .min_depth(1)
         .max_depth(1)
-        .follow_links(false)
+        .follow_links(true)
         .into_iter()
         .filter_map(Result::ok)
     {
-        if !entry.file_type().is_dir() {
-            continue;
-        }
         let Some(name) = entry.file_name().to_str() else {
             continue;
         };
         if is_excluded(name) {
             continue;
         }
-        let skill_md = skills_dir.join(name).join("SKILL.md");
+        let entry_path = skills_dir.join(name);
+        if !entry_path.is_dir() {
+            continue;
+        }
+        let skill_md = entry_path.join("SKILL.md");
         if skill_md.is_file() {
             out.push(skill_md);
         }
@@ -162,7 +163,7 @@ fn scan_agents(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, CoreError> {
     for entry in WalkDir::new(&agents_dir)
         .min_depth(1)
         .max_depth(1)
-        .follow_links(false)
+        .follow_links(true)
         .into_iter()
         .filter_map(Result::ok)
     {
@@ -172,16 +173,15 @@ fn scan_agents(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, CoreError> {
         if is_excluded(name) {
             continue;
         }
-        // 目录形态:agents/<name>/(整段目录被当一条资产)
-        if entry.file_type().is_dir() {
-            out.push(agents_dir.join(name));
+        let entry_path = agents_dir.join(name);
+        if entry_path.is_dir() {
+            out.push(entry_path);
             continue;
         }
-        // 单文件形态:agents/<name>.{md,yaml,json}
-        if entry.file_type().is_file()
+        if entry_path.is_file()
             && (name.ends_with(".md") || name.ends_with(".yaml") || name.ends_with(".json"))
         {
-            out.push(agents_dir.join(name));
+            out.push(entry_path);
         }
     }
     Ok(out)

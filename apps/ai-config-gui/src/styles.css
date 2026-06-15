@@ -135,21 +135,129 @@ button.primary:hover:not(:disabled) {
   background: var(--err);
 }
 
-/* ── 中部:3 栏布局(左 = 项目 / 中 = 资产类型 / 右 = 内容) ── */
+/* ── 中部:左导航(项目/资产/平台) + 右内容区 ── */
 .main {
   display: grid;
-  grid-template-columns: 240px 200px 1fr;
+  grid-template-columns: 248px minmax(0, 1fr);
   overflow: hidden;
 }
 
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-section:last-child {
+  border-bottom: 0;
+}
+
+.sidebar-projects {
+  flex: 1 1 auto;
+  min-height: 100px;
+  overflow: hidden;
+}
+
+.sidebar-assets {
+  flex: 0 0 auto;
+}
+
+.sidebar-platforms {
+  flex: 0 0 auto;
+}
+
+.sidebar-section h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  margin: 0;
+  padding: 10px 14px 6px;
+  font-weight: 600;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.sidebar-section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sidebar-projects .project-list {
+  flex: 1;
+}
+
+.sidebar-section li {
+  padding: 6px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.sidebar-section li:hover {
+  background: var(--bg-elev);
+}
+
+.sidebar-section li.active {
+  background: var(--bg-elev-2);
+  color: var(--accent);
+}
+
+.sidebar-section li .badge {
+  margin-left: auto;
+  background: var(--bg-elev-2);
+  color: var(--fg-dim);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.platform-list {
+  padding-bottom: 10px !important;
+}
+
+.platform-item {
+  user-select: none;
+}
+
+.platform-item.unsupported {
+  opacity: 0.45;
+}
+
+.platform-item-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.platform-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 兼容旧 column 类名（抽屉等未引用） */
 .column {
   border-right: 1px solid var(--border);
   overflow-y: auto;
   background: var(--bg);
-}
-
-.column:last-child {
-  border-right: 0;
 }
 
 .column h2 {
@@ -208,14 +316,111 @@ button.primary:hover:not(:disabled) {
 
 .content .toolbar {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
   border-bottom: 1px solid var(--border);
   background: var(--bg-elev);
   flex-shrink: 0;
   position: relative;
   z-index: 20;
+}
+
+.toolbar-primary {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px 10px;
+}
+
+.toolbar-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.toolbar-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.toolbar-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-utils {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+}
+
+.toolbar-btn-ghost {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-dim);
+}
+
+.toolbar-btn-ghost:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+  border-color: var(--border);
+}
+
+.toolbar-sub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.toolbar-path {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg-dim);
+  background: var(--bg, rgba(0, 0, 0, 0.2));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.toolbar-batch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 40%, var(--bg-elev));
+}
+
+.toolbar-batch button {
+  min-width: 88px;
 }
 
 .content-pane {
@@ -250,17 +455,18 @@ button.primary:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .asset-row {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 12px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  column-gap: 10px;
+  gap: 10px;
   min-height: 48px;
+  min-width: 0;
   background: var(--bg-elev);
   transition: border-color 100ms;
 }
@@ -277,6 +483,7 @@ button.primary:hover:not(:disabled) {
 .asset-row-check {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   cursor: pointer;
 }
 
@@ -301,6 +508,8 @@ button.primary:hover:not(:disabled) {
 }
 
 .toolbar-meta {
+  flex-shrink: 0;
+  white-space: nowrap;
   color: var(--fg-dim);
   font-size: 11px;
 }
@@ -319,6 +528,7 @@ button.danger:disabled {
 }
 
 .asset-row-main {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
 }
@@ -354,14 +564,19 @@ button.danger:disabled {
 .platform-actions {
   display: flex;
   gap: 5px;
+  flex: 0 0 auto;
   flex-shrink: 0;
-  align-self: center;
+  flex-wrap: nowrap;
+  align-items: center;
+  margin-left: auto;
 }
 
 .plat-btn {
-  position: relative;
+  flex-shrink: 0;
   width: 28px;
+  min-width: 28px;
   height: 28px;
+  min-height: 28px;
   padding: 0;
   border-radius: 6px;
   display: inline-flex;
@@ -439,7 +654,7 @@ button.danger:disabled {
   margin-left: auto;
 }
 
-/* ── W9 新增:项目 add/remove + 卡片名称省略 + toast ── */
+.sidebar-section li.add,
 .column li.add {
   color: var(--fg-dim);
   border-top: 1px dashed var(--border);
@@ -448,10 +663,12 @@ button.danger:disabled {
   cursor: pointer;
 }
 
+.sidebar-section li.add:hover,
 .column li.add:hover {
   color: var(--accent);
 }
 
+.sidebar-section li .project-name,
 .column li .project-name {
   flex: 1;
   min-width: 0;
@@ -460,6 +677,7 @@ button.danger:disabled {
   white-space: nowrap;
 }
 
+.sidebar-section li .remove,
 .column li .remove {
   margin-left: auto;
   color: var(--fg-dim);
@@ -470,8 +688,46 @@ button.danger:disabled {
   user-select: none;
 }
 
+.sidebar-section li .remove:hover,
 .column li .remove:hover {
   color: var(--err);
+}
+
+.platform-asset-row .platform-path-hint {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.aiconfig-btn {
+  width: 32px;
+  height: 32px;
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+}
+
+.aiconfig-btn img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.aiconfig-btn.managed {
+  border-color: var(--ok);
+  opacity: 0.85;
+}
+
+.aiconfig-btn.importable:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+}
+
+.aiconfig-btn.disabled {
+  opacity: 0.35;
 }
 
 .toast {

@@ -18,8 +18,10 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use ai_config_core::error::{exit_code, CoreError};
+use ai_config_core::hermes_config::HermesMigrateReport;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{McpServer, McpTransport, PlatformId};
+use ai_config_core::paths;
 use ai_config_core::platform;
 use ai_config_core::source;
 
@@ -63,6 +65,10 @@ pub enum McpCmd {
         source: Option<String>,
         dry_run: bool,
     },
+    /// 遗留 `~/.hermes/mcp.json` → `~/.hermes/config.yaml` 的 `mcp_servers`
+    MigrateHermes {
+        dry_run: bool,
+    },
 }
 
 impl McpCmd {
@@ -91,6 +97,7 @@ impl McpCmd {
             McpCmd::Migrate { source, dry_run } => {
                 run_migrate(mode, default_root, source.as_deref(), dry_run)
             }
+            McpCmd::MigrateHermes { dry_run } => run_migrate_hermes(mode, dry_run),
         }
     }
 }
@@ -448,14 +455,6 @@ fn run_set_enabled(mode: OutputMode, root: &Utf8Path, name: &str, enabled: bool)
 // ── deploy / retract(per-item × per-platform) ─────────────────
 
 fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
-    let _ = name;
-    let src = match mcp_json_path_for_root(root) {
-        Ok(p) => p,
-        Err(e) => {
-            emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
-            return ExitCode::from(exit_code::FS_ERROR);
-        }
-    };
     let adapter = match platform::for_id(plat) {
         Ok(a) => a,
         Err(e) => {
@@ -463,8 +462,38 @@ fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -
             return ExitCode::from(e.exit_code());
         }
     };
-    let dest = adapter.mcp_json_path();
-    match mcp_json::deploy_mcp_json_file(&src, &dest) {
+    let dest = adapter.mcp_deploy_path();
+    let result = if plat == PlatformId::Hermes {
+        let config = match mcp_json::get_server_config(root, name) {
+            Ok(Some(c)) => c,
+            Ok(None) => {
+                let msg = format!("mcp server `{name}` 找不到");
+                emit_error_envelope(
+                    mode,
+                    exit_code::PARTIAL_FAILURE,
+                    &msg,
+                    Some("跑 `ai-config mcp list` 看全部"),
+                );
+                return ExitCode::from(exit_code::PARTIAL_FAILURE);
+            }
+            Err(e) => {
+                emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+                return ExitCode::from(e.exit_code());
+            }
+        };
+        mcp_json::upsert_server_on_platform(plat, &dest, name, &config)
+    } else {
+        let src = match mcp_json_path_for_root(root) {
+            Ok(p) => p,
+            Err(e) => {
+                emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
+                return ExitCode::from(exit_code::FS_ERROR);
+            }
+        };
+        let _ = name;
+        mcp_json::deploy_mcp_json_file(&src, &dest, plat)
+    };
+    match result {
         Ok(()) => {
             if mode.is_json() {
                 emit_json(
@@ -472,8 +501,15 @@ fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -
                     &serde_json::json!({
                         "ok": true,
                         "action": "deploy",
+                        "name": name,
                         "to": plat,
+                        "dest": dest.to_string(),
                     }),
+                );
+            } else if plat == PlatformId::Hermes {
+                emit_line(
+                    mode,
+                    format!("mcp `{name}` 已写入 Hermes config.yaml ({dest})"),
                 );
             } else {
                 emit_line(mode, format!("mcp.json 已 deploy 到 {plat:?}"));
@@ -488,7 +524,7 @@ fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -
 }
 
 fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
-    let _ = (root, name);
+    let _ = root;
     let adapter = match platform::for_id(plat) {
         Ok(a) => a,
         Err(e) => {
@@ -496,8 +532,14 @@ fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) 
             return ExitCode::from(e.exit_code());
         }
     };
-    let dest = adapter.mcp_json_path();
-    match mcp_json::retract_platform_mcp_json(&dest) {
+    let dest = adapter.mcp_deploy_path();
+    let result = if plat == PlatformId::Hermes {
+        mcp_json::remove_server_on_platform(plat, &dest, name)
+    } else {
+        let _ = name;
+        mcp_json::retract_platform_mcp_json(&dest, plat)
+    };
+    match result {
         Ok(()) => {
             if mode.is_json() {
                 emit_json(
@@ -505,8 +547,15 @@ fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) 
                     &serde_json::json!({
                         "ok": true,
                         "action": "retract",
+                        "name": name,
                         "from": plat,
+                        "dest": dest.to_string(),
                     }),
+                );
+            } else if plat == PlatformId::Hermes {
+                emit_line(
+                    mode,
+                    format!("mcp `{name}` 已从 Hermes config.yaml 移除 ({dest})"),
                 );
             } else {
                 emit_line(mode, format!("mcp.json 已 retract 从 {plat:?}"));
@@ -518,6 +567,76 @@ fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) 
             ExitCode::from(e.exit_code())
         }
     }
+}
+
+fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {
+    let home = paths::home_dir();
+    let legacy = home.join(".hermes/mcp.json");
+    if dry_run {
+        let exists = legacy.is_file();
+        if mode.is_json() {
+            emit_json(
+                mode,
+                &serde_json::json!({
+                    "dry_run": true,
+                    "legacy_exists": exists,
+                    "legacy_path": legacy.to_string(),
+                    "target": paths::home_dir().join(".hermes/config.yaml").to_string(),
+                }),
+            );
+        } else if exists {
+            emit_line(
+                mode,
+                format!("dry-run: 将把 {legacy} 合并进 ~/.hermes/config.yaml"),
+            );
+        } else {
+            emit_line(mode, "dry-run: 无遗留 ~/.hermes/mcp.json");
+        }
+        return ExitCode::SUCCESS;
+    }
+    match mcp_json::migrate_legacy_hermes_mcp_json(&home) {
+        Ok(report) => emit_migrate_hermes_report(mode, &report),
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            ExitCode::from(e.exit_code())
+        }
+    }
+}
+
+fn emit_migrate_hermes_report(mode: OutputMode, report: &HermesMigrateReport) -> ExitCode {
+    if mode.is_json() {
+        emit_json(
+            mode,
+            &serde_json::json!({
+                "merged": report.merged,
+                "skipped_conflict": report.skipped_conflict,
+                "legacy_renamed": report.legacy_renamed,
+            }),
+        );
+    } else {
+        if report.merged.is_empty() && report.skipped_conflict.is_empty() {
+            emit_line(mode, "无遗留 ~/.hermes/mcp.json 需要迁移");
+        } else {
+            emit_line(
+                mode,
+                format!(
+                    "已合并 {} 条, 跳过 {} 条",
+                    report.merged.len(),
+                    report.skipped_conflict.len()
+                ),
+            );
+            for name in &report.merged {
+                emit_line(mode, format!("  merged: {name}"));
+            }
+            for msg in &report.skipped_conflict {
+                emit_line(mode, format!("  skip: {msg}"));
+            }
+        }
+        if let Some(bak) = &report.legacy_renamed {
+            emit_line(mode, format!("遗留文件已重命名为 {bak}"));
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 // ── 平台 ID 解析 ────────────────────────────────────────────────
