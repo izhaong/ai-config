@@ -14,6 +14,9 @@
 //!
 //! 完整架构说明(包含 ASCII 图)见 [`docs/product/ARCHITECTURE.md`](../../docs/product/ARCHITECTURE.md)。
 
+pub mod asset_ops;
+pub mod asset_scope;
+pub mod doctor;
 pub mod error;
 pub mod hermes_config;
 pub mod link;

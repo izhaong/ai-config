@@ -78,6 +78,11 @@ enum Cmd {
         #[command(subcommand)]
         action: AssetCmd,
     },
+    /// command 维度(Cursor / Claude 斜杠命令 `.md`)
+    Command {
+        #[command(subcommand)]
+        action: AssetCmd,
+    },
     /// mcp 维度(逐项 + 单条 deploy/retract)
     Mcp {
         #[command(subcommand)]
@@ -242,6 +247,14 @@ fn main() -> ExitCode {
                 AssetCmd::Reveal { name } => asset::AssetCmd::Reveal { name },
             };
             mapped.run(mode, &default_root, asset::AssetKind::Agent)
+        }
+        Cmd::Command { action } => {
+            let mapped = match action {
+                AssetCmd::List => asset::AssetCmd::List,
+                AssetCmd::Show { name } => asset::AssetCmd::Show { name },
+                AssetCmd::Reveal { name } => asset::AssetCmd::Reveal { name },
+            };
+            mapped.run(mode, &default_root, asset::AssetKind::Command)
         }
         Cmd::Mcp { action } => {
             let mapped = match action {

@@ -1,6 +1,12 @@
 # 官方 / 插件 Skills（不纳入本仓库，仅记录安装来源）
 
-本仓库只维护**自研 workflow Skills**。下列为各 IDE 自带或插件 cache，升级插件时会覆盖，请勿复制进 `skills/`。
+本仓库只维护**自研 workflow Skills**。下列为各 IDE 自带或插件 cache，升级插件时会覆盖，请勿复制进 `~/.ai-config/skills/`。
+
+## npm / 上游发布
+
+| 来源           | Skill 路径 | 说明 |
+| -------------- | ---------- | ---- |
+| ant-design-cli | `skills/antd` | 随 `@ant-design/cli` 发布；用 Cursor `@antd` 或插件 cache，勿 vendored 进本仓 |
 
 ## Cursor 插件（`~/.cursor/plugins/cache/`）
 
@@ -32,6 +38,6 @@ skill-creator、openai-docs 等 — 勿纳入 ai-config。
 
 ## 新机器 checklist
 
-1. 克隆本仓库，`./install.sh`
+1. 克隆本仓库，`cargo build -p ai-config-cli --release && ./target/release/ai-config install`
 2. 在 Cursor 扩展市场安装上表所需插件
-3. 核对 `~/.config/ai-config/secrets.env` 后 `install.sh --mcp-only`
+3. 核对 `~/.config/ai-config/secrets.env` 后 `ai-config sync`

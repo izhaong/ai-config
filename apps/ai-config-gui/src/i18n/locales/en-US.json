@@ -9,6 +9,9 @@
     "zh": "中文",
     "en": "English"
   },
+  "settings": {
+    "title": "Settings"
+  },
   "nav": {
     "projects": "Projects",
     "assets": "Assets",
@@ -22,7 +25,8 @@
     "skill": "Skills",
     "rule": "Rules",
     "mcp": "MCP",
-    "agent": "Agents"
+    "agent": "Agents",
+    "command": "Commands"
   },
   "linkState": {
     "linked": "Synced",
@@ -53,7 +57,12 @@
     "clickDeploy": "Click to deploy",
     "clickRemove": "Click to retract",
     "clickRemoveSource": "Remove from ai-config source",
+    "aiconfigDeleteNeedsConfirm": "Delete source file (confirmation required)",
+    "batchAiconfigUseDeleteButton": "All selected are in source; use the delete button to remove",
     "clickImportSource": "Import into ai-config source",
+    "partialLinked": "Partially synced",
+    "batchClickActivateAll": "Deploy all selected (including inactive)",
+    "batchClickMixed": "Retract active, deploy inactive",
     "unsupported": "{{platform}}: {{reason}}"
   },
   "toolbar": {
@@ -68,6 +77,13 @@
     "batchRetract": "收回",
     "batchDelete": "删除",
     "batchDeleteTitle": "Select rows on the left, then batch delete",
+    "deleteConfirmHint": "Click again to confirm delete (a dialog will appear)",
+    "rowDeleteTitle": "Delete {{name}}",
+    "batchSyncPlatform": "Batch sync to {{platform}} (selected rows)",
+    "batchSyncPlatformState": "Batch {{platform}} · {{state}} · {{hint}}",
+    "batchImportSourceState": "Batch ai-config source · {{state}} · {{hint}}",
+    "batchSyncNeedSelection": "Select rows to batch sync first",
+    "batchSyncSourceDisabled": "Already on source view",
     "batchDeployPlatform": "Deploy to {{platform}}",
     "batchRetractPlatform": "Retract from {{platform}}",
     "openFolder": "Open",
@@ -86,18 +102,27 @@
     "cancel": "Cancel",
     "save": "Save",
     "edit": "Edit",
-    "delete": "Delete {{label}}"
+    "delete": "Delete {{label}}",
+    "readOnlyHint": "Read-only preview (not in ai-config source)"
   },
   "confirm": {
     "defaultConfirm": "Confirm",
     "cancel": "Cancel",
     "processing": "Working…",
     "deleteSource": "Delete source file",
-    "deleteSourceMessage": "Permanently delete {{label}} “{{name}}”",
+    "deleteEntry": "Delete asset",
+    "deleteSourceMessage": "Permanently delete {{label}} “{{name}}”. {{irreversible}}",
     "delete": "Delete",
+    "retract": "Retract",
     "batchDelete": "Batch delete",
-    "batchDeleteMessage": "Permanently delete {{count}} {{label}} source file(s) and best-effort retract from all platforms.",
-    "batchDeletePlatformMessage": "Process {{count}} selected item(s): delete source and retract all platforms if managed, otherwise retract from {{platform}} only.",
+    "batchRetract": "Batch retract",
+    "batchDeleteMessage": "Permanently delete {{count}} {{label}} source file(s) and best-effort retract from all platforms. {{irreversible}}",
+    "batchRetractPlatformMessage": "Retract {{count}} selected item(s) from {{platform}} only (does not delete ai-config source files).",
+    "retractEntry": "Retract from platform",
+    "retractEntryPlatformMessage": "Retract \"{{name}}\" from {{platform}} only (does not delete ai-config source files).",
+    "batchDeletePlatformMessage": "(deprecated) use batchRetractPlatformMessage",
+    "deleteEntryPlatformMessage": "(deprecated) use retractEntryPlatformMessage",
+    "irreversible": "This cannot be undone. Please confirm before deleting.",
     "removeProject": "Remove project",
     "removeProjectMessage": "Remove project `{{name}}` from this tool?"
   },
@@ -123,6 +148,7 @@
     "assetRemovedExternally": "Asset was removed externally",
     "saveFailed": "Save failed: {{error}}",
     "deletedCount": "Deleted {{count}} source file(s)",
+    "retractedCount": "Retracted {{count}} item(s) from the current platform",
     "deleteFailed": "Delete failed: {{errors}}",
     "deletePartial": "Partial delete: {{ok}} ok, {{failed}} failed ({{errors}})",
     "entryNotFound": "Entry to delete not found",
@@ -131,7 +157,19 @@
     "batchDeployItemFailed": "{{name}} → {{platform}} failed: {{error}}",
     "batchRetractItemFailed": "{{name}} ← {{platform}} failed: {{error}}",
     "batchDeployed": "Batch deployed {{count}} item(s)",
+    "batchImported": "Batch imported {{count}} item(s)",
+    "batchImportPartial": "Batch import: {{ok}} ok, {{failed}} failed",
+    "batchImportAllFailed": "Batch import failed for all {{count}} item(s)",
     "batchRetracted": "Batch retracted {{count}} item(s)",
+    "batchDeployPartial": "Batch deploy: {{ok}} ok, {{failed}} failed",
+    "batchDeployAllFailed": "Batch deploy failed for all {{count}} item(s)",
+    "batchRetractPartial": "Batch retract: {{ok}} ok, {{failed}} failed",
+    "batchRetractAllFailed": "Batch retract failed for all {{count}} item(s)",
+    "batchToggleAllFailed": "Batch operation failed for all {{count}} item(s)",
+    "batchTogglePartial": "Batch: {{ok}} ok, {{failed}} failed (deploy {{deploy}}, retract {{retract}}, import {{import}}, delete source {{deleted}})",
+    "batchToggled": "Batch done: deploy {{deploy}}, retract {{retract}}, import {{import}}, delete source {{deleted}}",
+    "batchNoOps": "No batch operations to run",
+    "batchAiconfigDeleteBlocked": "Batch ai-config icon cannot delete sources; use the delete button with confirmation",
     "batchDeleted": "Processed {{count}} item(s)",
     "selectRowsFirst": "Select rows to operate on first",
     "noBrowsePath": "No path to open in the current view",
@@ -141,6 +179,7 @@
     "projectRemoved": "Project `{{name}}` removed",
     "removeProjectFailed": "Failed to remove project: {{error}}",
     "platformListFailed": "Failed to load platform list: {{error}}",
+    "doctorFailed": "Failed to load doctor summary: {{error}}",
     "importSuccess": "{{message}}",
     "importFailed": "Import failed: {{error}}"
   },
@@ -153,6 +192,7 @@
     "skill": "skills",
     "rule": "rules",
     "mcp": "mcp",
-    "agent": "agents"
+    "agent": "agents",
+    "command": "commands"
   }
 }

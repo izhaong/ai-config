@@ -40,3 +40,7 @@ apps/ai-config-gui/src-tauri/target/
 
 # Tauri 2 build artifacts(apps/ai-config-gui)
 apps/ai-config-gui/gen/
+
+# Playwright e2e 产物
+apps/ai-config-gui/test-results/
+apps/ai-config-gui/e2e/output/

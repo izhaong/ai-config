@@ -19,6 +19,7 @@
 //!
 //! - Skill:dest = `<platform>_skills_dir/<name>`(链接整个目录,源是 skill 目录)
 /// - Rule:dest = `<platform>_rules_dir/<name>.mdc`
+/// - Command:dest = `<platform>_commands_dir/<name>.md`
 /// - Agent:dest = `<platform>_agents_dir/<name>.<原 ext>`(沿用源文件后缀,.md / .yaml ...)
 /// - Mcp:**不**产 `Create`,改产 `RenderMcp { project_id, platform }`(整份 mcp.json 原子重渲染)
 use std::collections::HashSet;
@@ -79,6 +80,7 @@ pub fn asset_dest_for_at_base(
     let entry_name = match kind {
         AssetKind::Skill => return Some(plat_root.join(name)),
         AssetKind::Rule => format!("{name}.mdc"),
+        AssetKind::Command => format!("{name}.md"),
         AssetKind::Mcp => return None,
         AssetKind::Agent => {
             if src.is_dir() {
@@ -107,7 +109,7 @@ pub fn link_src_for_create(kind: AssetKind, src: &Utf8Path) -> camino::Utf8PathB
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| src.to_path_buf()),
         AssetKind::Agent => agent_link_src(src),
-        AssetKind::Rule | AssetKind::Mcp => src.to_path_buf(),
+        AssetKind::Rule | AssetKind::Command | AssetKind::Mcp => src.to_path_buf(),
     }
 }
 
@@ -133,6 +135,7 @@ fn platform_dest_root(
     Some(match kind {
         AssetKind::Skill => adapter.skills_dir(),
         AssetKind::Rule => adapter.rules_dir(),
+        AssetKind::Command => adapter.commands_dir(),
         AssetKind::Agent => adapter.agents_dir(),
         AssetKind::Mcp => return None,
     })
@@ -169,6 +172,7 @@ pub fn compute_for_project(
         AssetKind::Rule,
         AssetKind::Mcp,
         AssetKind::Agent,
+        AssetKind::Command,
     ] {
         // 从合并后的路径列表抽取 (name, src) 对(name = 资产名,与 source 内部判定一致)
         let entries: Vec<(String, camino::Utf8PathBuf)> = match kind {
@@ -203,6 +207,11 @@ pub fn compute_for_project(
                         p.file_stem().map(|n| (n.to_string(), p.clone()))
                     }
                 })
+                .collect(),
+            AssetKind::Command => merged
+                .commands
+                .iter()
+                .filter_map(|p| p.file_stem().map(|n| (n.to_string(), p.clone())))
                 .collect(),
         };
 
@@ -347,6 +356,8 @@ mod tests {
         fs::write(default.join("mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
         fs::create_dir_all(default.join("agents")).unwrap();
         fs::write(default.join("agents/reviewer.md"), "AGENT").unwrap();
+        fs::create_dir_all(default.join("commands")).unwrap();
+        fs::write(default.join("commands/gitea-ops.md"), "CMD").unwrap();
 
         // 项目仓根(无 `.ai-config/` 时 scan 回落到 default_root 合并)
         (tmp, default, root.join("proj"))
@@ -373,8 +384,8 @@ mod tests {
         let actions = compute_for_project(&project, &default).unwrap();
 
         // 1 skill × 4 + 1 rule × 3(Cursor/Claude/Hermes) + 1 mcp × 4(RenderMcp)
-        //   + 1 agent × 3(无 Hermes)
-        // → 4 + 3 + 4 + 3 = 14
+        //   + 1 agent × 3(无 Hermes) + 1 command × 2(Cursor/Claude)
+        // → 4 + 3 + 4 + 3 + 2 = 16
         let creates: Vec<_> = actions
             .iter()
             .filter(|a| matches!(a, SyncAction::Create { .. }))
@@ -383,9 +394,9 @@ mod tests {
             .iter()
             .filter(|a| matches!(a, SyncAction::RenderMcp { .. }))
             .collect();
-        assert_eq!(creates.len(), 10, "skill 4 + rule 3 + agent 3 = 10");
+        assert_eq!(creates.len(), 12, "skill 4 + rule 3 + agent 3 + command 2 = 12");
         assert_eq!(renders.len(), 4, "mcp 4 platforms = 4 RenderMcp");
-        assert_eq!(actions.len(), 14);
+        assert_eq!(actions.len(), 16);
     }
 
     #[test]
@@ -649,8 +660,8 @@ mod tests {
             assert!(a.is_retract(), "all should be Retract: {a:?}");
             assert_eq!(a.platform(), PlatformId::Cursor);
         }
-        // 每条 Create 都翻成 Retract(skill 1 + rule 1 + agent 1 = 3 on Cursor)
-        assert_eq!(actions.len(), 3);
+        // 每条 Create 都翻成 Retract(skill 1 + rule 1 + agent 1 + command 1 = 4 on Cursor)
+        assert_eq!(actions.len(), 4);
     }
 
     #[test]

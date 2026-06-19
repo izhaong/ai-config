@@ -25,6 +25,7 @@ pub enum AssetKind {
     Skill,
     Rule,
     Agent,
+    Command,
 }
 
 impl AssetKind {
@@ -33,6 +34,7 @@ impl AssetKind {
             AssetKind::Skill => "skill",
             AssetKind::Rule => "rule",
             AssetKind::Agent => "agent",
+            AssetKind::Command => "command",
         }
     }
 }
@@ -171,6 +173,7 @@ fn scan_assets(root: &Utf8Path, kind: AssetKind) -> Result<Vec<AssetEntry>, Core
         AssetKind::Skill => scan.skills,
         AssetKind::Rule => scan.rules,
         AssetKind::Agent => scan.agents,
+        AssetKind::Command => scan.commands,
     };
     let mut out = Vec::with_capacity(raw.len());
     for path in raw {
@@ -181,6 +184,7 @@ fn scan_assets(root: &Utf8Path, kind: AssetKind) -> Result<Vec<AssetEntry>, Core
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
             AssetKind::Rule => path.file_stem().map(|s| s.to_string()).unwrap_or_default(),
+            AssetKind::Command => path.file_stem().map(|s| s.to_string()).unwrap_or_default(),
             AssetKind::Agent => {
                 if path.is_dir() {
                     path.file_name().map(|s| s.to_string()).unwrap_or_default()

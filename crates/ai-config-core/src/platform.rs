@@ -2,9 +2,9 @@
 //!
 //! 目录约定(PRD §7.1 + ARCHITECTURE §4.3 + §5):
 //! - **ai-config**: `<asset_root>/skills|rules|agents/` + `<asset_root>/mcp.json`
-//! - **Cursor**: `<base>/.cursor/skills|rules|agents/` + `mcp.json`
-//! - **Codex**: `<base>/.codex/skills|rules|subagents/` + `mcp.json`
-//! - **Claude**: `<base>/.claude/skills|rules|subagents/` + `mcp.json`
+//! - **Cursor**: `<base>/.cursor/skills|rules|agents|commands/` + `mcp.json`
+//! - **Codex**: `<base>/.codex/skills|rules|subagents/` + `mcp.json`（无斜杠 commands）
+//! - **Claude**: `<base>/.claude/skills|rules|subagents|commands/` + `mcp.json`
 //! - **Hermes**: skills 恒 `$HOME/.hermes/skills`;rules 仅项目 `<repo>/.cursor/rules/`;MCP 为 `config.yaml`
 //!
 //! Hermes 例外:
@@ -25,6 +25,7 @@ pub trait PlatformAdapter: Send + Sync {
     fn skills_dir(&self) -> Utf8PathBuf;
     fn rules_dir(&self) -> Utf8PathBuf;
     fn agents_dir(&self) -> Utf8PathBuf;
+    fn commands_dir(&self) -> Utf8PathBuf;
     fn mcp_json_path(&self) -> Utf8PathBuf;
 
     /// Hermes 等平台 MCP 实际写入路径（Hermes 恒为 `$HOME/.hermes/config.yaml`）。
@@ -39,6 +40,7 @@ pub trait PlatformAdapter: Send + Sync {
         match asset {
             AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent => true,
             AssetKind::Rule => self.id() != PlatformId::Codex,
+            AssetKind::Command => matches!(self.id(), PlatformId::Cursor | PlatformId::Claude),
         }
     }
 }
@@ -105,6 +107,9 @@ impl PlatformAdapter for AiConfigAdapter {
     fn agents_dir(&self) -> Utf8PathBuf {
         self.asset_root.join("agents")
     }
+    fn commands_dir(&self) -> Utf8PathBuf {
+        self.asset_root.join("commands")
+    }
     fn mcp_json_path(&self) -> Utf8PathBuf {
         crate::mcp_json::mcp_json_path(&self.asset_root)
     }
@@ -133,6 +138,9 @@ impl PlatformAdapter for CursorAdapter {
     fn agents_dir(&self) -> Utf8PathBuf {
         self.home.join(".cursor/agents")
     }
+    fn commands_dir(&self) -> Utf8PathBuf {
+        self.home.join(".cursor/commands")
+    }
     fn mcp_json_path(&self) -> Utf8PathBuf {
         self.home.join(".cursor/mcp.json")
     }
@@ -160,6 +168,9 @@ impl PlatformAdapter for CodexAdapter {
         // Codex 叫 subagents(PRD §2.2 + ARCHITECTURE §5)。
         self.home.join(".codex/subagents")
     }
+    fn commands_dir(&self) -> Utf8PathBuf {
+        self.home.join(".codex/commands")
+    }
     fn mcp_json_path(&self) -> Utf8PathBuf {
         self.home.join(".codex/mcp.json")
     }
@@ -184,6 +195,9 @@ impl PlatformAdapter for ClaudeAdapter {
     fn agents_dir(&self) -> Utf8PathBuf {
         // Claude 叫 subagents(PRD §2.2 + ARCHITECTURE §5)。
         self.home.join(".claude/subagents")
+    }
+    fn commands_dir(&self) -> Utf8PathBuf {
+        self.home.join(".claude/commands")
     }
     fn mcp_json_path(&self) -> Utf8PathBuf {
         self.home.join(".claude/mcp.json")
@@ -218,7 +232,7 @@ impl PlatformAdapter for HermesAdapter {
             // Hermes 仅在项目 CWD 读 `.cursor/rules/*.mdc`（与 Cursor 项目级路径一致）
             AssetKind::Rule => self.deploy_base != home(),
             // 无 `~/.hermes/agents`；子代理为运行时 delegate_task
-            AssetKind::Agent => false,
+            AssetKind::Agent | AssetKind::Command => false,
         }
     }
     fn skills_dir(&self) -> Utf8PathBuf {
@@ -229,6 +243,9 @@ impl PlatformAdapter for HermesAdapter {
     }
     fn agents_dir(&self) -> Utf8PathBuf {
         self.deploy_base.join(".hermes/agents")
+    }
+    fn commands_dir(&self) -> Utf8PathBuf {
+        self.deploy_base.join(".hermes/commands")
     }
     fn mcp_json_path(&self) -> Utf8PathBuf {
         crate::hermes_config::hermes_config_path()
@@ -312,6 +329,7 @@ pub fn kind_asset_path(
         AssetKind::Skill => Some(adapter.skills_dir()),
         AssetKind::Rule => Some(adapter.rules_dir()),
         AssetKind::Agent => Some(adapter.agents_dir()),
+        AssetKind::Command => Some(adapter.commands_dir()),
         AssetKind::Mcp => Some(adapter.mcp_deploy_path()),
     }
 }
@@ -365,6 +383,112 @@ pub fn registry() -> Vec<Box<dyn PlatformAdapter>> {
 // 保留 OnceLock 类型 re-export 以兼容历史调用方(若有人 use 了这个名字)。
 #[allow(dead_code)]
 type _CachedRegistry = OnceLock<()>;
+
+/// 平台 ID 的短标签（JSON / GUI）。
+pub fn platform_label(id: PlatformId) -> &'static str {
+    match id {
+        PlatformId::AiConfig => "aiconfig",
+        PlatformId::Cursor => "cursor",
+        PlatformId::Codex => "codex",
+        PlatformId::Claude => "claude",
+        PlatformId::Hermes => "hermes",
+    }
+}
+
+/// 资产 kind 短标签。
+pub fn asset_kind_label(kind: AssetKind) -> &'static str {
+    match kind {
+        AssetKind::Skill => "skill",
+        AssetKind::Rule => "rule",
+        AssetKind::Mcp => "mcp",
+        AssetKind::Agent => "agent",
+        AssetKind::Command => "command",
+    }
+}
+
+/// 解析平台字符串（含别名）。
+pub fn parse_platform_str(s: &str) -> Result<PlatformId, CoreError> {
+    match s {
+        "aiconfig" | "ai-config" | "AiConfig" | "ac" => Ok(PlatformId::AiConfig),
+        "cursor" | "Cursor" | "cu" => Ok(PlatformId::Cursor),
+        "codex" | "Codex" | "cx" => Ok(PlatformId::Codex),
+        "claude" | "Claude" | "cl" => Ok(PlatformId::Claude),
+        "hermes" | "Hermes" | "he" => Ok(PlatformId::Hermes),
+        other => Err(CoreError::InvalidPath(format!(
+            "未知平台 `{other}`(预期 aiconfig/cursor/codex/claude/hermes)"
+        ))),
+    }
+}
+
+/// 解析 deploy / retract 目标平台（排除 aiconfig 源）。
+pub fn parse_deploy_platform_str(s: &str) -> Result<PlatformId, CoreError> {
+    let p = parse_platform_str(s)?;
+    if !p.is_deploy_target() {
+        return Err(CoreError::InvalidPath(format!(
+            "平台 `{}` 为资产源，不能 deploy / retract",
+            platform_label(p)
+        )));
+    }
+    Ok(p)
+}
+
+/// 平台不支持某资产类型时的说明（doctor / GUI issue map）。
+pub fn capability_skip_reason(plat: PlatformId, kind: AssetKind) -> String {
+    match (plat, kind) {
+        (PlatformId::Codex, AssetKind::Rule) => {
+            "Codex 通过 AGENTS.md 间接引用 rules，不支持全局 symlink 下发".into()
+        }
+        (PlatformId::Hermes, AssetKind::Rule) => {
+            "Hermes rules 仅项目级：请选已注册项目后 deploy 到 <repo>/.cursor/rules".into()
+        }
+        (PlatformId::Hermes, AssetKind::Agent) => {
+            "Hermes 无静态 agents 目录；请用项目 AGENTS.md 或 delegate_task 子代理".into()
+        }
+        (PlatformId::Codex, AssetKind::Command) => {
+            "Codex 无斜杠 commands 目录，不支持下发".into()
+        }
+        (PlatformId::Hermes, AssetKind::Command) => {
+            "Hermes 无斜杠 commands，不支持下发".into()
+        }
+        _ => format!(
+            "platform `{}` 不支持 asset kind `{}`",
+            platform_label(plat),
+            asset_kind_label(kind)
+        ),
+    }
+}
+
+/// 收集各平台 × 资产类型的能力缺口（doctor / GUI）。
+pub fn collect_capability_issues(deploy_base: &camino::Utf8Path) -> Vec<CapabilityIssue> {
+    let mut out = Vec::new();
+    for plat in deploy_platform_ids() {
+        for kind in [
+            AssetKind::Skill,
+            AssetKind::Rule,
+            AssetKind::Mcp,
+            AssetKind::Agent,
+            AssetKind::Command,
+        ] {
+            if supports_at_scope(plat, kind, deploy_base) {
+                continue;
+            }
+            out.push(CapabilityIssue {
+                platform: plat,
+                kind: asset_kind_label(kind).to_string(),
+                reason: capability_skip_reason(plat, kind),
+            });
+        }
+    }
+    out
+}
+
+/// 单条平台能力问题。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CapabilityIssue {
+    pub platform: PlatformId,
+    pub kind: String,
+    pub reason: String,
+}
 
 #[cfg(test)]
 mod tests {

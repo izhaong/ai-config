@@ -1,0 +1,31 @@
+---
+description: Karpathy 编码行为准则 — 减少常见 LLM 失误
+alwaysApply: true
+---
+
+# Karpathy Guidelines（ai-config）
+
+与 `.specify/memory/constitution.md` §3 一致；实现时内化，勿堆砌无关抽象。
+
+## 1. Think Before Coding
+
+- 显式陈述假设；多解法则说明取舍。
+- 更简单方案存在时要提出；不清楚则停下来问。
+
+## 2. Simplicity First
+
+- 只做被请求的能力；不为单次使用造抽象。
+- 不为极不可能场景写冗长错误处理。
+- 200 行能写成 50 行则重写。
+
+## 3. Surgical Changes
+
+- 不「顺手」改相邻未破代码、注释、格式。
+- 匹配现有命名与风格。
+- 仅清理 **本次改动** 产生的无用 import/变量。
+
+## 4. Goal-Driven Execution
+
+- 把任务写成可验证目标（测试通过、build 通过、`doctor` 干净）。
+- 多步任务先列 brief plan：步骤 → 验证方式。
+- **未验证不得标 completed**（含 Cursor Todo / Plan todos）。

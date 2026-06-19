@@ -1,6 +1,6 @@
 # 项目级 AI 配置模板
 
-由 [`scripts/bootstrap-project.sh`](../scripts/bootstrap-project.sh) 渲染到目标项目根目录。
+由 `ai-config` CLI 或手动复制渲染到目标项目根目录（`scripts/bootstrap-project.sh` 已废弃）。
 
 ## 生成后的目录（四端消费）
 
@@ -24,8 +24,8 @@
 
 | 层级 | 位置 | 内容 |
 | --- | --- | --- |
-| 全局 | `ai-config/rules`、`ai-config/skills` | 跨项目通用 |
-| 项目 | `<project>/.cursor/` | 仅本项目的工作流、技术栈、仓库约定 |
+| 全局 | `~/.ai-config/{skills,rules,commands,agents,mcp.json}` | 跨项目通用（本机，不在 git） |
+| 项目 | `<project>/.ai-config/` 或 `<project>/.cursor/` | 仅本项目的工作流、技术栈、仓库约定 |
 | 本机 | `~/.config/ai-config/secrets.env` | MCP 密钥 |
 
 项目规则**不要**复制 ai-config 里的通用 `.mdc`；在 `00-project-core.mdc` 里写指针即可。

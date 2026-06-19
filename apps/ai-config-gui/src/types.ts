@@ -1,4 +1,4 @@
-export type AssetKind = "skill" | "rule" | "mcp" | "agent";
+export type AssetKind = "skill" | "rule" | "mcp" | "agent" | "command";
 /** 5 平台：ai-config 为资产源，其余为 IDE 下发目标 */
 export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
 /** 可向 IDE deploy / retract 的 4 个目标 */
@@ -69,7 +69,13 @@ export const DEPLOY_PLATFORMS: DeployPlatform[] = [
   "hermes",
 ];
 
-export const ASSET_KINDS: AssetKind[] = ["skill", "rule", "mcp", "agent"];
+export const ASSET_KINDS: AssetKind[] = [
+  "skill",
+  "rule",
+  "mcp",
+  "agent",
+  "command",
+];
 
 export function isSourcePlatform(platform: Platform): boolean {
   return platform === "aiconfig";
@@ -88,5 +94,5 @@ export function isPlatformActive(state: LinkState): boolean {
 }
 
 export function hasSourceEntry(entry: PlatformAssetEntry): boolean {
-  return isPlatformActive(entry.states.aiconfig);
+  return isPlatformActive(entry.states?.aiconfig ?? "unlinked");
 }

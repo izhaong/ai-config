@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 interface RegisterProjectModalProps {
@@ -15,11 +15,6 @@ export function RegisterProjectModal({
   const { t } = useTranslation();
   const [name, setName] = useState("");
   const [rootPath, setRootPath] = useState("");
-
-  useEffect(() => {
-    setName("");
-    setRootPath("");
-  }, []);
 
   const canSubmit = name.trim().length > 0 && rootPath.trim().length > 0 && !busy;
 
