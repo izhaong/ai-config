@@ -143,6 +143,8 @@ fn infer_kind_from_dest(dest: &camino::Utf8Path) -> &'static str {
         "skill"
     } else if s.contains("/rules/") {
         "rule"
+    } else if s.contains("/commands/") {
+        "command"
     } else if s.contains("/agents/") || s.contains("/subagents/") {
         "agent"
     } else {
@@ -167,6 +169,7 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
                 let link_src = match kind {
                     "skill" => ai_config_core::sync::link_src_for_create(AssetKind::Skill, src),
                     "rule" => ai_config_core::sync::link_src_for_create(AssetKind::Rule, src),
+                    "command" => ai_config_core::sync::link_src_for_create(AssetKind::Command, src),
                     "agent" => ai_config_core::sync::link_src_for_create(AssetKind::Agent, src),
                     _ => src.clone(),
                 };
@@ -677,6 +680,11 @@ fn describe_for(
             let src = default_root.join("rules").join(format!("{name}.mdc"));
             (dest, src)
         }
+        AssetKind::Command => {
+            let dest = adapter.commands_dir().join(format!("{name}.md"));
+            let src = default_root.join("commands").join(format!("{name}.md"));
+            (dest, src)
+        }
         AssetKind::Agent => {
             let dest = sync::asset_dest_for(platform, kind, name, _src)
                 .unwrap_or_else(|| adapter.agents_dir().join(name));
@@ -852,104 +860,15 @@ pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCo
 
 // ── 7. doctor ───────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
-struct DoctorReport {
-    broken: usize,
-    wrong_source: usize,
-    wrong_type: usize,
-    missing_secrets: Vec<MissingSecret>,
-    unregistered_projects: Vec<String>,
-    platform_capability_issues: Vec<PlatformCapabilityIssue>,
-    exit_code: u8,
-}
-
-#[derive(Debug, Serialize)]
-struct PlatformCapabilityIssue {
-    platform: String,
-    kind: String,
-    reason: String,
-}
-
 /// `ai-config doctor`(PRD §6.2 / §10 A-10)
 pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
+    let report = match ai_config_core::doctor::compute_report(default_root) {
+        Ok(r) => r,
         Err(e) => {
             emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
             return ExitCode::from(e.exit_code());
         }
     };
-
-    let mut report = DoctorReport {
-        broken: 0,
-        wrong_source: 0,
-        wrong_type: 0,
-        missing_secrets: Vec::new(),
-        unregistered_projects: Vec::new(),
-        platform_capability_issues: Vec::new(),
-        exit_code: exit_code::SUCCESS,
-    };
-
-    // 1. 链接健康
-    let assets = flat_assets(&ctx.scan);
-    for (kind, name, src) in &assets {
-        for plat in all_platforms() {
-            let (state, _dest) = describe_for(*kind, name, src, plat, default_root);
-            match state.as_str() {
-                "broken" => report.broken += 1,
-                "wrong_source" => report.wrong_source += 1,
-                "wrong_type" => report.wrong_type += 1,
-                _ => {}
-            }
-        }
-    }
-
-    // 2. secrets(MCP 明文模式,不再扫描缺 key)
-    let _ = &ctx.secrets_map;
-
-    // 3. 项目未注册(Phase 1:若 root 没有任何资产,记为 "无项目")
-    if assets.is_empty() {
-        report
-            .unregistered_projects
-            .push(format!("{default_root} (no assets found)"));
-    }
-
-    // 4. 平台能力(Codex 不支持 rule / agent)
-    for plat in all_platforms() {
-        for k in [
-            AssetKind::Skill,
-            AssetKind::Rule,
-            AssetKind::Mcp,
-            AssetKind::Agent,
-        ] {
-            let supports = platform::for_id(plat)
-                .map(|a| a.supports(k))
-                .unwrap_or(false);
-            if !supports {
-                report
-                    .platform_capability_issues
-                    .push(PlatformCapabilityIssue {
-                        platform: platform_label(plat).to_string(),
-                        kind: kind_to_str(k).to_string(),
-                        reason: format!(
-                            "platform `{}` 不支持 asset kind `{}`",
-                            platform_label(plat),
-                            kind_to_str(k)
-                        ),
-                    });
-            }
-        }
-    }
-
-    let _any_issue = report.broken > 0
-        || report.wrong_source > 0
-        || report.wrong_type > 0
-        || !report.missing_secrets.is_empty()
-        || !report.unregistered_projects.is_empty()
-        || !report.platform_capability_issues.is_empty();
-    // doctor 是诊断输出,即便发现问题也退出 0(已成功报告,非部分失败)
-    // agent 拿 --json 解析后用字段值判断健康;退出码 0 表示"诊断成功完成"
-    report.exit_code = exit_code::SUCCESS;
 
     if mode.is_json() {
         emit_json(mode, &report);
@@ -997,6 +916,7 @@ fn kind_to_str(k: AssetKind) -> &'static str {
         AssetKind::Rule => "rule",
         AssetKind::Mcp => "mcp",
         AssetKind::Agent => "agent",
+        AssetKind::Command => "command",
     }
 }
 
@@ -1014,6 +934,11 @@ fn flat_assets(scan: &source::ScanResult) -> Vec<(AssetKind, String, camino::Utf
     for p in &scan.rules {
         if let Some(name) = p.file_stem().map(|n| n.to_string()) {
             out.push((AssetKind::Rule, name, p.clone()));
+        }
+    }
+    for p in &scan.commands {
+        if let Some(name) = p.file_stem().map(|n| n.to_string()) {
+            out.push((AssetKind::Command, name, p.clone()));
         }
     }
     if let Some(ref path) = scan.mcp_json {

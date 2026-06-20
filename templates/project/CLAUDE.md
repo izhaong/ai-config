@@ -11,6 +11,6 @@
 | 核心项目规则 | `.cursor/rules/00-project-core.mdc` |
 | 规则索引 | `.cursor/rules/README.md` |
 | Plan | `.cursor/plans/README.md` |
-| 全局通用规则 | `{{AI_CONFIG_REL}}/rules/` |
+| 全局通用规则 | `~/.ai-config/rules/` |
 
 检索原则：先 `rg` 定位，再打开少量相关文件。

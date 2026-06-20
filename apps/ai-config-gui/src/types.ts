@@ -1,4 +1,4 @@
-export type AssetKind = "skill" | "rule" | "mcp" | "agent";
+export type AssetKind = "skill" | "rule" | "mcp" | "agent" | "command";
 /** 5 平台：ai-config 为资产源，其余为 IDE 下发目标 */
 export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
 /** 可向 IDE deploy / retract 的 4 个目标 */
@@ -45,6 +45,45 @@ export interface DoctorSummary {
   exit_code: number;
 }
 
+export interface GitEnsureOutcome {
+  git_available: boolean;
+  was_repo: boolean;
+  just_initialized: boolean;
+  initial_commit: boolean;
+}
+
+export interface GitRepoStatus {
+  git_available: boolean;
+  is_repo: boolean;
+  just_initialized: boolean;
+  branch?: string | null;
+  dirty: boolean;
+  dirty_count: number;
+  has_remote: boolean;
+  remote_url?: string | null;
+  ahead: number;
+  behind: number;
+}
+
+export interface GitSyncConfig {
+  remote_url?: string | null;
+  branch: string;
+}
+
+export interface GitSyncOutcome {
+  committed: boolean;
+  pulled: boolean;
+  pushed: boolean;
+  message: string;
+}
+
+export interface GitBootstrapResponse {
+  asset_root: string;
+  outcome: GitEnsureOutcome;
+  status: GitRepoStatus;
+  config: GitSyncConfig;
+}
+
 export interface AssetDetail {
   name: string;
   description: string;
@@ -69,7 +108,13 @@ export const DEPLOY_PLATFORMS: DeployPlatform[] = [
   "hermes",
 ];
 
-export const ASSET_KINDS: AssetKind[] = ["skill", "rule", "mcp", "agent"];
+export const ASSET_KINDS: AssetKind[] = [
+  "skill",
+  "rule",
+  "mcp",
+  "agent",
+  "command",
+];
 
 export function isSourcePlatform(platform: Platform): boolean {
   return platform === "aiconfig";
@@ -88,5 +133,5 @@ export function isPlatformActive(state: LinkState): boolean {
 }
 
 export function hasSourceEntry(entry: PlatformAssetEntry): boolean {
-  return isPlatformActive(entry.states.aiconfig);
+  return isPlatformActive(entry.states?.aiconfig ?? "unlinked");
 }

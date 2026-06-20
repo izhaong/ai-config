@@ -6,7 +6,7 @@
 
 | 层级 | 路径 |
 | --- | --- |
-| 全局通用 | `{{AI_CONFIG_REL}}/rules/*.mdc` |
+| 全局通用 | `~/.ai-config/rules/*.mdc` |
 | 本项目 | `.cursor/rules/*.mdc`（`.hermes` 安装的全局 rules 与 ai-config 同源） |
 
 ## 入口
@@ -16,5 +16,5 @@
 
 ## Skills
 
-- 全局：`{{AI_CONFIG_REL}}/skills/`（本机 `install.sh --skills-only` 链接）
+- 全局：`~/.ai-config/skills/`（`ai-config install` / `ai-config sync` 下发到各 IDE）
 - 项目：`.cursor/skills/`

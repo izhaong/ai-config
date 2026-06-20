@@ -1,0 +1,11 @@
+# ai-config Cursor Rules 索引
+
+| 文件                                                 | 作用域                  | 说明                                             |
+| ---------------------------------------------------- | ----------------------- | ------------------------------------------------ |
+| [00-ai-config-core.mdc](./00-ai-config-core.mdc)     | always                  | 仓库结构、core 边界、Git、验证、文档             |
+| [spec-kit-gate.mdc](./spec-kit-gate.mdc)             | always                  | 非平凡改动先走 spec/plan/tasks                   |
+| [karpathy-guidelines.mdc](./karpathy-guidelines.mdc) | always                  | 编码行为准则                                     |
+| [rust-ai-config.mdc](./rust-ai-config.mdc)           | `**/*.rs`               | Rust crate 分层与测试                            |
+| [gui-ai-config.mdc](./gui-ai-config.mdc)             | `apps/ai-config-gui/**` | React + Tauri；ahooks / es-toolkit / shadcn 选型 |
+
+Commands：`.cursor/commands/` · Skills：`.cursor/skills/` · Agents：`.cursor/agents/`

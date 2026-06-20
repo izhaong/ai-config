@@ -1,0 +1,66 @@
+---
+description: ai-config GUI（Tauri + React）组件分层、依赖选型与 Tauri 边界
+globs: "apps/ai-config-gui/**"
+alwaysApply: false
+---
+
+# GUI（apps/ai-config-gui）
+
+## 技术栈
+
+- **Tauri 2** + **React** + **TypeScript** + **Vite**
+- 业务数据与文件操作 **只经** `invoke` → `src/lib.rs` Tauri commands
+
+## 依赖选型（优先高星、维护活跃）
+
+**原则**：不重复造轮子；新增能力前先查是否有成熟库。优先 **tree-shake 友好**、TypeScript 一等、文档完善的方案。
+
+| 场景                            | 首选库                            | 说明                                                                          |
+| ------------------------------- | --------------------------------- | ----------------------------------------------------------------------------- |
+| React hooks / 请求 / 定时       | **ahooks**                        | `useMemoizedFn`、`useLatest`、`useRequest`、`useTimeout` 等                   |
+| 工具函数（lodash 风格）         | **es-toolkit**                    | 按需 `import { debounce } from 'es-toolkit/function'`；勿手写深拷贝/防抖/分组 |
+| className 合并                  | **clsx** + **tailwind-merge**     | 经 `src/lib/utils.ts` 的 `cn()`                                               |
+| UI 组件（对话框、按钮、表单等） | **shadcn/ui**（Radix + Tailwind） | 新交互组件用 `npx shadcn@latest add <component>`；勿从零写 modal/select       |
+| 图标                            | **lucide-react**                  | 与 shadcn 生态一致                                                            |
+| i18n                            | **i18next** + **react-i18next**   | 键同步维护 `locales/`                                                         |
+
+### shadcn/ui 接入约定
+
+- 首次接入或增组件：Tailwind 已配置后，在 `apps/ai-config-gui` 执行 shadcn init/add；组件落在 `src/components/ui/`。
+- 现有 `styles.css` 暗色布局可渐进迁移：新页面/新组件走 shadcn；旧样式不一次性重写。
+- Tauri `listen`、webview 生命周期等无 ahooks 封装时仍手写 `useEffect` + cleanup。
+
+### 禁止
+
+- 在 `src/` 复制 lodash/shadcn 已有实现（如自写 `debounce`、自写无无障碍的 modal）。
+- 引入无类型、长期未维护或体积过大的替代品（全量 `lodash` 包等）。
+
+## 前端分层（保持）
+
+```
+src/
+├── api/tauriAssets.ts      # invoke 封装
+├── lib/utils.ts            # cn() 等跨组件工具
+├── hooks/                  # 状态与副作用
+├── components/
+│   ├── ui/                 # shadcn 生成组件（接入后）
+│   └── …                   # 业务展示组件
+└── App.tsx                 # 组合根，保持精简
+```
+
+- 新 UI 逻辑优先 hook + 小组件；避免 `App.tsx` 再次膨胀。
+
+## Rust 边界
+
+- 新能力：core 实现 → CLI（可选）→ `#[tauri::command]` 暴露。
+- 不在前端拼平台路径；路径由后端返回。
+
+## 验证
+
+- `npm run test && npm run build`（tsc + vite）
+- 改 Tauri 命令时：`cargo test -p ai-config-gui` 或本地 `pnpm run tauri:dev` 冒烟
+
+## UX
+
+- 长操作显示 loading；破坏性操作走 confirm。
+- 只读资产（无源文件）须明确 `readOnly` 态，与现有 `AssetDrawer` 一致。

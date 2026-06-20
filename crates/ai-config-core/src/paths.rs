@@ -18,7 +18,7 @@ pub const USER_ASSET_DIR_NAME: &str = ".ai-config";
 pub const BUNDLE_SEED_DIR_NAMES: &[&str] = &[".ai-config", "seed"];
 
 /// 子目录(相对资产根)。
-pub const ASSET_SUBDIRS: &[&str] = &["skills", "rules", "agents"];
+pub const ASSET_SUBDIRS: &[&str] = &["skills", "rules", "agents", "commands"];
 
 /// 读 home:`$HOME` / `$USERPROFILE`,失败时退回 `.`(单测稳定)。
 pub fn home_dir() -> Utf8PathBuf {
@@ -145,6 +145,7 @@ pub fn user_assets_need_seed(root: &Utf8Path) -> bool {
         && !dir_has_user_content(&root.join("rules"))
         && !mcp_has_content(root)
         && !dir_has_user_content(&root.join("agents"))
+        && !dir_has_user_content(&root.join("commands"))
 }
 
 fn mcp_has_content(root: &Utf8Path) -> bool {
@@ -199,7 +200,7 @@ fn bundled_seed_next_to_exe() -> Option<Utf8PathBuf> {
 
 /// 将种子目录的 `skills|rules|mcp|agents` 合并拷贝到目标(已存在文件不覆盖)。
 pub fn copy_seed_into(seed: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
-    for top in ["skills", "rules", "mcp", "agents"] {
+    for top in ["skills", "rules", "mcp", "agents", "commands"] {
         let src_top = seed.join(top);
         if !src_top.is_dir() {
             continue;

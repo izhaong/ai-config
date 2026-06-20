@@ -9,6 +9,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
+use crate::asset_ops::parse_skill_description;
 use crate::error::CoreError;
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId};
@@ -144,7 +145,7 @@ fn scan_aiconfig_assets(
     Ok(out)
 }
 
-fn scan_source_for_scope(
+pub fn scan_source_for_scope(
     default_root: &Utf8Path,
     asset_root: &Utf8Path,
 ) -> Result<ScanResult, CoreError> {
@@ -167,14 +168,14 @@ fn scan_platform_raw(
         AssetKind::Skill => scan_platform_skills(adapter),
         AssetKind::Rule => scan_platform_rules(adapter),
         AssetKind::Agent => scan_platform_agents(adapter),
+        AssetKind::Command => scan_platform_commands(adapter),
         AssetKind::Mcp => scan_platform_mcp(adapter),
     }
 }
 
 fn is_noise_entry_name(name: &str) -> bool {
     name.starts_with('.')
-        || name.contains(".bak-")
-        || name.ends_with(".bak")
+        || crate::link::is_legacy_bak_entry_name(name)
         || name.ends_with(".orig")
         || name.ends_with('~')
 }
@@ -228,6 +229,34 @@ fn scan_platform_rules(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, C
             continue;
         }
         if !(fname.ends_with(".mdc") || fname.ends_with(".md")) {
+            continue;
+        }
+        let stem = path.file_stem().unwrap_or(&fname).to_string();
+        let description = fs::read_to_string(path.as_std_path())
+            .ok()
+            .map(|c| parse_skill_description(&c))
+            .unwrap_or_default();
+        out.push((stem, path, description));
+    }
+    Ok(out)
+}
+
+fn scan_platform_commands(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, CoreError> {
+    let dir = adapter.commands_dir();
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir.as_std_path()).map_err(CoreError::Io)? {
+        let entry = entry.map_err(CoreError::Io)?;
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if is_noise_entry_name(&fname) {
+            continue;
+        }
+        let path = Utf8PathBuf::from_path_buf(entry.path()).map_err(|_| {
+            CoreError::InvalidPath(format!("非 UTF-8 路径: {}", entry.path().display()))
+        })?;
+        if !path.is_file() || !fname.ends_with(".md") {
             continue;
         }
         let stem = path.file_stem().unwrap_or(&fname).to_string();
@@ -362,7 +391,7 @@ fn scan_hermes_mcp_servers(config_path: &Utf8Path) -> Result<Vec<RawEntry>, Core
         .collect())
 }
 
-fn find_source_path(kind: AssetKind, name: &str, source_scan: &ScanResult) -> Option<Utf8PathBuf> {
+pub fn find_source_path(kind: AssetKind, name: &str, source_scan: &ScanResult) -> Option<Utf8PathBuf> {
     match kind {
         AssetKind::Skill => source_scan.skills.iter().find(|p| {
             p.parent()
@@ -382,6 +411,10 @@ fn find_source_path(kind: AssetKind, name: &str, source_scan: &ScanResult) -> Op
             };
             candidate.as_deref() == Some(name)
         }),
+        AssetKind::Command => source_scan
+            .commands
+            .iter()
+            .find(|p| p.file_stem().map(|n| n == name).unwrap_or(false)),
         AssetKind::Mcp => {
             let asset_root = source_scan.mcp_json.as_ref()?.parent()?;
             mcp_json::get_server_config(asset_root, name)
@@ -473,33 +506,6 @@ fn is_symlink_path(path: &Utf8Path) -> bool {
     fs::symlink_metadata(path.as_std_path())
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false)
-}
-
-fn parse_skill_description(content: &str) -> String {
-    let mut description = String::new();
-    if let Some(after_first) = content.strip_prefix("---") {
-        let after_first = after_first.trim_start_matches('\n');
-        if let Some(end) = after_first.find("\n---") {
-            for line in after_first[..end].lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("description:") {
-                    let d = rest.trim().trim_matches(['"', '\'']).to_string();
-                    if !d.is_empty() && d != ">" && d != "|" {
-                        description = d.chars().take(200).collect();
-                    }
-                }
-            }
-        }
-    }
-    if description.is_empty() {
-        for line in content.lines() {
-            if let Some(rest) = line.trim_start().strip_prefix("# ") {
-                description = rest.chars().take(200).collect();
-                break;
-            }
-        }
-    }
-    description
 }
 
 // ── 从平台导入到 ai-config 源 ─────────────────────────────────────
@@ -643,6 +649,41 @@ pub fn import_agent_from_platform(
     Ok(dest)
 }
 
+/// 将平台 command 文件复制到 `asset_root/commands/<name>.md`。
+pub fn import_command_from_platform(
+    name: &str,
+    plat: PlatformId,
+    default_root: &Utf8Path,
+    asset_root: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Result<Utf8PathBuf, CoreError> {
+    if plat == PlatformId::AiConfig {
+        return Err(CoreError::InvalidPath(
+            "ai-config 为资产源，不能从自身导入".into(),
+        ));
+    }
+    let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
+    if !adapter.supports(AssetKind::Command) {
+        return Err(CoreError::UnsupportedAsset {
+            platform: plat,
+            asset: AssetKind::Command,
+            hint: "该平台不支持斜杠 commands".into(),
+        });
+    }
+    let commands_dir = adapter.commands_dir();
+    let platform_path = find_command_on_platform(&commands_dir, name)?;
+    let source_scan = scan_source_for_scope(default_root, asset_root)?;
+    if find_source_path(AssetKind::Command, name, &source_scan).is_some() {
+        return Err(CoreError::InvalidPath(format!("源中已存在 command `{name}`")));
+    }
+    let dest = asset_root.join("commands").join(format!("{name}.md"));
+    crate::paths::ensure_parent_dir(&dest)?;
+    let material_src = crate::materialize::resolve_copy_source(&platform_path);
+    fs::copy(material_src.as_std_path(), dest.as_std_path()).map_err(CoreError::Io)?;
+    crate::materialize::adopt_existing_deploy(&dest, &platform_path)?;
+    Ok(dest)
+}
+
 /// 将平台 MCP server 配置写入源 `mcp.json`。
 pub fn import_mcp_from_platform(
     name: &str,
@@ -733,6 +774,13 @@ pub fn copy_asset_to_asset_root(
             }
             dest
         }
+        AssetKind::Command => {
+            let dest = to_root.join("commands").join(format!("{name}.md"));
+            crate::paths::ensure_parent_dir(&dest)?;
+            let material = crate::materialize::resolve_copy_source(&src);
+            std::fs::copy(material.as_std_path(), dest.as_std_path()).map_err(CoreError::Io)?;
+            dest
+        }
         AssetKind::Mcp => {
             let asset_root = src.parent().unwrap_or(&src);
             let config = mcp_json::get_server_config(asset_root, name)?.ok_or_else(|| {
@@ -804,6 +852,18 @@ fn read_platform_mcp_server_config(
             name: name.into(),
             hint: format!("mcp.json 中无 server `{name}`"),
         })
+}
+
+fn find_command_on_platform(commands_dir: &Utf8Path, name: &str) -> Result<Utf8PathBuf, CoreError> {
+    let p = commands_dir.join(format!("{name}.md"));
+    if p.is_file() {
+        return Ok(p);
+    }
+    Err(CoreError::AssetNotFound {
+        kind: AssetKind::Command,
+        name: name.into(),
+        hint: format!("平台 commands 目录无 `{name}.md`"),
+    })
 }
 
 fn find_rule_on_platform(rules_dir: &Utf8Path, name: &str) -> Result<Utf8PathBuf, CoreError> {
@@ -888,6 +948,9 @@ mod tests {
             fn agents_dir(&self) -> Utf8PathBuf {
                 self.skills.parent().unwrap().join("agents")
             }
+            fn commands_dir(&self) -> Utf8PathBuf {
+                self.skills.parent().unwrap().join("commands")
+            }
             fn mcp_json_path(&self) -> Utf8PathBuf {
                 self.skills.parent().unwrap().join("mcp.json")
             }
@@ -935,6 +998,9 @@ mod tests {
             }
             fn agents_dir(&self) -> Utf8PathBuf {
                 self.skills.parent().unwrap().join("agents")
+            }
+            fn commands_dir(&self) -> Utf8PathBuf {
+                self.skills.parent().unwrap().join("commands")
             }
             fn mcp_json_path(&self) -> Utf8PathBuf {
                 self.skills.parent().unwrap().join("mcp.json")

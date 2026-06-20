@@ -1,0 +1,29 @@
+---
+description: Spec Kit 门禁 — 非平凡改动先规格再实现
+alwaysApply: true
+---
+
+# Spec Kit 门禁（ai-config）
+
+参考 [github/spec-kit](https://github.com/github/spec-kit)。本仓已接入 `.specify/` 与 `specs/`。
+
+## 必须先判断
+
+实现新功能、改架构、批量改多 crate 前，检查是否存在：
+
+- `.specify/memory/constitution.md`
+- `specs/<编号-功能>/spec.md`（及后续的 `plan.md`、`tasks.md`）
+
+## 若尚无对应 spec — 禁止直接开写业务实现
+
+1. 引导走 `/speckit.specify` → `/speckit.plan` → `/speckit.tasks`
+2. 或用户确认 spike / 一次性试验且接受不入主规格链路
+
+## 若已有 spec — 按规格走
+
+实现须对齐当前 feature 目录下的 `spec.md` / `plan.md` / `tasks.md`；缺失时先补再写码。
+
+## 例外
+
+- 单文件 typo、一行明显 bugfix、格式化/lint
+- 用户明确声明 **spike** 且接受不进入 `specs/`

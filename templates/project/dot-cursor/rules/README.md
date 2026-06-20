@@ -10,7 +10,7 @@
 
 ## 全局规则（不在此目录）
 
-见 **`{{AI_CONFIG_REL}}/rules/README.md`**：提交规范、Karpathy 准则、Spec Kit 门禁等。
+见 **`~/.ai-config/rules/README.md`**（若已维护）或 zh-cloud `.claude/rules/`：提交规范、Karpathy 准则、Spec Kit 门禁等。
 
 ## 新增规则
 

@@ -47,6 +47,7 @@ pub enum AssetKind {
     Rule,
     Mcp,
     Agent,
+    Command,
 }
 
 /// 单条 skill(目录形态,`SKILL.md` + 可能的 scripts/ / assets/ / agents/)。
@@ -469,6 +470,7 @@ mod tests {
             (AssetKind::Rule, "\"rule\""),
             (AssetKind::Mcp, "\"mcp\""),
             (AssetKind::Agent, "\"agent\""),
+            (AssetKind::Command, "\"command\""),
         ] {
             assert_eq!(serde_json::to_string(&k).unwrap(), expected);
         }

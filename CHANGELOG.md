@@ -6,8 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`global-config/`**：早期仓库内资产目录已废弃；用户全局资产统一在 `~/.ai-config/`。原 vendored `antd` skill 改记于 `manifests/plugins.md`（上游 ant-design-cli）。
+
+### Changed
+
+- **GUI 规范**：组件迁入 `components/`；抽 `utils/canOpenEntry`；批量操作 toast 按成功/失败计数；`cmd_doctor` 接 core 真值；侧边栏改用 `<button>` + a11y。
+- **Core 收敛**：新增 `asset_scope`、`doctor`、`asset_ops`；`platform` 统一解析/能力说明；GUI `lib.rs` 单条资产命令经 `command_bridge` 调 core；CLI `lifecycle::run_doctor` 改调 `doctor::compute_report`。
+- **GUI 工程化**：`eslint.config.js`、`vitest` + `canOpenEntry` 单测；`npm run lint|test` 脚本。
+
 ### Added
 
+- **AI 协作配置**：`.cursor/`（rules、agents、skills、commands）、`.specify/`（constitution、Spec Kit 模板与脚本）、`specs/`；扩充 `AGENTS.md`、`CLAUDE.md`。
+- **Commands 同步**：新增第 5 类资产 `command`（`~/.ai-config/commands/<name>.md`），下发至 **Cursor**（`.cursor/commands/`）与 **Claude**（`.claude/commands/`）；Codex / Hermes 不支持。
+- CLI `ai-config command list|show|reveal`；`sync` / GUI 与 rules 同链路（实体复制 + `.ai-config-deploy.json`）。
 - CLI `ai-config mcp migrate-hermes`：将遗留 `~/.hermes/mcp.json` 合并进 `~/.hermes/config.yaml` 的 `mcp_servers`。
 - Core `hermes_config` 模块：YAML 读/写/比对、原子写、备份、`normalize_server_for_hermes`、`ensure_external_skills_dir`。
 
