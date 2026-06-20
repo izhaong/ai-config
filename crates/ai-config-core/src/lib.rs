@@ -18,6 +18,7 @@ pub mod asset_ops;
 pub mod asset_scope;
 pub mod doctor;
 pub mod error;
+pub mod git;
 pub mod hermes_config;
 pub mod link;
 pub mod materialize;

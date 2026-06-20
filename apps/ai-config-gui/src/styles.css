@@ -868,6 +868,89 @@ button.danger:disabled {
   color: var(--fg-dim);
 }
 
+.settings-menu-panel-wide {
+  min-width: 280px;
+  max-width: 360px;
+}
+
+.settings-menu-hint {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--fg-dim);
+  word-break: break-all;
+}
+
+.settings-menu-git-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.settings-menu-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.settings-menu-field input {
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+}
+
+.settings-menu-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.settings-menu-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.settings-menu-btn:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.settings-menu-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-menu-btn-primary {
+  color: var(--fg);
+  border-color: var(--accent, #6ea8fe);
+}
+
+.settings-menu-divider {
+  height: 1px;
+  margin: 8px 0;
+  background: var(--border);
+}
+
+.statusbar-git {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .statusbar .right {
   margin-left: auto;
 }

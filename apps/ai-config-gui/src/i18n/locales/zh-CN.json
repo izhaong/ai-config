@@ -12,6 +12,43 @@
   "settings": {
     "title": "设置"
   },
+  "git": {
+    "settings": {
+      "title": "Git 同步 (~/.ai-config)",
+      "assetRoot": "目录: {{path}}",
+      "remoteUrl": "远程仓库 URL",
+      "remotePlaceholder": "https://gitea.example.com/user/ai-config.git",
+      "branch": "分支",
+      "localHint": "留空远程 URL 则仅使用本地 Git 存储；配置后可在多台设备间 push/pull。",
+      "save": "保存配置",
+      "sync": "同步",
+      "pull": "拉取",
+      "push": "推送",
+      "remoteRequired": "请先配置远程仓库"
+    },
+    "status": {
+      "loading": "检查中…",
+      "unavailable": "未安装 Git",
+      "notRepo": "未初始化",
+      "localOnly": "仅本地",
+      "dirty": "{{count}} 处未提交",
+      "ahead": "领先 {{count}}",
+      "behind": "落后 {{count}}",
+      "clean": "已同步"
+    },
+    "toast": {
+      "gitUnavailable": "未检测到 Git，请安装后重启应用",
+      "initializedLocal": "已为 ~/.ai-config 初始化本地 Git 仓库，可在设置中配置远程同步",
+      "initializedWithRemote": "Git 仓库已就绪，远程配置已应用",
+      "bootstrapFailed": "Git 检查失败: {{error}}",
+      "configSavedRemote": "远程配置已保存",
+      "configSavedLocal": "已切换为仅本地 Git 模式",
+      "configSaveFailed": "保存 Git 配置失败: {{error}}",
+      "syncFailed": "同步失败: {{error}}",
+      "pullFailed": "拉取失败: {{error}}",
+      "pushFailed": "推送失败: {{error}}"
+    }
+  },
   "nav": {
     "projects": "项目",
     "assets": "资产",

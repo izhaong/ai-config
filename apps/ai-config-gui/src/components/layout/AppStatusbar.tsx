@@ -11,6 +11,20 @@ interface AppStatusbarProps {
   loading?: boolean;
   busy?: boolean;
   onRefresh?: () => void;
+  gitStatusLabel?: string;
+  gitSettings: {
+    assetRoot: string;
+    remoteDraft: string;
+    branchDraft: string;
+    onRemoteChange: (value: string) => void;
+    onBranchChange: (value: string) => void;
+    onSaveGitConfig: () => void;
+    onGitSync: () => void;
+    onGitPull: () => void;
+    onGitPush: () => void;
+    gitBusy: boolean;
+    hasRemote: boolean;
+  };
 }
 
 export function AppStatusbar({
@@ -20,6 +34,8 @@ export function AppStatusbar({
   loading = false,
   busy = false,
   onRefresh,
+  gitStatusLabel,
+  gitSettings,
 }: AppStatusbarProps) {
   const { t } = useTranslation();
 
@@ -48,6 +64,11 @@ export function AppStatusbar({
       <span className="statusbar-stat">
         {t("statusbar.broken", { count: 0 })}
       </span>
+      {gitStatusLabel ? (
+        <span className="statusbar-stat statusbar-git" title={gitSettings.assetRoot}>
+          git: {gitStatusLabel}
+        </span>
+      ) : null}
 
       <div className="statusbar-right">
         {onRefresh ? (
@@ -64,7 +85,20 @@ export function AppStatusbar({
             <RefreshCw size={14} className={loading ? "spin" : undefined} />
           </button>
         ) : null}
-        <SettingsMenu />
+        <SettingsMenu
+          assetRoot={gitSettings.assetRoot}
+          remoteDraft={gitSettings.remoteDraft}
+          branchDraft={gitSettings.branchDraft}
+          onRemoteChange={gitSettings.onRemoteChange}
+          onBranchChange={gitSettings.onBranchChange}
+          onSaveGitConfig={gitSettings.onSaveGitConfig}
+          onGitSync={gitSettings.onGitSync}
+          onGitPull={gitSettings.onGitPull}
+          onGitPush={gitSettings.onGitPush}
+          gitBusy={gitSettings.gitBusy}
+          gitStatusLabel={gitStatusLabel}
+          hasRemote={gitSettings.hasRemote}
+        />
       </div>
     </footer>
   );

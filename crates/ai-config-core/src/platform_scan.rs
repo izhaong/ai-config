@@ -175,8 +175,7 @@ fn scan_platform_raw(
 
 fn is_noise_entry_name(name: &str) -> bool {
     name.starts_with('.')
-        || name.contains(".bak-")
-        || name.ends_with(".bak")
+        || crate::link::is_legacy_bak_entry_name(name)
         || name.ends_with(".orig")
         || name.ends_with('~')
 }

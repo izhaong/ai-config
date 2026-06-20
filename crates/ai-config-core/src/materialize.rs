@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -149,13 +148,12 @@ pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
         match check(dest, &canonical) {
             DeployHealth::Linked { .. } if has_copy_marker(dest) => return Ok(()),
             DeployHealth::Linked { .. } => {
-                // 无标记但 check 认为已链接（不应出现）→ 备份后重建
-                backup_dest(dest)?;
+                link::remove_dest_path(dest)?;
             }
-            DeployHealth::Broken => backup_dest(dest)?,
+            DeployHealth::Broken => link::remove_dest_path(dest)?,
             DeployHealth::Unlinked => {
                 if dest.exists() {
-                    backup_dest(dest)?;
+                    link::remove_dest_path(dest)?;
                 }
             }
         }
@@ -379,25 +377,6 @@ fn files_equal(a: &Utf8Path, b: &Utf8Path) -> bool {
     }
 }
 
-fn backup_dest(dest: &Utf8Path) -> Result<(), CoreError> {
-    let ts = unix_ts();
-    let bak = Utf8PathBuf::from(format!("{dest}.bak-{ts}"));
-    if bak.exists() {
-        return Err(CoreError::LinkFailed {
-            src: String::new(),
-            dest: dest.to_string(),
-            reason: format!("备份路径已存在: {bak}"),
-            hint: "稍后重试".to_string(),
-        });
-    }
-    fs::rename(dest.as_std_path(), bak.as_std_path()).map_err(|e| CoreError::LinkFailed {
-        src: String::new(),
-        dest: dest.to_string(),
-        reason: format!("无法备份旧目标 {dest} → {bak}: {e}"),
-        hint: "检查目录权限后重试".to_string(),
-    })
-}
-
 fn copy_dir_materialized(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
     fs::create_dir_all(dest.as_std_path()).map_err(CoreError::Io)?;
     for entry in WalkDir::new(src.as_std_path()).follow_links(true) {
@@ -424,13 +403,6 @@ fn copy_dir_materialized(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreErro
         }
     }
     Ok(())
-}
-
-fn unix_ts() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

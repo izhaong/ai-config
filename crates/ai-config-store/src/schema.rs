@@ -32,4 +32,11 @@ pub const DDL: &[&str] = &[
         registered_at TEXT NOT NULL
     )
     "#,
+    // Git 同步与 GUI 偏好（KV）
+    r#"
+    CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    "#,
 ];

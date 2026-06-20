@@ -1,9 +1,9 @@
-//! 链接抽象:symlink / junction / hardlink 三态 + 幂等 + 备份覆盖。
+//! 链接抽象:symlink / junction / hardlink 三态 + 幂等 + 直接覆盖。
 //!
 //! 设计要点(PRD §8.1 / §10 A-3 / ARCHITECTURE §10):
 //! - 三态:`Symlink` / `Junction`(Windows fallback,避免开发者模式)/ `Hardlink`
 //! - 幂等:目标已存在且指向同一源 → noop;跑 N 遍与跑 1 遍结果一致
-//! - 备份覆盖:目标已存在且非链接 / 指向不同源 → 备份为 `dest.bak-<unix_ts>` 后重建
+//! - 覆盖:目标已存在且非同一链接 → 直接删除后重建（版本历史由 `~/.ai-config` Git 承担）
 //! - 收回:`unlink` 只删本工具创建的链接,非本工具的拒
 //! - 健康检查:`check` 返回四态(Linked / Broken / WrongSource / WrongType)
 //!
@@ -21,7 +21,6 @@
 use std::fs;
 use std::io;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
@@ -69,8 +68,13 @@ pub enum LinkHealth {
         actual: Utf8PathBuf,
         expected: Utf8PathBuf,
     },
-    /// 是普通文件 / 目录,不是链接(需要"备份覆盖"策略)
+    /// 是普通文件 / 目录,不是链接(需要覆盖后重建)
     WrongType { actual_kind: &'static str },
+}
+
+/// 是否为历史 `.bak-<ts>` 条目名（扫描列表时忽略；不再自动删除）。
+pub fn is_legacy_bak_entry_name(name: &str) -> bool {
+    name.contains(".bak-") || name.ends_with(".bak")
 }
 
 // ── 公开 API ─────────────────────────────────────────────────────
@@ -80,8 +84,8 @@ pub enum LinkHealth {
 /// 语义:
 /// 1. `dest` 不存在 → 直接创建
 /// 2. `dest` 已是链接且 `read_link` 指向 `src` → noop(返回 Ok)
-/// 3. `dest` 已是链接但 `read_link` != `src` → 备份原链接为 `dest.bak-<ts>` 后重建
-/// 4. `dest` 是普通文件 / 目录(非链接)→ 备份为 `dest.bak-<ts>` 后重建
+/// 3. `dest` 已是链接但 `read_link` != `src` → 删除旧链接后重建
+/// 4. `dest` 是普通文件 / 目录(非链接)→ 删除后重建
 /// 5. 权限不足 → `CoreError::PermissionDenied`
 ///
 /// 注:`src` 是相对 / 绝对路径都会原样写入链接(不强制规范化);调用方应
@@ -112,19 +116,15 @@ pub fn link(src: &Utf8Path, dest: &Utf8Path, kind: LinkKind) -> Result<(), CoreE
                             // 指向同一源 → noop
                             return Ok(());
                         }
-                        // 指向不同源 → 备份后重建
-                        let target_str: &str = existing_utf8
-                            .as_deref()
-                            .map(Utf8Path::as_str)
-                            .unwrap_or("<non-utf8>");
-                        backup_then_recreate(src, dest, kind, target_str)
+                        // 指向不同源 → 删除后重建
+                        replace_then_recreate(src, dest, kind)
                     }
                     Err(e) if is_permission_denied(&e) => Err(permission_denied_err(dest, &e)),
                     Err(e) => Err(io_to_link_failed(src, dest, &e)),
                 }
             } else {
-                // 3. 是普通文件 / 目录 → 备份后重建
-                backup_then_recreate(src, dest, kind, "<non-link>")
+                // 3. 是普通文件 / 目录 → 删除后重建
+                replace_then_recreate(src, dest, kind)
             }
         }
     }
@@ -295,144 +295,60 @@ fn hardlink_kind(src: &Utf8Path, dest: &Utf8Path) -> io::Result<()> {
     std::fs::hard_link(src.as_std_path(), dest.as_std_path())
 }
 
-// ── 内部:备份 + 重建 ─────────────────────────────────────────────
+// ── 内部:删除 + 重建 ─────────────────────────────────────────────
 
-fn backup_then_recreate(
-    src: &Utf8Path,
-    dest: &Utf8Path,
-    kind: LinkKind,
-    existing_target: &str,
-) -> Result<(), CoreError> {
-    let ts = unix_ts();
-    let mut bak = dest.as_str().to_owned();
-    bak.push_str(&format!(".bak-{ts}"));
-
-    // 极端情况:同一秒内被并发再次 backup → 追加 nanoseconds 后缀。
-    let bak_path = loop {
-        let candidate = Utf8PathBuf::from(&bak);
-        if !candidate.exists() {
-            break candidate;
-        }
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.subsec_nanos())
-            .unwrap_or(0);
-        bak = format!("{dest}.bak-{ts}-{nanos}");
-    };
-
-    // rename 优先(junction / symlink 本体 rename 是廉价操作,不走数据拷贝)。
-    if let Err(e) = fs::rename(dest, &bak_path) {
-        // rename 跨 mount point / Windows 跨盘会失败 → 降级为 copy + remove。
-        // 链接本身的"copy + remove"在 symlink 上:先 read_link 拿 target,再删除
-        // symlink,最后重建 → 等价于"无操作 + 后续 create_link"。
-        // 普通文件 / 目录才需要真拷贝。
-        let meta = fs::symlink_metadata(dest).map_err(|e2| io_to_link_failed(src, dest, &e2))?;
-        if meta.file_type().is_symlink() {
-            // symlink 自身:rename 失败,降级为 `fs::remove_file`。
-            fs::remove_file(dest).map_err(|e2| {
-                CoreError::LinkFailed {
-                    src: src.to_string(),
-                    dest: dest.to_string(),
-                    reason: format!(
-                        "旧链接(指向 {existing_target})无法备份为 {bak_path}: rename 失败({e});remove_file 失败: {e2}"
-                    ),
-                    hint: "检查 dest 所在目录权限,或手动 `rm` 旧链接后重试".to_string(),
-                }
-            })?;
-            // 备份文件以原链接 target 名写一份"占位说明",便于人工恢复。
-            write_backup_stub(&bak_path, existing_target);
-        } else {
-            // 普通文件 / 目录:copy 整个内容到 bak。
-            if meta.is_dir() {
-                copy_dir_recursive(dest.as_std_path(), bak_path.as_std_path()).map_err(|e2| {
-                    CoreError::LinkFailed {
-                        src: src.to_string(),
-                        dest: dest.to_string(),
-                        reason: format!(
-                            "旧目录无法备份为 {bak_path}: rename 失败({e});copy 失败: {e2}"
-                        ),
-                        hint: "检查 dest 所在目录权限 / 磁盘空间".to_string(),
-                    }
-                })?;
-            } else {
-                fs::copy(dest.as_std_path(), bak_path.as_std_path()).map_err(|e2| {
-                    CoreError::LinkFailed {
-                        src: src.to_string(),
-                        dest: dest.to_string(),
-                        reason: format!(
-                            "旧文件无法备份为 {bak_path}: rename 失败({e});copy 失败: {e2}"
-                        ),
-                        hint: "检查 dest 所在目录权限 / 磁盘空间".to_string(),
-                    }
-                })?;
-            }
-            fs::remove_file(dest)
-                .or_else(|_| fs::remove_dir(dest))
-                .map_err(|e2| CoreError::LinkFailed {
-                    src: src.to_string(),
-                    dest: dest.to_string(),
-                    reason: format!("备份成功但无法删除原 dest: {e2}"),
-                    hint: "手工 `rm` 目标后重试".to_string(),
-                })?;
-        }
-    }
-
-    // 重建
+fn replace_then_recreate(src: &Utf8Path, dest: &Utf8Path, kind: LinkKind) -> Result<(), CoreError> {
+    remove_dest_path(dest)?;
     create_link(src, dest, kind)
 }
 
-fn write_backup_stub(bak_path: &Utf8Path, old_target: &str) {
-    // 链接的备份没有"内容",写一个 1-byte stub,避免空文件引起 git/sync 困惑。
-    // 用 create_new 防止覆盖已有 bak(虽然在循环里已检查过)。
-    use std::io::Write;
-    if let Ok(mut f) = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(bak_path.as_std_path())
-    {
-        let _ = f.write_all(old_target.as_bytes());
-    }
-}
-
-fn copy_dir_recursive(src: &Path, dest: &Path) -> io::Result<()> {
-    fs::create_dir_all(dest)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let from = entry.path();
-        let to = dest.join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_recursive(&from, &to)?;
-        } else if ty.is_symlink() {
-            let target = fs::read_link(&from)?;
-            #[cfg(unix)]
-            {
-                std::os::unix::fs::symlink(&target, &to)?;
-            }
-            #[cfg(windows)]
-            {
-                let meta = fs::metadata(&from)?;
-                if meta.is_dir() {
-                    std::os::windows::fs::symlink_dir(&target, &to)?;
-                } else {
-                    std::os::windows::fs::symlink_file(&target, &to)?;
-                }
-            }
-        } else {
-            fs::copy(&from, &to)?;
+/// 删除 deploy / link 目标（symlink、文件或目录）。
+pub fn remove_dest_path(dest: &Utf8Path) -> Result<(), CoreError> {
+    let meta = match fs::symlink_metadata(dest) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if is_permission_denied(&e) => return Err(permission_denied_err(dest, &e)),
+        Err(e) => {
+            return Err(CoreError::LinkFailed {
+                src: String::new(),
+                dest: dest.to_string(),
+                reason: format!("读取 dest 元数据失败: {e}"),
+                hint: "检查 dest 路径权限".to_string(),
+            })
         }
+        Ok(m) => m,
+    };
+
+    if meta.file_type().is_symlink() {
+        fs::remove_file(dest).or_else(|_| fs::remove_dir(dest)).map_err(|e| {
+            CoreError::LinkFailed {
+                src: String::new(),
+                dest: dest.to_string(),
+                reason: format!("无法删除旧链接: {e}"),
+                hint: "检查 dest 所在目录权限,或手动 `rm` 后重试".to_string(),
+            }
+        })?;
+        return Ok(());
+    }
+
+    if meta.is_dir() {
+        fs::remove_dir_all(dest).map_err(|e| CoreError::LinkFailed {
+            src: String::new(),
+            dest: dest.to_string(),
+            reason: format!("无法删除旧目录: {e}"),
+            hint: "检查 dest 所在目录权限 / 是否被占用".to_string(),
+        })?;
+    } else {
+        fs::remove_file(dest).map_err(|e| CoreError::LinkFailed {
+            src: String::new(),
+            dest: dest.to_string(),
+            reason: format!("无法删除旧文件: {e}"),
+            hint: "检查 dest 所在目录权限".to_string(),
+        })?;
     }
     Ok(())
 }
 
 // ── 内部:错误 / 工具 ─────────────────────────────────────────────
-
-fn unix_ts() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
 
 fn path_to_utf8(p: &Path) -> Option<Utf8PathBuf> {
     Utf8Path::from_path(p).map(|s| s.to_path_buf())
@@ -535,18 +451,15 @@ mod tests {
         }
     }
 
-    // ── 2. 备份覆盖:dest 是普通文件时,旧文件改名 bak ─────────
+    // ── 2. 覆盖:dest 是普通文件时,直接替换为 symlink ─────────
 
     #[test]
-    fn link_backs_up_existing_regular_file() {
+    fn link_replaces_existing_regular_file_without_bak() {
         let e = env();
-        // 先在 dest 写一个普通文件(模拟用户手写内容)
         fs::write(&e.dest, b"user hand-written content").unwrap();
 
-        // 第一次 link → 应备份
         link(&e.src, &e.dest, LinkKind::auto()).expect("link ok");
 
-        // dest 应是 symlink,指向 src
         let dest_meta = fs::symlink_metadata(&e.dest).unwrap();
         assert!(dest_meta.file_type().is_symlink(), "dest 应是 symlink");
         assert_eq!(
@@ -554,53 +467,31 @@ mod tests {
             Some(e.src.as_path())
         );
 
-        // 应存在 .bak-* 文件,内容是用户手写内容
-        let mut found_bak: Option<Utf8PathBuf> = None;
         for entry in fs::read_dir(e._tmp.path()).unwrap() {
-            let entry = entry.unwrap();
-            let name = entry.file_name();
-            let s = name.to_string_lossy().into_owned();
-            if s.starts_with("dest.txt.bak-") {
-                found_bak = Some(Utf8PathBuf::from_path_buf(entry.path()).unwrap());
-            }
+            let s = entry.unwrap().file_name().to_string_lossy().into_owned();
+            assert!(!s.contains(".bak-"), "不应产生 .bak-* 备份: {s}");
         }
-        let bak = found_bak.expect("必须有 dest.txt.bak-<ts>");
-        let bak_content = fs::read(&bak).unwrap();
-        assert_eq!(bak_content, b"user hand-written content");
     }
 
     #[test]
-    fn link_backs_up_existing_symlink_to_different_source() {
+    fn link_replaces_existing_symlink_to_different_source_without_bak() {
         let e = env();
-        // 先建一个 symlink,指向"别的源"
         let other_src = Utf8PathBuf::from_path_buf(e._tmp.path().join("other.txt")).unwrap();
         fs::write(&other_src, b"other").unwrap();
         std::os::unix::fs::symlink(other_src.as_std_path(), e.dest.as_std_path()).unwrap();
 
-        // link 应当:dest 指向其它 → 备份后重建
-        #[cfg(not(unix))]
-        {
-            // 非 unix 平台 hardlink/backup 的语义不同,跳过严格检查。
-            let _ = (other_src, fs::symlink_metadata(&e.dest).unwrap());
-        }
         #[cfg(unix)]
         {
             link(&e.src, &e.dest, LinkKind::auto()).expect("link ok");
 
-            // dest 现在指向 e.src
             assert_eq!(
                 path_to_utf8(&fs::read_link(&e.dest).unwrap()).as_deref(),
                 Some(e.src.as_path())
             );
-            // 存在 dest.txt.bak-*
-            let mut has_bak = false;
             for entry in fs::read_dir(e._tmp.path()).unwrap() {
                 let s = entry.unwrap().file_name().to_string_lossy().into_owned();
-                if s.starts_with("dest.txt.bak-") {
-                    has_bak = true;
-                }
+                assert!(!s.contains(".bak-"), "不应产生 .bak-* 备份: {s}");
             }
-            assert!(has_bak, "原 symlink 应当被备份为 dest.txt.bak-*");
         }
     }
 

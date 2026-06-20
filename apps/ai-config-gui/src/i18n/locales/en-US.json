@@ -12,6 +12,43 @@
   "settings": {
     "title": "Settings"
   },
+  "git": {
+    "settings": {
+      "title": "Git sync (~/.ai-config)",
+      "assetRoot": "Path: {{path}}",
+      "remoteUrl": "Remote URL",
+      "remotePlaceholder": "https://gitea.example.com/user/ai-config.git",
+      "branch": "Branch",
+      "localHint": "Leave remote empty for local-only Git. Configure a remote to push/pull across machines.",
+      "save": "Save",
+      "sync": "Sync",
+      "pull": "Pull",
+      "push": "Push",
+      "remoteRequired": "Configure a remote first"
+    },
+    "status": {
+      "loading": "Checking…",
+      "unavailable": "Git not installed",
+      "notRepo": "Not initialized",
+      "localOnly": "Local only",
+      "dirty": "{{count}} uncommitted",
+      "ahead": "{{count}} ahead",
+      "behind": "{{count}} behind",
+      "clean": "Up to date"
+    },
+    "toast": {
+      "gitUnavailable": "Git not found. Install Git and restart the app.",
+      "initializedLocal": "Initialized local Git repo for ~/.ai-config. Add a remote in Settings to sync.",
+      "initializedWithRemote": "Git repo ready; remote applied.",
+      "bootstrapFailed": "Git bootstrap failed: {{error}}",
+      "configSavedRemote": "Remote settings saved",
+      "configSavedLocal": "Switched to local-only Git mode",
+      "configSaveFailed": "Failed to save Git settings: {{error}}",
+      "syncFailed": "Sync failed: {{error}}",
+      "pullFailed": "Pull failed: {{error}}",
+      "pushFailed": "Push failed: {{error}}"
+    }
+  },
   "nav": {
     "projects": "Projects",
     "assets": "Assets",

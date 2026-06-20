@@ -37,6 +37,7 @@ use tokio::sync::RwLock;
 use ai_config_core::asset_scope;
 use ai_config_core::doctor;
 use ai_config_core::error::CoreError;
+use ai_config_core::git::{self, GitEnsureOutcome, GitRepoStatus, GitSyncConfig, GitSyncOutcome};
 use ai_config_core::materialize;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{AssetKind, PlatformId, Project};
@@ -62,6 +63,8 @@ pub struct AppState {
     pub default_root: Arc<RwLock<Utf8PathBuf>>,
     /// 资产目录文件监听句柄(项目增删时重启)
     pub watcher: Mutex<Option<WatcherHandle>>,
+    /// 启动时 Git 初始化结果（供前端提示配置远程）
+    pub git_bootstrap: Arc<RwLock<Option<GitEnsureOutcome>>>,
 }
 
 impl AppState {
@@ -69,12 +72,40 @@ impl AppState {
         let store = Store::open().map_err(|e| format!("打开 store 失败: {e}"))?;
         let default_root = paths::discover_global_asset_root();
         tracing::info!("ai-config 资产根: {default_root}");
+
+        let git_outcome = bootstrap_git_repo(&default_root, &store);
+
         Ok(Self {
             store: Arc::new(store),
             default_root: Arc::new(RwLock::new(default_root)),
             watcher: Mutex::new(None),
+            git_bootstrap: Arc::new(RwLock::new(Some(git_outcome))),
         })
     }
+}
+
+/// 启动时确保 `~/.ai-config` 为 Git 仓库，并应用 store 中的远程配置。
+fn bootstrap_git_repo(root: &Utf8Path, store: &Store) -> GitEnsureOutcome {
+    let config = store.settings().git_config().unwrap_or_default();
+    let branch = config.branch.as_str();
+    let outcome = match git::ensure_repo(root, branch) {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("Git 仓库初始化失败: {e}");
+            return GitEnsureOutcome {
+                git_available: git::git_available(),
+                was_repo: false,
+                just_initialized: false,
+                initial_commit: false,
+            };
+        }
+    };
+    if let Some(url) = config.remote_url.as_deref() {
+        if let Err(e) = git::apply_remote(root, Some(url)) {
+            tracing::warn!("应用 Git 远程失败: {e}");
+        }
+    }
+    outcome
 }
 
 // ── 返回给前端的结构 ──────────────────────────────────────────────
@@ -995,6 +1026,149 @@ fn core_err_to_string(e: CoreError) -> String {
     e.to_string()
 }
 
+// ── Tauri command: ~/.ai-config Git 同步 ─────────────────────────
+
+#[derive(Debug, Serialize)]
+struct GitBootstrapResponse {
+    asset_root: String,
+    outcome: GitEnsureOutcome,
+    status: GitRepoStatus,
+    config: GitSyncConfig,
+}
+
+/// 启动时 Git 检查：确保仓库存在并返回状态（前端挂载时调用）。
+#[tauri::command]
+async fn cmd_git_bootstrap(state: State<'_, AppState>) -> Result<GitBootstrapResponse, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    let bootstrap = state.git_bootstrap.read().await.clone();
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        let just = bootstrap
+            .as_ref()
+            .map(|o| o.just_initialized)
+            .unwrap_or(false);
+        let status = git::repo_status(&root, just);
+        Ok(GitBootstrapResponse {
+            asset_root: git::asset_root_display(&root),
+            outcome: bootstrap.unwrap_or(GitEnsureOutcome {
+                git_available: git::git_available(),
+                was_repo: status.is_repo,
+                just_initialized: false,
+                initial_commit: false,
+            }),
+            status,
+            config,
+        })
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_status(state: State<'_, AppState>) -> Result<GitRepoStatus, String> {
+    let root = state.default_root.read().await.clone();
+    let bootstrap = state.git_bootstrap.read().await.clone();
+    tokio::task::spawn_blocking(move || {
+        let just = bootstrap
+            .as_ref()
+            .map(|o| o.just_initialized)
+            .unwrap_or(false);
+        Ok(git::repo_status(&root, just))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_config_get(state: State<'_, AppState>) -> Result<GitSyncConfig, String> {
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || store.settings().git_config().map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_config_set(
+    state: State<'_, AppState>,
+    remote_url: Option<String>,
+    branch: Option<String>,
+) -> Result<GitSyncConfig, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let mut config = store.settings().git_config().map_err(|e| e.to_string())?;
+        if remote_url.is_some() {
+            config.remote_url = remote_url.filter(|s| !s.trim().is_empty());
+        }
+        if let Some(b) = branch.filter(|s| !s.trim().is_empty()) {
+            config.branch = b;
+        }
+        store
+            .settings()
+            .set_git_config(&config)
+            .map_err(|e| e.to_string())?;
+        git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
+        Ok(config)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_sync(state: State<'_, AppState>) -> Result<GitSyncOutcome, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        git::sync_repo(&root, &config, "chore: ai-config 同步").map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_pull(state: State<'_, AppState>) -> Result<String, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+            return Err("未配置远程仓库".to_string());
+        }
+        git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
+        let pulled = git::pull(&root, &config.branch).map_err(|e| e.to_string())?;
+        Ok(if pulled {
+            "已从远程拉取".to_string()
+        } else {
+            "拉取完成（无变更）".to_string()
+        })
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_push(state: State<'_, AppState>) -> Result<String, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+            return Err("未配置远程仓库".to_string());
+        }
+        git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
+        let pushed = git::push(&root, &config.branch, true).map_err(|e| e.to_string())?;
+        Ok(if pushed {
+            "已推送到远程".to_string()
+        } else {
+            "推送完成".to_string()
+        })
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
 // ── Tauri 主入口 ──────────────────────────────────────────────────
 
 /// Tauri 主入口。
@@ -1066,6 +1240,13 @@ pub fn run() {
             cmd_reveal_path,
             cmd_read_platform_asset,
             cmd_assets_transfer,
+            cmd_git_bootstrap,
+            cmd_git_status,
+            cmd_git_config_get,
+            cmd_git_config_set,
+            cmd_git_sync,
+            cmd_git_pull,
+            cmd_git_push,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ai-config GUI");

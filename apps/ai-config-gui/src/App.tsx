@@ -16,6 +16,7 @@ import { useAssetBrowser } from "./hooks/useAssetBrowser";
 import { useAssetDrawer } from "./hooks/useAssetDrawer";
 import { useAssetOperations } from "./hooks/useAssetOperations";
 import { useConfirm } from "./hooks/useConfirm";
+import { useGitSync } from "./hooks/useGitSync";
 import { useProjects } from "./hooks/useProjects";
 import { useToast } from "./hooks/useToast";
 import type { PlatformAssetList } from "./types";
@@ -48,6 +49,8 @@ export function App() {
     activeProject,
     onActiveProjectChange: setActiveProject,
   });
+
+  const gitSync = useGitSync({ showToast });
 
   const browser = useAssetBrowser({
     showToast,
@@ -168,6 +171,20 @@ export function App() {
         loading={browser.loading}
         busy={busy}
         onRefresh={() => void browser.refreshView(true)}
+        gitStatusLabel={gitSync.statusLabel}
+        gitSettings={{
+          assetRoot: gitSync.assetRoot,
+          remoteDraft: gitSync.remoteDraft,
+          branchDraft: gitSync.branchDraft,
+          onRemoteChange: gitSync.setRemoteDraft,
+          onBranchChange: gitSync.setBranchDraft,
+          onSaveGitConfig: () => void gitSync.saveConfig(),
+          onGitSync: () => void gitSync.sync(),
+          onGitPull: () => void gitSync.pull(),
+          onGitPush: () => void gitSync.push(),
+          gitBusy: gitSync.busy,
+          hasRemote: gitSync.hasRemote,
+        }}
       />
 
       <Toast toast={toast} onDismiss={dismissToast} />

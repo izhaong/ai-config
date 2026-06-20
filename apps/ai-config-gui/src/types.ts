@@ -45,6 +45,45 @@ export interface DoctorSummary {
   exit_code: number;
 }
 
+export interface GitEnsureOutcome {
+  git_available: boolean;
+  was_repo: boolean;
+  just_initialized: boolean;
+  initial_commit: boolean;
+}
+
+export interface GitRepoStatus {
+  git_available: boolean;
+  is_repo: boolean;
+  just_initialized: boolean;
+  branch?: string | null;
+  dirty: boolean;
+  dirty_count: number;
+  has_remote: boolean;
+  remote_url?: string | null;
+  ahead: number;
+  behind: number;
+}
+
+export interface GitSyncConfig {
+  remote_url?: string | null;
+  branch: string;
+}
+
+export interface GitSyncOutcome {
+  committed: boolean;
+  pulled: boolean;
+  pushed: boolean;
+  message: string;
+}
+
+export interface GitBootstrapResponse {
+  asset_root: string;
+  outcome: GitEnsureOutcome;
+  status: GitRepoStatus;
+  config: GitSyncConfig;
+}
+
 export interface AssetDetail {
   name: string;
   description: string;
