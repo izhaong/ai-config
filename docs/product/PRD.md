@@ -11,7 +11,7 @@
 
 **写一套（skills / rules / mcp / agents）→ 同步到多个 AI 编码平台。**
 
-- **写一套**：本工具的资产 = 4 种 — 全局在 `global-config/{skills,rules,mcp,agents}/`；项目覆盖在 `<project>/.ai-config/` 下同结构
+- **写一套**：本工具的资产 = 5 种 — 全局在 `~/.ai-config/{skills,rules,commands,mcp.json,agents}/`；项目覆盖在 `<project>/.ai-config/` 下同结构
 - **同步到多个平台**：Cursor / Codex / Claude Code / Hermes
 - **分层**：全局（user-global，`~/.ai-config/`）+ 项目（per-project，`<repo>/.ai-config/` 与全局**同目录结构**）
 

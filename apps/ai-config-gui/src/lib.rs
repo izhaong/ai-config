@@ -25,6 +25,8 @@
 //! `AppState` 持有 `Arc<Store>`(SQLite 持久化)和 `default_root: Arc<RwLock<Utf8PathBuf>>`(资产根)。
 //! 同步阻塞 IO 走 `tokio::task::spawn_blocking` 包裹,避免锁住 Tauri runtime。
 
+mod command_bridge;
+
 use std::sync::{Arc, Mutex};
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -32,8 +34,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
+use ai_config_core::asset_scope;
+use ai_config_core::doctor;
 use ai_config_core::error::CoreError;
-use ai_config_core::hermes_config;
+use ai_config_core::git::{self, GitEnsureOutcome, GitRepoStatus, GitSyncConfig, GitSyncOutcome};
 use ai_config_core::materialize;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{AssetKind, PlatformId, Project};
@@ -46,6 +50,9 @@ use ai_config_core::template::McpSyncState;
 use ai_config_store::Store;
 use ai_config_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
 
+use ai_config_core::asset_ops::AssetFileDetail;
+use ai_config_core::asset_ops::parse_skill_meta;
+
 // ── 共享状态 ──────────────────────────────────────────────────────
 
 /// Tauri 主进程长驻共享状态。
@@ -56,6 +63,8 @@ pub struct AppState {
     pub default_root: Arc<RwLock<Utf8PathBuf>>,
     /// 资产目录文件监听句柄(项目增删时重启)
     pub watcher: Mutex<Option<WatcherHandle>>,
+    /// 启动时 Git 初始化结果（供前端提示配置远程）
+    pub git_bootstrap: Arc<RwLock<Option<GitEnsureOutcome>>>,
 }
 
 impl AppState {
@@ -63,12 +72,40 @@ impl AppState {
         let store = Store::open().map_err(|e| format!("打开 store 失败: {e}"))?;
         let default_root = paths::discover_global_asset_root();
         tracing::info!("ai-config 资产根: {default_root}");
+
+        let git_outcome = bootstrap_git_repo(&default_root, &store);
+
         Ok(Self {
             store: Arc::new(store),
             default_root: Arc::new(RwLock::new(default_root)),
             watcher: Mutex::new(None),
+            git_bootstrap: Arc::new(RwLock::new(Some(git_outcome))),
         })
     }
+}
+
+/// 启动时确保 `~/.ai-config` 为 Git 仓库，并应用 store 中的远程配置。
+fn bootstrap_git_repo(root: &Utf8Path, store: &Store) -> GitEnsureOutcome {
+    let config = store.settings().git_config().unwrap_or_default();
+    let branch = config.branch.as_str();
+    let outcome = match git::ensure_repo(root, branch) {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("Git 仓库初始化失败: {e}");
+            return GitEnsureOutcome {
+                git_available: git::git_available(),
+                was_repo: false,
+                just_initialized: false,
+                initial_commit: false,
+            };
+        }
+    };
+    if let Some(url) = config.remote_url.as_deref() {
+        if let Err(e) = git::apply_remote(root, Some(url)) {
+            tracing::warn!("应用 Git 远程失败: {e}");
+        }
+    }
+    outcome
 }
 
 // ── 返回给前端的结构 ──────────────────────────────────────────────
@@ -129,86 +166,35 @@ struct PlatformIssue {
 
 // ── Tauri command:健康检查(占位,W10 接真值) ─────────────────────
 
-/// W9 保留 W8 占位:不接 `lifecycle::run_doctor` 共享逻辑(46KB,refactor 估 1h,
-/// 超出 W9 预算)。W10 第一项实装。
+/// 健康检查（与 CLI `ai-config doctor` 同源）。
 #[tauri::command]
 async fn cmd_doctor(state: State<'_, AppState>) -> Result<DoctorSummary, String> {
-    let _ = state; // 暂未消费
+    let default_root = state.default_root.read().await.clone();
+    let report = tokio::task::spawn_blocking(move || doctor::compute_report(&default_root))
+        .await
+        .map_err(|e| format!("spawn_blocking join: {e}"))?
+        .map_err(|e| e.to_string())?;
     Ok(DoctorSummary {
-        broken: 0,
-        wrong_source: 0,
-        wrong_type: 0,
-        missing_secrets: vec![],
-        unregistered_projects: vec![],
-        platform_capability_issues: sync_capability_issues(),
-        exit_code: 0,
+        broken: report.broken as u64,
+        wrong_source: report.wrong_source as u64,
+        wrong_type: report.wrong_type as u64,
+        missing_secrets: report.missing_secrets.into_iter().map(|m| m.key).collect(),
+        unregistered_projects: report.unregistered_projects,
+        platform_capability_issues: report
+            .platform_capability_issues
+            .into_iter()
+            .map(|i| PlatformIssue {
+                platform: parse_plat(&i.platform).unwrap_or(PlatformId::Cursor),
+                kind: i.kind,
+                reason: i.reason,
+            })
+            .collect(),
+        exit_code: report.exit_code,
     })
 }
 
-fn sync_capability_issues() -> Vec<PlatformIssue> {
-    let mut out = vec![];
-    for plat in [
-        PlatformId::Cursor,
-        PlatformId::Codex,
-        PlatformId::Claude,
-        PlatformId::Hermes,
-    ] {
-        for asset in [
-            AssetKind::Skill,
-            AssetKind::Rule,
-            AssetKind::Mcp,
-            AssetKind::Agent,
-        ] {
-            if platform_supports(plat, asset, &paths::global_deploy_base()) {
-                continue;
-            }
-            let reason = capability_skip_reason(plat, asset);
-            out.push(PlatformIssue {
-                platform: plat,
-                kind: kind_str(asset).to_string(),
-                reason,
-            });
-        }
-    }
-    out
-}
-
-fn capability_skip_reason(plat: PlatformId, kind: AssetKind) -> String {
-    match (plat, kind) {
-        (PlatformId::Codex, AssetKind::Rule) => {
-            "Codex 通过 AGENTS.md 间接引用 rules，不支持全局 symlink 下发".into()
-        }
-        (PlatformId::Hermes, AssetKind::Rule) => {
-            "Hermes rules 仅项目级：请选已注册项目后 deploy 到 <repo>/.cursor/rules".into()
-        }
-        (PlatformId::Hermes, AssetKind::Agent) => {
-            "Hermes 无静态 agents 目录；请用项目 AGENTS.md 或 delegate_task 子代理".into()
-        }
-        _ => format!(
-            "platform `{}` 不支持 asset kind `{}`",
-            platform_label(plat),
-            kind_str(kind)
-        ),
-    }
-}
-
 fn platform_label(p: PlatformId) -> &'static str {
-    match p {
-        PlatformId::AiConfig => "aiconfig",
-        PlatformId::Cursor => "cursor",
-        PlatformId::Codex => "codex",
-        PlatformId::Claude => "claude",
-        PlatformId::Hermes => "hermes",
-    }
-}
-
-fn kind_str(k: AssetKind) -> &'static str {
-    match k {
-        AssetKind::Skill => "skill",
-        AssetKind::Rule => "rule",
-        AssetKind::Mcp => "mcp",
-        AssetKind::Agent => "agent",
-    }
+    platform::platform_label(p)
 }
 
 // ── Tauri command:资产列表(cmd_list) ─────────────────────────────
@@ -238,6 +224,11 @@ async fn cmd_list(
     for p in &scan.rules {
         if let Some(stem) = p.file_stem() {
             entries.push((AssetKind::Rule, stem.to_string(), p.clone()));
+        }
+    }
+    for p in &scan.commands {
+        if let Some(stem) = p.file_stem() {
+            entries.push((AssetKind::Command, stem.to_string(), p.clone()));
         }
     }
     if let Some(ref mcp_path) = scan.mcp_json {
@@ -350,6 +341,7 @@ async fn cmd_list_platform(
             AssetKind::Rule,
             AssetKind::Mcp,
             AssetKind::Agent,
+            AssetKind::Command,
         ],
     };
 
@@ -403,13 +395,7 @@ async fn cmd_platform_kind_paths(
 }
 
 fn parse_kind(s: &str) -> Result<AssetKind, String> {
-    match s {
-        "skill" | "Skill" => Ok(AssetKind::Skill),
-        "rule" | "Rule" => Ok(AssetKind::Rule),
-        "mcp" | "Mcp" => Ok(AssetKind::Mcp),
-        "agent" | "Agent" => Ok(AssetKind::Agent),
-        other => Err(format!("未知资产类型 `{other}`")),
-    }
+    asset_scope::parse_asset_kind(s).map_err(|e| e.to_string())
 }
 
 /// 从平台导入 skill 到 ai-config 源。
@@ -525,14 +511,15 @@ async fn cmd_mcp_import(
     Ok(format!("mcp `{name_for_msg}` 已导入到 {dest}"))
 }
 
-/// 资产文件详情(供前端详情抽屉)。
-#[derive(Debug, Serialize)]
-struct AssetFileDetail {
+/// 从平台已下发路径只读预览（无 ai-config 源时供详情抽屉使用）。
+#[tauri::command]
+async fn cmd_read_platform_asset(
+    path: String,
+    kind: String,
     name: String,
-    description: String,
-    content: String,
-    source_path: String,
-    parent_path: String,
+) -> Result<AssetFileDetail, String> {
+    let kind = parse_kind(&kind)?;
+    command_bridge::read_platform_preview(kind, path, name).await
 }
 
 /// 单条 MCP server 是否已与平台 `mcp.json` 中同名 key 一致。
@@ -590,53 +577,6 @@ fn skill_link_src(skill_md: &Utf8Path) -> Utf8PathBuf {
         .unwrap_or_else(|| skill_md.to_path_buf())
 }
 
-/// 从 SKILL.md frontmatter / 正文抽 name、description。
-fn parse_skill_meta(content: &str) -> (Option<String>, String) {
-    let mut name = None;
-    let mut description = String::new();
-    if let Some(after_first) = content.strip_prefix("---") {
-        let after_first = after_first.trim_start_matches('\n');
-        if let Some(end) = after_first.find("\n---") {
-            for line in after_first[..end].lines() {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("name:") {
-                    name = Some(rest.trim().trim_matches(['"', '\'']).to_string());
-                } else if let Some(rest) = line.strip_prefix("description:") {
-                    let d = rest.trim().trim_matches(['"', '\'']).to_string();
-                    if d == ">" || d == "|" {
-                        continue;
-                    }
-                    if !d.is_empty() {
-                        description = d.chars().take(200).collect();
-                    }
-                } else if description.is_empty() && line.starts_with('>') {
-                    description = line
-                        .trim_start_matches('>')
-                        .trim()
-                        .chars()
-                        .take(200)
-                        .collect();
-                }
-            }
-        }
-    }
-    if description.is_empty() {
-        for line in content.lines() {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("# ") {
-                description = rest
-                    .chars()
-                    .take(200)
-                    .collect::<String>()
-                    .trim()
-                    .to_string();
-                break;
-            }
-        }
-    }
-    (name, description)
-}
-
 /// 从 SKILL.md / mcp.json 等源文件抽"一句话描述"。
 ///
 /// - Skill:frontmatter `description:` 或 H1 回退
@@ -650,6 +590,10 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
             .map(|c| parse_skill_meta(&c).1)
             .unwrap_or_default(),
         AssetKind::Rule => std::fs::read_to_string(src)
+            .ok()
+            .map(|c| parse_skill_meta(&c).1)
+            .unwrap_or_default(),
+        AssetKind::Command => std::fs::read_to_string(src)
             .ok()
             .map(|c| parse_skill_meta(&c).1)
             .unwrap_or_default(),
@@ -685,513 +629,140 @@ fn compute_dest(
     asset_dest_for_at_base(plat, kind, name, src, deploy_base)
 }
 
-// ── Tauri command:4 类资产单条 deploy / retract ───────────────────
+// ── Tauri command:单条资产 deploy / retract / CRUD（core::asset_ops）────────
 
-/// skill deploy:在目标平台建 symlink(链整个目录)。
+macro_rules! asset_deploy_cmd {
+    ($fn:ident, $kind:expr) => {
+        #[tauri::command]
+        async fn $fn(
+            state: State<'_, AppState>,
+            name: String,
+            project: Option<String>,
+            to: String,
+        ) -> Result<String, String> {
+            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
+            let plat = parse_deploy_plat(&to)?;
+            command_bridge::deploy(dr, ar, db, $kind, name, plat).await
+        }
+    };
+}
+
+macro_rules! asset_retract_cmd {
+    ($fn:ident, $kind:expr) => {
+        #[tauri::command]
+        async fn $fn(
+            state: State<'_, AppState>,
+            name: String,
+            project: Option<String>,
+            from: String,
+        ) -> Result<String, String> {
+            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
+            let plat = parse_deploy_plat(&from)?;
+            command_bridge::retract(dr, ar, db, $kind, name, plat).await
+        }
+    };
+}
+
+macro_rules! asset_get_cmd {
+    ($fn:ident, $kind:expr) => {
+        #[tauri::command]
+        async fn $fn(
+            state: State<'_, AppState>,
+            name: String,
+            project: Option<String>,
+        ) -> Result<AssetFileDetail, String> {
+            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
+            command_bridge::get_detail(dr, ar, db, $kind, name).await
+        }
+    };
+}
+
+macro_rules! asset_save_cmd {
+    ($fn:ident, $kind:expr) => {
+        #[tauri::command]
+        async fn $fn(
+            state: State<'_, AppState>,
+            name: String,
+            content: String,
+            project: Option<String>,
+        ) -> Result<String, String> {
+            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
+            command_bridge::save_content(dr, ar, db, $kind, name, content).await
+        }
+    };
+}
+
+macro_rules! asset_delete_cmd {
+    ($fn:ident, $kind:expr) => {
+        #[tauri::command]
+        async fn $fn(
+            state: State<'_, AppState>,
+            name: String,
+            project: Option<String>,
+        ) -> Result<String, String> {
+            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
+            command_bridge::delete_source(dr, ar, db, $kind, name).await
+        }
+    };
+}
+
+asset_deploy_cmd!(cmd_skill_deploy, AssetKind::Skill);
+asset_get_cmd!(cmd_skill_get, AssetKind::Skill);
+asset_save_cmd!(cmd_skill_save, AssetKind::Skill);
+asset_delete_cmd!(cmd_skill_delete, AssetKind::Skill);
+asset_retract_cmd!(cmd_skill_retract, AssetKind::Skill);
+
+asset_deploy_cmd!(cmd_rule_deploy, AssetKind::Rule);
+asset_get_cmd!(cmd_rule_get, AssetKind::Rule);
+asset_save_cmd!(cmd_rule_save, AssetKind::Rule);
+asset_delete_cmd!(cmd_rule_delete, AssetKind::Rule);
+asset_retract_cmd!(cmd_rule_retract, AssetKind::Rule);
+
+asset_deploy_cmd!(cmd_command_deploy, AssetKind::Command);
+asset_get_cmd!(cmd_command_get, AssetKind::Command);
+asset_save_cmd!(cmd_command_save, AssetKind::Command);
+asset_delete_cmd!(cmd_command_delete, AssetKind::Command);
+asset_retract_cmd!(cmd_command_retract, AssetKind::Command);
+
+asset_deploy_cmd!(cmd_mcp_deploy, AssetKind::Mcp);
+asset_get_cmd!(cmd_mcp_get, AssetKind::Mcp);
+asset_save_cmd!(cmd_mcp_save, AssetKind::Mcp);
+asset_delete_cmd!(cmd_mcp_delete, AssetKind::Mcp);
+asset_retract_cmd!(cmd_mcp_retract, AssetKind::Mcp);
+
+asset_deploy_cmd!(cmd_agent_deploy, AssetKind::Agent);
+asset_get_cmd!(cmd_agent_get, AssetKind::Agent);
+asset_save_cmd!(cmd_agent_save, AssetKind::Agent);
+asset_delete_cmd!(cmd_agent_delete, AssetKind::Agent);
+asset_retract_cmd!(cmd_agent_retract, AssetKind::Agent);
+
 #[tauri::command]
-async fn cmd_skill_deploy(
+async fn cmd_command_import(
     state: State<'_, AppState>,
     name: String,
     project: Option<String>,
-    to: String,
+    from_platform: String,
 ) -> Result<String, String> {
+    let plat = parse_plat(&from_platform)?;
+    if plat == PlatformId::AiConfig {
+        return Err("不能从 ai-config 源导入到自身".into());
+    }
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&to)?;
-    let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
-    let src = skill_link_src(&skill_md);
-    let dest = compute_dest(plat, AssetKind::Skill, &name, &skill_md, &deploy_base)
-        .ok_or_else(|| format!("无法算 skill `{name}` → {plat:?} 的 dest"))?;
-    let dest_str = dest.to_string();
-    let plat_for_hook = plat;
-    let dest_for_hook = dest.clone();
-    tokio::task::spawn_blocking(move || {
-        materialize::deploy(&src, &dest)?;
-        if plat_for_hook == PlatformId::Hermes {
-            let skills_parent = dest_for_hook
-                .parent()
-                .unwrap_or(&dest_for_hook)
-                .to_path_buf();
-            hermes_config::after_skill_deploy(&skills_parent)?;
-        }
-        Ok::<(), CoreError>(())
+    let name_for_msg = name.clone();
+    let dest = tokio::task::spawn_blocking(move || {
+        platform_scan::import_command_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
     })
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))?
     .map_err(|e| e.to_string())?;
-    Ok(format!("skill `{name}` → {plat:?} OK ({dest_str})"))
+    Ok(format!("command `{name_for_msg}` 已导入到 {dest}"))
 }
-
-/// 读取单个 skill 的完整 SKILL.md。
-#[tauri::command]
-async fn cmd_skill_get(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
-    let content =
-        std::fs::read_to_string(&skill_md).map_err(|e| format!("读取 SKILL.md 失败: {e}"))?;
-    let (fm_name, description) = parse_skill_meta(&content);
-    let parent_path = skill_md.parent().map(|p| p.to_string()).unwrap_or_default();
-    Ok(AssetFileDetail {
-        name: fm_name.unwrap_or(name),
-        description,
-        content,
-        source_path: skill_md.to_string(),
-        parent_path,
-    })
-}
-
-/// 保存 skill 的 SKILL.md 正文。
-#[tauri::command]
-async fn cmd_skill_save(
-    state: State<'_, AppState>,
-    name: String,
-    content: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
-    let path = skill_md.to_string();
-    tokio::task::spawn_blocking(move || std::fs::write(&path, &content))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("写入 SKILL.md 失败: {e}"))?;
-    Ok(format!("skill `{name}` 已保存"))
-}
-
-/// 删除整个 skill 目录(`skills/<name>/`)。
-#[tauri::command]
-async fn cmd_skill_delete(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(
-        &default_root,
-        &asset_root,
-        &deploy_base,
-        AssetKind::Skill,
-        &name,
-    );
-    let skill_md = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
-    let skill_dir = skill_md
-        .parent()
-        .ok_or_else(|| format!("skill `{name}` 无父目录"))?
-        .to_path_buf();
-    let dir_str = skill_dir.to_string();
-    tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&skill_dir))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("删除 skill 目录失败: {e}"))?;
-    Ok(format!("skill `{name}` 已删除 ({dir_str})"))
-}
-
-#[tauri::command]
-async fn cmd_skill_retract(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from: String,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&from)?;
-    let src = locate_source(&default_root, &asset_root, AssetKind::Skill, &name)?;
-    let dest = compute_dest(plat, AssetKind::Skill, &name, &src, &deploy_base)
-        .ok_or_else(|| format!("无法算 skill `{name}` ← {plat:?} 的 dest"))?;
-    let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || materialize::retract(&dest))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("materialize::retract 失败: {e}"))?;
-    Ok(format!("skill `{name}` ← {plat:?} OK ({dest_str})"))
-}
-
-#[tauri::command]
-async fn cmd_rule_deploy(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    to: String,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&to)?;
-    if !platform_supports(plat, AssetKind::Rule, &deploy_base) {
-        return Err(capability_skip_reason(plat, AssetKind::Rule));
-    }
-    let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
-    let dest = compute_dest(plat, AssetKind::Rule, &name, &src, &deploy_base)
-        .ok_or_else(|| format!("无法算 rule `{name}` → {plat:?} 的 dest"))?;
-    let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || materialize::deploy(&src, &dest))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("materialize::deploy 失败: {e}"))?;
-    Ok(format!("rule `{name}` → {plat:?} OK ({dest_str})"))
-}
-
-#[tauri::command]
-async fn cmd_rule_retract(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from: String,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&from)?;
-    if !platform_supports(plat, AssetKind::Rule, &deploy_base) {
-        return Err(capability_skip_reason(plat, AssetKind::Rule));
-    }
-    let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
-    let dest = compute_dest(plat, AssetKind::Rule, &name, &src, &deploy_base)
-        .ok_or_else(|| format!("无法算 rule `{name}` ← {plat:?} 的 dest"))?;
-    let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || materialize::retract(&dest))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("materialize::retract 失败: {e}"))?;
-    Ok(format!("rule `{name}` ← {plat:?} OK ({dest_str})"))
-}
-
-#[tauri::command]
-async fn cmd_rule_get(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
-    let content = std::fs::read_to_string(&src).map_err(|e| format!("读取 rule 失败: {e}"))?;
-    let (fm_name, description) = parse_skill_meta(&content);
-    let parent_path = src.parent().map(|p| p.to_string()).unwrap_or_default();
-    Ok(AssetFileDetail {
-        name: fm_name.unwrap_or(name),
-        description,
-        content,
-        source_path: src.to_string(),
-        parent_path,
-    })
-}
-
-#[tauri::command]
-async fn cmd_rule_save(
-    state: State<'_, AppState>,
-    name: String,
-    content: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
-    let path = src.to_string();
-    tokio::task::spawn_blocking(move || std::fs::write(&path, &content))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("写入 rule 失败: {e}"))?;
-    Ok(format!("rule `{name}` 已保存"))
-}
-
-#[tauri::command]
-async fn cmd_rule_delete(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(
-        &default_root,
-        &asset_root,
-        &deploy_base,
-        AssetKind::Rule,
-        &name,
-    );
-    let src = locate_source(&default_root, &asset_root, AssetKind::Rule, &name)?;
-    let path = src.to_path_buf();
-    let path_str = path.to_string();
-    tokio::task::spawn_blocking(move || std::fs::remove_file(&path))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("删除 rule 失败: {e}"))?;
-    Ok(format!("rule `{name}` 已删除 ({path_str})"))
-}
-
-#[tauri::command]
-async fn cmd_mcp_get(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
-    let asset_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(asset_root, &name)
-        .map_err(|e| format!("读取 MCP server 失败: {e}"))?
-        .ok_or_else(|| format!("MCP server `{name}` 找不到"))?;
-    let content =
-        serde_json::to_string_pretty(&config).map_err(|e| format!("JSON 序列化失败: {e}"))?;
-    let description = mcp_json::server_transport_summary(&config);
-    let parent_path = mcp_path.to_string();
-    Ok(AssetFileDetail {
-        name,
-        description,
-        content,
-        source_path: mcp_path.to_string(),
-        parent_path,
-    })
-}
-
-#[tauri::command]
-async fn cmd_mcp_deploy(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    to: String,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&to)?;
-    let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
-    let mcp_doc_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(mcp_doc_root, &name)
-        .map_err(|e| format!("读取 MCP server 失败: {e}"))?
-        .ok_or_else(|| format!("MCP server `{name}` 找不到"))?;
-    let dest_json = platform::for_scope(plat, &deploy_base)
-        .map_err(|e| format!("platform 适配器失败: {e}"))?
-        .mcp_deploy_path();
-    let dest_for_blocking = dest_json.clone();
-    let plat_for_blocking = plat;
-    let plat_label = format!("{plat:?}");
-    let name_for_blocking = name.clone();
-    tokio::task::spawn_blocking(move || -> Result<String, String> {
-        mcp_json::upsert_server_on_platform(
-            plat_for_blocking,
-            &dest_for_blocking,
-            &name_for_blocking,
-            &config,
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(format!(
-            "mcp `{name_for_blocking}` → {plat_label} OK ({dest_for_blocking})"
-        ))
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-}
-
-#[tauri::command]
-async fn cmd_mcp_retract(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from: String,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&from)?;
-    let _mcp_path = locate_mcp_json(&default_root, &asset_root)?;
-    let dest_json = platform::for_scope(plat, &deploy_base)
-        .map_err(|e| format!("platform 适配器失败: {e}"))?
-        .mcp_deploy_path();
-    let dest_for_blocking = dest_json.clone();
-    let plat_for_blocking = plat;
-    let plat_label = format!("{plat:?}");
-    let name_for_blocking = name.clone();
-    tokio::task::spawn_blocking(move || -> Result<String, String> {
-        mcp_json::remove_server_on_platform(
-            plat_for_blocking,
-            &dest_for_blocking,
-            &name_for_blocking,
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(format!(
-            "mcp `{name_for_blocking}` ← {plat_label} 已移除 ({dest_for_blocking})"
-        ))
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-}
-
-#[tauri::command]
-async fn cmd_mcp_save(
-    state: State<'_, AppState>,
-    name: String,
-    content: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
-    let asset_root = mcp_asset_root(&mcp_path)?;
-    let config = serde_json::from_str::<serde_json::Value>(&content)
-        .map_err(|e| format!("JSON 格式无效: {e}"))?;
-    if !config.is_object() {
-        return Err("MCP server config 须为 JSON object".to_string());
-    }
-    let asset_root_for_blocking = asset_root.to_path_buf();
-    let name_for_blocking = name.clone();
-    tokio::task::spawn_blocking(move || {
-        mcp_json::upsert_server_in_document(&asset_root_for_blocking, &name_for_blocking, config)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))??;
-    Ok(format!("mcp `{name}` 已保存"))
-}
-
-#[tauri::command]
-async fn cmd_mcp_delete(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(
-        &default_root,
-        &asset_root,
-        &deploy_base,
-        AssetKind::Mcp,
-        &name,
-    );
-    let mcp_path = locate_mcp_json(&default_root, &asset_root)?;
-    let asset_root = mcp_asset_root(&mcp_path)?;
-    let asset_root_for_blocking = asset_root.to_path_buf();
-    let name_for_blocking = name.clone();
-    tokio::task::spawn_blocking(move || {
-        mcp_json::remove_server_from_document(&asset_root_for_blocking, &name_for_blocking)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))??;
-    Ok(format!("mcp `{name}` 已从 mcp.json 移除"))
-}
-
-#[tauri::command]
-async fn cmd_agent_get(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<AssetFileDetail, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
-    let read_path = agent_edit_path(&src).unwrap_or_else(|| src.clone());
-    let content =
-        std::fs::read_to_string(&read_path).map_err(|e| format!("读取 agent 失败: {e}"))?;
-    let description = parse_description(AssetKind::Agent, &src);
-    let parent_path = read_path
-        .parent()
-        .map(|p| p.to_string())
-        .unwrap_or_default();
-    Ok(AssetFileDetail {
-        name,
-        description,
-        content,
-        source_path: read_path.to_string(),
-        parent_path,
-    })
-}
-
-#[tauri::command]
-async fn cmd_agent_save(
-    state: State<'_, AppState>,
-    name: String,
-    content: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, _deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
-    let write_path = agent_edit_path(&src).unwrap_or_else(|| src.clone());
-    let path = write_path.to_string();
-    tokio::task::spawn_blocking(move || std::fs::write(&path, &content))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("写入 agent 失败: {e}"))?;
-    Ok(format!("agent `{name}` 已保存"))
-}
-
-#[tauri::command]
-async fn cmd_agent_delete(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    retract_all_platforms_best_effort(
-        &default_root,
-        &asset_root,
-        &deploy_base,
-        AssetKind::Agent,
-        &name,
-    );
-    let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
-    let path = src.to_path_buf();
-    let path_str = path.to_string();
-    tokio::task::spawn_blocking(move || {
-        if path.is_dir() {
-            std::fs::remove_dir_all(&path)
-        } else {
-            std::fs::remove_file(&path)
-        }
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| format!("删除 agent 失败: {e}"))?;
-    Ok(format!("agent `{name}` 已删除 ({path_str})"))
-}
-
-#[tauri::command]
-async fn cmd_agent_deploy(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    to: String,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&to)?;
-    if !platform_supports(plat, AssetKind::Agent, &deploy_base) {
-        return Err(capability_skip_reason(plat, AssetKind::Agent));
-    }
-    let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
-    let link_src = agent_link_src(&src);
-    let dest = compute_dest(plat, AssetKind::Agent, &name, &src, &deploy_base)
-        .ok_or_else(|| format!("无法算 agent `{name}` → {plat:?} 的 dest"))?;
-    let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || materialize::deploy(&link_src, &dest))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("materialize::deploy 失败: {e}"))?;
-    Ok(format!("agent `{name}` → {plat:?} OK ({dest_str})"))
-}
-
-#[tauri::command]
-async fn cmd_agent_retract(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from: String,
-) -> Result<String, String> {
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let plat = parse_deploy_plat(&from)?;
-    if !platform_supports(plat, AssetKind::Agent, &deploy_base) {
-        return Err(capability_skip_reason(plat, AssetKind::Agent));
-    }
-    let src = locate_source(&default_root, &asset_root, AssetKind::Agent, &name)?;
-    let dest = compute_dest(plat, AssetKind::Agent, &name, &src, &deploy_base)
-        .ok_or_else(|| format!("无法算 agent `{name}` ← {plat:?} 的 dest"))?;
-    let dest_str = dest.to_string();
-    tokio::task::spawn_blocking(move || materialize::retract(&dest))
-        .await
-        .map_err(|e| format!("spawn_blocking join: {e}"))?
-        .map_err(|e| format!("materialize::retract 失败: {e}"))?;
-    Ok(format!("agent `{name}` ← {plat:?} OK ({dest_str})"))
-}
-
-// ── Tauri command:项目注册(cmd_projects_*) ─────────────────────
 
 #[tauri::command]
 async fn cmd_projects_list(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
@@ -1372,27 +943,11 @@ async fn restart_asset_watcher(app: &AppHandle, state: &AppState) -> Result<(), 
 
 /// 解析 `to` / `from` 字符串到 `PlatformId`。
 fn parse_plat(s: &str) -> Result<PlatformId, String> {
-    match s {
-        "aiconfig" | "ai-config" | "AiConfig" | "ac" => Ok(PlatformId::AiConfig),
-        "cursor" | "Cursor" | "cu" => Ok(PlatformId::Cursor),
-        "codex" | "Codex" | "cx" => Ok(PlatformId::Codex),
-        "claude" | "Claude" | "cl" => Ok(PlatformId::Claude),
-        "hermes" | "Hermes" | "he" => Ok(PlatformId::Hermes),
-        other => Err(format!(
-            "未知平台 `{other}`(预期 aiconfig/cursor/codex/claude/hermes)"
-        )),
-    }
+    platform::parse_platform_str(s).map_err(|e| e.to_string())
 }
 
 fn parse_deploy_plat(s: &str) -> Result<PlatformId, String> {
-    let p = parse_plat(s)?;
-    if !p.is_deploy_target() {
-        return Err(format!(
-            "平台 `{}` 为资产源，不能 deploy / retract",
-            platform_label(p)
-        ));
-    }
-    Ok(p)
+    platform::parse_deploy_platform_str(s).map_err(|e| e.to_string())
 }
 
 /// 解析当前作用域:全局默认根、资产扫描根、平台下发根。
@@ -1457,153 +1012,161 @@ async fn resolve_project_id(
     }
 }
 
-/// 删除前尽力收回各平台链接；失败不阻断删源文件。
-fn retract_all_platforms_best_effort(
-    default_root: &Utf8Path,
-    asset_root: &Utf8Path,
-    deploy_base: &Utf8Path,
-    kind: AssetKind,
-    name: &str,
-) {
-    if kind == AssetKind::Mcp {
-        let Ok(mcp_path) = locate_mcp_json(default_root, asset_root) else {
-            return;
-        };
-        let Ok(mcp_doc_root) = mcp_asset_root(&mcp_path) else {
-            return;
-        };
-        if mcp_json::get_server_config(mcp_doc_root, name)
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            return;
-        }
-        for plat in [
-            PlatformId::Cursor,
-            PlatformId::Codex,
-            PlatformId::Claude,
-            PlatformId::Hermes,
-        ] {
-            if !platform_supports(plat, kind, deploy_base) {
-                continue;
-            }
-            if let Ok(adapter) = platform::for_scope(plat, deploy_base) {
-                let _ = mcp_json::remove_server_on_platform(plat, &adapter.mcp_deploy_path(), name);
-            }
-        }
-        return;
-    }
-    let Ok(src) = locate_source(default_root, asset_root, kind, name) else {
-        return;
-    };
-    for plat in [
-        PlatformId::Cursor,
-        PlatformId::Codex,
-        PlatformId::Claude,
-        PlatformId::Hermes,
-    ] {
-        if !platform_supports(plat, kind, deploy_base) {
-            continue;
-        }
-        let Some(dest) = compute_dest(plat, kind, name, &src, deploy_base) else {
-            continue;
-        };
-        let _ = materialize::retract(&dest);
-    }
-}
-
 /// 按作用域扫描资产源。
-///
-/// - **user-global**（`asset_root == default_root`）：只扫 `~/.ai-config/`
-/// - **已注册项目**（`asset_root` 为 `<repo>/.ai-config/`）：只扫项目树，**不**混入全局条目
 fn scan_assets_for_scope(
     default_root: &Utf8Path,
     asset_root: &Utf8Path,
 ) -> Result<source::ScanResult, String> {
-    if asset_root != default_root {
-        if !asset_root.exists() {
-            return Ok(source::ScanResult::default());
-        }
-        return source::scan_project_root(asset_root).map_err(|e| format!("scan 失败: {e}"));
-    }
-    source::scan_project_root(asset_root).map_err(|e| format!("scan 失败: {e}"))
-}
-
-/// 定位当前作用域的 `mcp.json` 源路径。
-fn locate_mcp_json(default_root: &Utf8Path, asset_root: &Utf8Path) -> Result<Utf8PathBuf, String> {
-    let scan = scan_assets_for_scope(default_root, asset_root)?;
-    scan.mcp_json
-        .ok_or_else(|| format!("源 `{}` 找不到", mcp_json::MCP_ASSET_NAME))
-}
-
-fn mcp_asset_root(mcp_path: &Utf8Path) -> Result<&Utf8Path, String> {
-    mcp_path
-        .parent()
-        .ok_or_else(|| format!("mcp.json 路径无效: {mcp_path}"))
-}
-
-/// 在当前作用域资产根里定位一条资产的源路径。
-fn locate_source(
-    default_root: &Utf8Path,
-    asset_root: &Utf8Path,
-    kind: AssetKind,
-    name: &str,
-) -> Result<Utf8PathBuf, String> {
-    let scan = scan_assets_for_scope(default_root, asset_root)?;
-    let pool: Vec<Utf8PathBuf> = match kind {
-        AssetKind::Skill => scan
-            .skills
-            .iter()
-            .filter(|p| {
-                p.parent()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n == name)
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect(),
-        AssetKind::Rule => scan
-            .rules
-            .iter()
-            .filter(|p| p.file_stem().map(|n| n == name).unwrap_or(false))
-            .cloned()
-            .collect(),
-        AssetKind::Mcp => {
-            let Some(mcp_path) = scan.mcp_json else {
-                return Err(format!("源 `{}` 找不到", mcp_json::MCP_ASSET_NAME));
-            };
-            let asset_root = mcp_asset_root(&mcp_path)?;
-            if mcp_json::get_server_config(asset_root, name)
-                .map_err(|e| format!("读取 MCP 失败: {e}"))?
-                .is_none()
-            {
-                return Err(format!("MCP server `{name}` 找不到"));
-            }
-            vec![mcp_path]
-        }
-        AssetKind::Agent => scan
-            .agents
-            .iter()
-            .filter(|p| {
-                let candidate = if p.is_dir() {
-                    p.file_name().map(|s| s.to_string())
-                } else {
-                    p.file_stem().map(|s| s.to_string())
-                };
-                candidate.as_deref() == Some(name)
-            })
-            .cloned()
-            .collect(),
-    };
-    pool.into_iter()
-        .next()
-        .ok_or_else(|| format!("资产 `{kind:?}` 名 `{name}` 在源里找不到"))
+    platform_scan::scan_source_for_scope(default_root, asset_root)
+        .map_err(|e| format!("scan 失败: {e}"))
 }
 
 #[allow(dead_code)]
 fn core_err_to_string(e: CoreError) -> String {
     e.to_string()
+}
+
+// ── Tauri command: ~/.ai-config Git 同步 ─────────────────────────
+
+#[derive(Debug, Serialize)]
+struct GitBootstrapResponse {
+    asset_root: String,
+    outcome: GitEnsureOutcome,
+    status: GitRepoStatus,
+    config: GitSyncConfig,
+}
+
+/// 启动时 Git 检查：确保仓库存在并返回状态（前端挂载时调用）。
+#[tauri::command]
+async fn cmd_git_bootstrap(state: State<'_, AppState>) -> Result<GitBootstrapResponse, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    let bootstrap = state.git_bootstrap.read().await.clone();
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        let just = bootstrap
+            .as_ref()
+            .map(|o| o.just_initialized)
+            .unwrap_or(false);
+        let status = git::repo_status(&root, just);
+        Ok(GitBootstrapResponse {
+            asset_root: git::asset_root_display(&root),
+            outcome: bootstrap.unwrap_or(GitEnsureOutcome {
+                git_available: git::git_available(),
+                was_repo: status.is_repo,
+                just_initialized: false,
+                initial_commit: false,
+            }),
+            status,
+            config,
+        })
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_status(state: State<'_, AppState>) -> Result<GitRepoStatus, String> {
+    let root = state.default_root.read().await.clone();
+    let bootstrap = state.git_bootstrap.read().await.clone();
+    tokio::task::spawn_blocking(move || {
+        let just = bootstrap
+            .as_ref()
+            .map(|o| o.just_initialized)
+            .unwrap_or(false);
+        Ok(git::repo_status(&root, just))
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_config_get(state: State<'_, AppState>) -> Result<GitSyncConfig, String> {
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || store.settings().git_config().map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_config_set(
+    state: State<'_, AppState>,
+    remote_url: Option<String>,
+    branch: Option<String>,
+) -> Result<GitSyncConfig, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let mut config = store.settings().git_config().map_err(|e| e.to_string())?;
+        if remote_url.is_some() {
+            config.remote_url = remote_url.filter(|s| !s.trim().is_empty());
+        }
+        if let Some(b) = branch.filter(|s| !s.trim().is_empty()) {
+            config.branch = b;
+        }
+        store
+            .settings()
+            .set_git_config(&config)
+            .map_err(|e| e.to_string())?;
+        git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
+        Ok(config)
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_sync(state: State<'_, AppState>) -> Result<GitSyncOutcome, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        git::sync_repo(&root, &config, "chore: ai-config 同步").map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_pull(state: State<'_, AppState>) -> Result<String, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+            return Err("未配置远程仓库".to_string());
+        }
+        git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
+        let pulled = git::pull(&root, &config.branch).map_err(|e| e.to_string())?;
+        Ok(if pulled {
+            "已从远程拉取".to_string()
+        } else {
+            "拉取完成（无变更）".to_string()
+        })
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+}
+
+#[tauri::command]
+async fn cmd_git_push(state: State<'_, AppState>) -> Result<String, String> {
+    let root = state.default_root.read().await.clone();
+    let store = Arc::clone(&state.store);
+    tokio::task::spawn_blocking(move || {
+        let config = store.settings().git_config().map_err(|e| e.to_string())?;
+        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+            return Err("未配置远程仓库".to_string());
+        }
+        git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
+        let pushed = git::push(&root, &config.branch, true).map_err(|e| e.to_string())?;
+        Ok(if pushed {
+            "已推送到远程".to_string()
+        } else {
+            "推送完成".to_string()
+        })
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
 }
 
 // ── Tauri 主入口 ──────────────────────────────────────────────────
@@ -1643,6 +1206,7 @@ pub fn run() {
             cmd_platform_kind_paths,
             cmd_skill_import,
             cmd_rule_import,
+            cmd_command_import,
             cmd_agent_import,
             cmd_mcp_import,
             cmd_skill_get,
@@ -1655,6 +1219,11 @@ pub fn run() {
             cmd_rule_delete,
             cmd_rule_deploy,
             cmd_rule_retract,
+            cmd_command_get,
+            cmd_command_save,
+            cmd_command_delete,
+            cmd_command_deploy,
+            cmd_command_retract,
             cmd_mcp_get,
             cmd_mcp_save,
             cmd_mcp_delete,
@@ -1669,7 +1238,15 @@ pub fn run() {
             cmd_projects_add,
             cmd_projects_remove,
             cmd_reveal_path,
+            cmd_read_platform_asset,
             cmd_assets_transfer,
+            cmd_git_bootstrap,
+            cmd_git_status,
+            cmd_git_config_get,
+            cmd_git_config_set,
+            cmd_git_sync,
+            cmd_git_pull,
+            cmd_git_push,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ai-config GUI");

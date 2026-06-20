@@ -7,16 +7,16 @@
 1. 本文件（项目摘要与路由）。
 2. [`.cursor/README.md`](./.cursor/README.md) — 项目 AI 配置总览。
 3. [`.cursor/rules/00-project-core.mdc`](./.cursor/rules/00-project-core.mdc) — 项目核心约束（`alwaysApply`）。
-4. 全局通用规则：[`{{AI_CONFIG_REL}}/AGENTS.md`]({{AI_CONFIG_REL}}/AGENTS.md) 所列 `rules/*.mdc`。
+4. 全局通用规则：`~/.ai-config/rules/`（由 `ai-config sync` 下发到各 IDE）。
 
 ## 通用规则（ai-config，四端同源）
 
-跨项目编码与提交准则见 **`{{AI_CONFIG_REL}}/rules/*.mdc`**（唯一正文）。勿在本仓库重复粘贴全文。
+跨项目编码与提交准则见 **`~/.ai-config/rules/*.mdc`**（用户全局资产，本机不在 git）。ai-config 工具仓自身规则见 **`ai-config/.cursor/rules/`**。勿在本仓库重复粘贴全文。
 
 | 入口 | 路径 |
 | --- | --- |
-| Codex | `{{AI_CONFIG_REL}}/AGENTS.md` |
-| Hermes（在 ai-config 目录） | `{{AI_CONFIG_REL}}/HERMES.md` |
+| Codex | `~/.ai-config/` 经 `ai-config install` 链接到各 IDE |
+| Hermes（在 ai-config 目录） | [`ai-config/HERMES.md`](../../ai-config/HERMES.md) |
 | Hermes（在本项目） | [`HERMES.md`](./HERMES.md) |
 
 ## 项目配置（正文在 `.cursor/`）
@@ -33,8 +33,8 @@ Claude Code / Codex 通过 **`.claude/` → `.cursor/` symlink** 读取同一套
 ## 工作流硬约束（摘要）
 
 - 业务变更走 **Issue → 分支 → 小步提交 → PR**，勿直推 `main` / `develop`（若适用）。
-- Commit：中文 Conventional Commits，见 `{{AI_CONFIG_REL}}/rules/git-commit-conventions.mdc`。
-- 编码纪律：见 `{{AI_CONFIG_REL}}/rules/karpathy-guidelines.mdc`。
+- Commit：中文 Conventional Commits，见 `~/.ai-config/rules/` 中提交规范（或 zh-cloud `.claude/rules/conventional-commits.mdc`）。
+- 编码纪律：见 `~/.ai-config/rules/` 或 zh-cloud Karpathy 规则。
 - 不输出真实 token、密钥；示例仅用占位符。
 
 ## 执行约定
@@ -43,4 +43,4 @@ Claude Code / Codex 通过 **`.claude/` → `.cursor/` symlink** 读取同一套
 - Agent 不默认 `commit` / `push`，除非用户明确要求。
 
 ---
-生成于 {{GENERATED_DATE}} · [`bootstrap-project.sh`]({{AI_CONFIG_REL}}/scripts/bootstrap-project.sh)
+生成于 {{GENERATED_DATE}}

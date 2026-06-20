@@ -1,0 +1,60 @@
+---
+description: ai-config Rust crate 分层、依赖选型、错误处理与测试约定
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust（ai-config workspace）
+
+## 分层
+
+- **core**：纯 Rust lib，无 Tauri / 无 clap；单元测试与集成测试放 `ai-config-core/tests/` 或模块内 `#[cfg(test)]`。
+- **cli**：解析参数 → 调 core → 格式化输出；避免在 `main.rs` 写业务。
+- **gui**（`apps/ai-config-gui/src/lib.rs`）：Tauri command 薄层，错误映射为前端可读字符串。
+
+## 依赖选型（优先 crates.io 高星、维护活跃）
+
+**原则**：标准库能清晰表达且仅一处用时可用标准库；否则优先成熟 crate。新依赖加入 **`[workspace.dependencies]`**，各 crate 用 `*.workspace = true` 引用。
+
+| 场景                 | 首选 crate                                  | 说明                             |
+| -------------------- | ------------------------------------------- | -------------------------------- |
+| 错误（public API）   | **thiserror**                               | 枚举 + `#[error]`                |
+| 错误（CLI/GUI 边界） | **anyhow**                                  | 上下文链式 `?`                   |
+| 异步 / IO            | **tokio**                                   | 已在 workspace                   |
+| 序列化               | **serde** + **serde_json** / **serde_yaml** | 已在 workspace                   |
+| 路径（UTF-8）        | **camino**                                  | `Utf8Path`；已在 workspace       |
+| 目录遍历             | **walkdir**                                 | 已在 workspace                   |
+| FS 监听              | **notify** + **notify-debouncer-mini**      | 已在 workspace                   |
+| CLI                  | **clap**                                    | derive 子命令                    |
+| SQLite               | **rusqlite**                                | bundled feature                  |
+| 时间                 | **chrono**                                  | serde feature                    |
+| 集合 / 迭代工具      | **itertools**                               | `group_by`、窗口、链式；按需引入 |
+| 有序 map             | **indexmap**                                | 需稳定顺序或 serde 时            |
+| 正则                 | **regex**                                   | 勿手写复杂正则解析               |
+| UUID                 | **uuid**                                    | v4 + serde                       |
+| 日志                 | **tracing** + **tracing-subscriber**        | 已在 workspace                   |
+| 测试临时目录         | **tempfile**                                | 已在 workspace                   |
+| 属性测试             | **proptest**                                | 已在 workspace                   |
+| 快照测试             | **insta**                                   | 大输出/CLI golden 时按需         |
+
+### 引入新 crate 前
+
+1. [crates.io](https://crates.io) 看下载量、最近发布、文档（docs.rs）。
+2. 能放进 `workspace.dependencies` 的统一放 workspace，避免版本漂移。
+3. 禁止为单行逻辑引入重型依赖；禁止重复实现 serde/路径/错误类型已有模式。
+
+## 风格
+
+- 沿用现有 `thiserror` / `anyhow` 用法；新 public API 优先明确错误类型。
+- 平台相关逻辑放进 `platform` 子模块，不散落在 sync/link。
+- 文件 IO：遵循现有 atomic write / backup 模式。
+
+## 测试
+
+- 改 core 逻辑须补或更新测试；路径类用 tempdir。
+- 提交前：`cargo test -p ai-config-core -p ai-config-cli`（最小集）；跨 crate 改动跑 `cargo test --workspace`。
+
+## 禁止
+
+- 在 CLI/GUI 重复实现 core 已有函数。
+- 将真实密钥写入测试 fixture 或快照。

@@ -24,12 +24,14 @@ use thiserror::Error;
 
 pub mod project_repo;
 pub mod schema;
+pub mod settings_repo;
 
 // `ProjectRepo` 重导出到顶级,使用方写 `use ai_config_store::ProjectRepo;` 即可。
 // `StoreError` 不重导出 — lib.rs 自己定义了**完整**的 `StoreError`(包含
 // `Open` / `DataDirUnknown` / `Sqlite` / `Project` 转发),使用方只需要面对一种
 // 错误类型,无需知道内部模块边界。
 pub use project_repo::ProjectRepo;
+pub use settings_repo::SettingsRepo;
 
 // ── 公共类型 ─────────────────────────────────────────────────────
 
@@ -93,6 +95,11 @@ impl Store {
     /// 借用 connection 拿 `projects` CRUD 句柄。**会**短期持锁完成所有 DB 操作。
     pub fn projects(&self) -> ProjectRepo<'_> {
         ProjectRepo::new(&self.conn)
+    }
+
+    /// 借用 connection 拿 `settings` KV 句柄。
+    pub fn settings(&self) -> SettingsRepo<'_> {
+        SettingsRepo::new(&self.conn)
     }
 
     /// store 实际文件路径(供 `--store-path` debug 子命令 / 错误信息用)。
@@ -163,12 +170,12 @@ mod tests {
             .lock()
             .expect("test 不应该 panic 后持锁")
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='projects'",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('projects', 'settings')",
                 [],
                 |r| r.get::<_, i64>(0),
             )
             .unwrap();
-        assert_eq!(n, 1, "projects 表应已被 migrate 创建");
+        assert_eq!(n, 2, "projects 与 settings 表应已被 migrate 创建");
     }
 
     #[test]

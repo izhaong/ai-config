@@ -1,0 +1,57 @@
+---
+description: ai-config 核心工作流：crate 边界、验证、Git、文档同步
+alwaysApply: true
+---
+
+# ai-config 核心规则
+
+## 仓库与 cwd
+
+| 路径                                         | 职责                                                                   |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| `crates/ai-config-core`                      | **唯一业务逻辑**（model / source / platform / sync / link / template） |
+| `crates/ai-config-cli`                       | clap 子命令，薄封装调用 core                                           |
+| `crates/ai-config-daemon`                    | 长驻 + 文件监听                                                        |
+| `crates/ai-config-store` / `bus` / `watcher` | 存储与事件                                                             |
+| `apps/ai-config-gui`                         | Tauri 2 + React；**仅**通过 `invoke` 调 Rust 命令                      |
+
+改代码时 **cwd 为正在修改的 crate 或 app 根**；workspace 级命令在仓库根执行。
+
+## 依赖选型
+
+- **GUI**：ahooks、es-toolkit、shadcn/ui、lucide-react — 见 `gui-ai-config.mdc`
+- **Rust**：workspace 成熟 crate（serde、thiserror、tokio、itertools 等）— 见 `rust-ai-config.mdc`
+- 优先高星、维护活跃的库；不重复造轮子
+
+## 架构约束
+
+- GUI / CLI **不得**复制 core 已有逻辑；新能力先进 `ai-config-core`，再暴露 CLI 子命令与 Tauri command。
+- 平台路径与 install 语义见 `crates/ai-config-core/src/platform.rs`。
+- 用户资产在 `~/.ai-config/`；本仓只维护工具与模板。
+
+## 开工前
+
+1. `git branch --show-current` — 不在 `develop`/`main` 上堆功能提交。
+2. 非平凡改动：确认 `specs/<feature>/` 或 Plan 已存在（见 `spec-kit-gate.mdc`）。
+3. 读 `docs/product/ARCHITECTURE.md` 相关章节再动边界类代码。
+
+## 验证（完成前必做）
+
+- Core/CLI：`cargo test -p ai-config-core -p ai-config-cli`
+- GUI：`cd apps/ai-config-gui && npm run build`
+- 同步相关：`ai-config doctor`、`ai-config status`
+
+## 文档
+
+- CLI/行为变更 → `CHANGELOG.md`
+- 路由/Agent 约定变更 → `AGENTS.md`
+- 产品语义变更 → `docs/product/`
+
+## Git
+
+- 从 `develop` 拉 `feat/*` / `fix/*`；中文 Conventional Commits：`<type>(<scope>): <描述>`
+- 未要求时不主动 commit/push
+
+## 敏感信息
+
+禁止提交真实 token、密钥、`secrets.env`；示例用 `<REDACTED>`。

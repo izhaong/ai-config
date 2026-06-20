@@ -9,6 +9,46 @@
     "zh": "中文",
     "en": "English"
   },
+  "settings": {
+    "title": "设置"
+  },
+  "git": {
+    "settings": {
+      "title": "Git 同步 (~/.ai-config)",
+      "assetRoot": "目录: {{path}}",
+      "remoteUrl": "远程仓库 URL",
+      "remotePlaceholder": "https://gitea.example.com/user/ai-config.git",
+      "branch": "分支",
+      "localHint": "留空远程 URL 则仅使用本地 Git 存储；配置后可在多台设备间 push/pull。",
+      "save": "保存配置",
+      "sync": "同步",
+      "pull": "拉取",
+      "push": "推送",
+      "remoteRequired": "请先配置远程仓库"
+    },
+    "status": {
+      "loading": "检查中…",
+      "unavailable": "未安装 Git",
+      "notRepo": "未初始化",
+      "localOnly": "仅本地",
+      "dirty": "{{count}} 处未提交",
+      "ahead": "领先 {{count}}",
+      "behind": "落后 {{count}}",
+      "clean": "已同步"
+    },
+    "toast": {
+      "gitUnavailable": "未检测到 Git，请安装后重启应用",
+      "initializedLocal": "已为 ~/.ai-config 初始化本地 Git 仓库，可在设置中配置远程同步",
+      "initializedWithRemote": "Git 仓库已就绪，远程配置已应用",
+      "bootstrapFailed": "Git 检查失败: {{error}}",
+      "configSavedRemote": "远程配置已保存",
+      "configSavedLocal": "已切换为仅本地 Git 模式",
+      "configSaveFailed": "保存 Git 配置失败: {{error}}",
+      "syncFailed": "同步失败: {{error}}",
+      "pullFailed": "拉取失败: {{error}}",
+      "pushFailed": "推送失败: {{error}}"
+    }
+  },
   "nav": {
     "projects": "项目",
     "assets": "资产",
@@ -22,7 +62,8 @@
     "skill": "Skills",
     "rule": "Rules",
     "mcp": "MCP",
-    "agent": "Agents"
+    "agent": "Agents",
+    "command": "Commands"
   },
   "linkState": {
     "linked": "已同步",
@@ -53,7 +94,12 @@
     "clickDeploy": "点击下发",
     "clickRemove": "点击移除",
     "clickRemoveSource": "从 ai-config 源收回",
+    "aiconfigDeleteNeedsConfirm": "删除源文件（需确认）",
+    "batchAiconfigUseDeleteButton": "已全部纳管；删源请用右侧删除按钮并确认",
     "clickImportSource": "导入到 ai-config 源",
+    "partialLinked": "部分已同步",
+    "batchClickActivateAll": "点击全部下发（含未激活项）",
+    "batchClickMixed": "已激活收回，未激活下发",
     "unsupported": "{{platform}}: {{reason}}"
   },
   "toolbar": {
@@ -68,9 +114,16 @@
     "batchRetract": "批量收回",
     "batchDelete": "批量删除",
     "batchDeleteTitle": "勾选左侧复选框后执行批量删除",
+    "deleteConfirmHint": "再次点击确认删除（将弹出确认对话框）",
+    "rowDeleteTitle": "删除 {{name}}",
+    "batchSyncPlatform": "批量同步到 {{platform}}（已选行）",
+    "batchSyncPlatformState": "批量操作 {{platform}} · {{state}} · {{hint}}",
+    "batchImportSourceState": "批量操作 ai-config 源 · {{state}} · {{hint}}",
+    "batchSyncNeedSelection": "请先勾选要批量操作的行",
+    "batchSyncSourceDisabled": "当前已在源视图，无需批量导入源",
     "batchDeployPlatform": "批量下发到 {{platform}}",
     "batchRetractPlatform": "从 {{platform}} 批量收回",
-    "openFolder": "打开文件夹",
+    "openFolder": "打开目录",
     "openFolderTitle": "在系统文件管理器中打开当前浏览路径"
   },
   "empty": {
@@ -86,18 +139,27 @@
     "cancel": "取消",
     "save": "保存",
     "edit": "编辑",
-    "delete": "删除{{label}}"
+    "delete": "删除{{label}}",
+    "readOnlyHint": "只读预览（未纳入 ai-config 源）"
   },
   "confirm": {
     "defaultConfirm": "确认",
     "cancel": "取消",
     "processing": "处理中…",
     "deleteSource": "删除源文件",
-    "deleteSourceMessage": "将永久删除 {{label}}「{{name}}」",
+    "deleteEntry": "删除资产",
+    "deleteSourceMessage": "将永久删除 {{label}}「{{name}}」。{{irreversible}}",
     "delete": "删除",
+    "retract": "收回",
     "batchDelete": "批量删除",
-    "batchDeleteMessage": "将永久删除 {{count}} 个{{label}}源文件，并尽力收回各平台链接。",
-    "batchDeletePlatformMessage": "将对已选 {{count}} 项执行删除：已纳管则删除源并收回各平台，否则仅从 {{platform}} 收回。",
+    "batchRetract": "批量收回",
+    "batchDeleteMessage": "将永久删除 {{count}} 个{{label}}源文件，并尽力收回各平台链接。{{irreversible}}",
+    "batchRetractPlatformMessage": "将从 {{platform}} 收回已选 {{count}} 项（不删除 ai-config 源文件）。",
+    "retractEntry": "从平台收回",
+    "retractEntryPlatformMessage": "将从 {{platform}} 收回「{{name}}」（不删除 ai-config 源文件）。",
+    "batchDeletePlatformMessage": "（已废弃）请使用 batchRetractPlatformMessage",
+    "deleteEntryPlatformMessage": "（已废弃）请使用 retractEntryPlatformMessage",
+    "irreversible": "此操作不可撤销，请确认后再删除。",
     "removeProject": "移除项目",
     "removeProjectMessage": "确认从本工具中移除项目 `{{name}}`?"
   },
@@ -123,6 +185,7 @@
     "assetRemovedExternally": "资产已在外部删除",
     "saveFailed": "保存失败: {{error}}",
     "deletedCount": "已删除 {{count}} 个源文件",
+    "retractedCount": "已从当前平台收回 {{count}} 项",
     "deleteFailed": "删除失败: {{errors}}",
     "deletePartial": "部分删除: 成功 {{ok}}，失败 {{failed}}（{{errors}}）",
     "entryNotFound": "未找到要删除的条目",
@@ -131,7 +194,19 @@
     "batchDeployItemFailed": "{{name}} → {{platform}} 失败: {{error}}",
     "batchRetractItemFailed": "{{name}} ← {{platform}} 失败: {{error}}",
     "batchDeployed": "已批量下发 {{count}} 项",
+    "batchImported": "已批量导入 {{count}} 项",
+    "batchImportPartial": "批量导入：成功 {{ok}}，失败 {{failed}}",
+    "batchImportAllFailed": "批量导入全部失败（{{count}} 项）",
     "batchRetracted": "已批量收回 {{count}} 项",
+    "batchDeployPartial": "批量下发：成功 {{ok}}，失败 {{failed}}",
+    "batchDeployAllFailed": "批量下发全部失败（{{count}} 项）",
+    "batchRetractPartial": "批量收回：成功 {{ok}}，失败 {{failed}}",
+    "batchRetractAllFailed": "批量收回全部失败（{{count}} 项）",
+    "batchToggleAllFailed": "批量操作全部失败（{{count}} 项）",
+    "batchTogglePartial": "批量操作：成功 {{ok}}，失败 {{failed}}（下发 {{deploy}}、收回 {{retract}}、导入 {{import}}、删源 {{deleted}}）",
+    "batchToggled": "已批量操作：下发 {{deploy}}、收回 {{retract}}、导入 {{import}}、删源 {{deleted}}",
+    "batchNoOps": "没有可执行的批量操作",
+    "batchAiconfigDeleteBlocked": "ai-config 批量按钮不支持删源；请使用删除按钮并确认",
     "batchDeleted": "已批量处理 {{count}} 项",
     "selectRowsFirst": "请先勾选要操作的条目",
     "noBrowsePath": "当前视图没有可打开的路径",
@@ -141,6 +216,7 @@
     "projectRemoved": "项目 `{{name}}` 已移除",
     "removeProjectFailed": "移除项目失败: {{error}}",
     "platformListFailed": "平台列表加载失败: {{error}}",
+    "doctorFailed": "健康检查加载失败: {{error}}",
     "importSuccess": "{{message}}",
     "importFailed": "导入失败: {{error}}"
   },
@@ -153,6 +229,7 @@
     "skill": "skills",
     "rule": "rules",
     "mcp": "mcp",
-    "agent": "agents"
+    "agent": "agents",
+    "command": "commands"
   }
 }

@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
 
-import type { AssetDetail, AssetKind } from "./types";
-import { assetKindLabel } from "./i18n/labels";
+import type { AssetDetail, AssetKind } from "../../types";
+import { assetKindLabel } from "../../i18n/labels";
+import { sanitizeListDescription } from "../../utils/sanitizeListDescription";
 
 interface AssetDrawerProps {
   kind: AssetKind;
@@ -10,6 +11,8 @@ interface AssetDrawerProps {
   loading: boolean;
   editing: boolean;
   draft: string;
+  /** 仅平台预览、无 ai-config 源时隐藏编辑/删除 */
+  readOnly?: boolean;
   onClose: () => void;
   onDraftChange: (value: string) => void;
   onEdit: () => void;
@@ -25,6 +28,7 @@ export function AssetDrawer({
   loading,
   editing,
   draft,
+  readOnly = false,
   onClose,
   onDraftChange,
   onEdit,
@@ -35,14 +39,24 @@ export function AssetDrawer({
   const { t } = useTranslation();
   const label = assetKindLabel(t, kind);
 
+  const titleId = "asset-drawer-title";
+
   return (
     <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="skill-drawer" onClick={(e) => e.stopPropagation()}>
+      <aside
+        className="skill-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onClick={(e) => e.stopPropagation()}
+      >
         <header className="skill-drawer-header">
           <div>
-            <h4>{detail?.name ?? name}</h4>
+            <h4 id={titleId}>{detail?.name ?? name}</h4>
             {detail?.description ? (
-              <p className="skill-drawer-desc">{detail.description}</p>
+              <p className="skill-drawer-desc">
+                {sanitizeListDescription(detail.description)}
+              </p>
             ) : null}
           </div>
           <button type="button" className="icon-btn" onClick={onClose}>
@@ -81,6 +95,8 @@ export function AssetDrawer({
                 {t("drawer.save")}
               </button>
             </>
+          ) : readOnly ? (
+            <span className="skill-path">{t("drawer.readOnlyHint")}</span>
           ) : (
             <>
               <button className="danger" disabled={loading} onClick={onDelete}>

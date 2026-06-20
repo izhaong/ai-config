@@ -3,7 +3,7 @@
 //! 严格对齐 PRD §2 / §3.1 / §3.2 / §11.2:
 //! - **单一规则源**:`rules/*.mdc` / `*.md` 不按平台分目录(§11.2)
 //! - **视图合并**:项目 `.ai-config/` 同名覆盖、异名附加(§3.2)
-//! - **四类资产** = skills(目录) / rules(单文件) / mcp(单文件) / agents(文件或目录)(§2)
+//! - **五类资产** = skills(目录) / rules(单文件) / commands(单文件) / mcp(单文件) / agents(文件或目录)(§2)
 //!
 //! 过滤规则:隐藏文件(`.` 开头)、macOS / Windows 噪声(`.DS_Store` / `Thumbs.db`)、
 //! 备份(`*.bak` / `*.orig` / `*.swp` / `*~` / `*.tmp`)、构建产物目录
@@ -35,6 +35,8 @@ pub struct ScanResult {
     pub mcp_json: Option<Utf8PathBuf>,
     /// 每个元素是 `agents/<name>/`(目录)或 `agents/<name>.{md,yaml,json}`(单文件)
     pub agents: Vec<Utf8PathBuf>,
+    /// 每个元素是 `commands/<name>.md`
+    pub commands: Vec<Utf8PathBuf>,
 }
 
 // ── 过滤规则 ──────────────────────────────────────────────────────
@@ -187,6 +189,37 @@ fn scan_agents(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, CoreError> {
     Ok(out)
 }
 
+/// 扫 `<root>/commands/<name>.md`（Cursor / Claude 斜杠命令源）。
+fn scan_commands(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, CoreError> {
+    let commands_dir = root.join("commands");
+    if !commands_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::new();
+    for entry in WalkDir::new(&commands_dir)
+        .min_depth(1)
+        .max_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str() else {
+            continue;
+        };
+        if is_excluded(name) {
+            continue;
+        }
+        if name.ends_with(".md") {
+            out.push(commands_dir.join(name));
+        }
+    }
+    Ok(out)
+}
+
 // ── 公共 API ──────────────────────────────────────────────────────
 
 /// 扫描单个根目录下的 4 类资产。
@@ -204,6 +237,7 @@ pub fn scan_project_root(root: &Utf8Path) -> Result<ScanResult, CoreError> {
         rules: scan_rules(root)?,
         mcp_json: scan_mcp_json(root)?,
         agents: scan_agents(root)?,
+        commands: scan_commands(root)?,
     })
 }
 
@@ -245,6 +279,9 @@ pub fn scan_with_override(
             } else {
                 p.file_stem().map(str::to_owned)
             }
+        }),
+        commands: merge_override(&default.commands, &project.commands, |p| {
+            p.file_stem().map(str::to_owned)
         }),
     })
 }
@@ -446,6 +483,7 @@ mod tests {
         assert!(r.rules.is_empty());
         assert!(r.mcp_json.is_none());
         assert!(r.agents.is_empty());
+        assert!(r.commands.is_empty());
     }
 
     // ── scan_with_override:同名覆盖 / 异名附加 ──
