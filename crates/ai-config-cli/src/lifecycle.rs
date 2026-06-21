@@ -1083,16 +1083,20 @@ mod tests {
 
     /// 在测试期间,把 HOME 重定向到 tempdir,避免污染真实 ~/.config/ai-config
     /// 与 ~/.cursor/... 等。`HomeGuard` 析构时恢复。
+    static HOME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct HomeGuard {
         prev: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
     impl HomeGuard {
         fn set_to(p: &Path) -> Self {
+            let lock = HOME_TEST_LOCK.lock().expect("HOME test lock");
             let prev = std::env::var("HOME").ok();
             std::env::set_var("HOME", p);
             // 同时清掉 AI_CONFIG_HOME(防止旧 env 干扰)
             std::env::remove_var("AI_CONFIG_HOME");
-            Self { prev }
+            Self { prev, _lock: lock }
         }
     }
     impl Drop for HomeGuard {
@@ -1253,6 +1257,47 @@ mod tests {
         assert!(v["missing_secrets"].is_array());
         assert!(v["platform_capability_issues"].is_array());
 
+        drop(root_tmp);
+    }
+
+    #[test]
+    fn list_report_matches_fixture_assets() {
+        let (root_tmp, root) = make_project();
+        let report = super::list_report(&root).expect("list_report");
+        assert_eq!(report.count, 3);
+        let kinds: Vec<_> = report.assets.iter().map(|a| a.kind.as_str()).collect();
+        assert!(kinds.contains(&"skill"));
+        assert!(kinds.contains(&"rule"));
+        assert!(kinds.contains(&"mcp"));
+        drop(root_tmp);
+    }
+
+    #[test]
+    fn status_report_includes_per_platform_states() {
+        let (root_tmp, root) = make_project();
+        let home_tmp = tempfile::tempdir().expect("home");
+        let _home = HomeGuard::set_to(home_tmp.path());
+
+        let report = super::status_report(&root).expect("status_report");
+        assert_eq!(report.summary.total_assets, 3);
+        let mcp = report.projects[0]
+            .assets
+            .iter()
+            .find(|a| a.kind == "mcp")
+            .expect("mcp asset");
+        assert_eq!(mcp.platforms.len(), 4);
+        drop(root_tmp);
+    }
+
+    #[test]
+    fn sync_report_produces_outcomes() {
+        let (root_tmp, root) = make_project();
+        let home_tmp = tempfile::tempdir().expect("home");
+        let _home = HomeGuard::set_to(home_tmp.path());
+
+        let report = super::sync_report(&root).expect("sync_report");
+        assert!(!report.outcomes.is_empty());
+        assert!(report.synced > 0 || report.failed > 0);
         drop(root_tmp);
     }
 
