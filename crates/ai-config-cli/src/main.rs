@@ -11,14 +11,12 @@ use ai_config_core::paths;
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 
-mod agent_api;
 mod asset;
 mod daemon;
 mod lifecycle;
 mod mcp;
 mod output;
 mod secrets;
-mod serve;
 
 use output::OutputMode;
 
@@ -105,9 +103,6 @@ enum Cmd {
 
     /// shell 补全脚本
     Completion { shell: String },
-
-    /// 启动 MCP stdio 服务器，供 IDE Agent 外部控制资产
-    Serve,
 }
 
 #[derive(Debug, Subcommand)]
@@ -183,18 +178,6 @@ enum DaemonCmd {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-
-    if matches!(cli.cmd, Cmd::Serve) {
-        let default_root = resolve_root(cli.root.as_deref());
-        return match serve::run(default_root) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("ai-config serve: {e}");
-                ExitCode::from(5)
-            }
-        };
-    }
-
     let mode = OutputMode::from_flags(cli.json, cli.quiet);
 
     if !mode.is_quiet() && !mode.is_json() {
@@ -315,7 +298,6 @@ fn main() -> ExitCode {
         Cmd::List => lifecycle::run_list(&default_root, mode),
         Cmd::Show { name } => lifecycle::run_show(&default_root, &name, mode),
         Cmd::Doctor { materialize } => lifecycle::run_doctor(&default_root, mode, materialize),
-        Cmd::Serve => unreachable!("Serve handled before match"),
     }
 }
 
