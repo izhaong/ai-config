@@ -6,6 +6,8 @@ import { useMemoizedFn } from "ahooks";
 import { useEffect, useRef, useState } from "react";
 
 import { ConfirmModal } from "./components/feedback/ConfirmModal";
+import { AddSkillModal } from "./components/feedback/AddSkillModal";
+import { MarketplaceSkillModal } from "./components/feedback/MarketplaceSkillModal";
 import { RegisterProjectModal } from "./components/feedback/RegisterProjectModal";
 import { AssetListPane } from "./components/assets/AssetListPane";
 import { AssetToolbar } from "./components/assets/AssetToolbar";
@@ -19,6 +21,7 @@ import { useConfirm } from "./hooks/useConfirm";
 import { useGitSync } from "./hooks/useGitSync";
 import { useProjects } from "./hooks/useProjects";
 import { useToast } from "./hooks/useToast";
+import { PLATFORM_NAME } from "./platformIcons";
 import type { PlatformAssetList } from "./types";
 
 export function App() {
@@ -129,8 +132,11 @@ export function App() {
             }
             onToggleSelectAll={browser.toggleSelectAll}
             onBatchSyncPlatform={(plat) => void ops.batchSyncToPlatform(plat)}
+            onBatchUpdate={() => ops.batchUpdateEntries()}
             onBatchDelete={ops.requestBatchDelete}
             onOpenFolder={() => void ops.openBrowseFolder()}
+            onAddSkill={() => ops.openAddSkill()}
+            onAddMarketplace={() => ops.openAddMarketplace()}
           />
 
           <AssetListPane
@@ -153,6 +159,7 @@ export function App() {
             onToggleSelect={browser.toggleSelect}
             onOpenAsset={(entry) => void drawer.openAsset(entry)}
             onPlatformToggle={ops.handlePlatformToggle}
+            onUpdateEntry={ops.handleUpdateEntry}
             onDeleteEntry={ops.requestDeleteEntry}
             onCloseDrawer={drawer.closeDrawer}
             onDraftChange={drawer.setDrawerDraft}
@@ -213,6 +220,29 @@ export function App() {
           onSubmit={(name, rootPath) =>
             void projects.submitRegisterProject(name, rootPath)
           }
+        />
+      ) : null}
+
+      {ops.addSkillOpen ? (
+        <AddSkillModal
+          busy={busy}
+          platformLabel={PLATFORM_NAME[browser.activePlatform]}
+          onCancel={ops.closeAddSkill}
+          onSubmit={(source, skillName) =>
+            void ops.submitAddSkill(source, skillName)
+          }
+        />
+      ) : null}
+
+      {ops.marketplaceOpen ? (
+        <MarketplaceSkillModal
+          busy={busy}
+          activePlatform={browser.activePlatform}
+          activeProject={browser.activeProject}
+          setBusy={setBusy}
+          onCancel={ops.closeAddMarketplace}
+          onImported={(msg) => void ops.handleMarketplaceImported(msg)}
+          onError={ops.handleMarketplaceError}
         />
       ) : null}
     </div>

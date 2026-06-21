@@ -77,7 +77,13 @@ pub fn retract_all_platforms_best_effort(
                 continue;
             }
             if let Ok(adapter) = platform::for_scope(plat, deploy_base) {
-                let _ = mcp_json::remove_server_on_platform(plat, &adapter.mcp_deploy_path(), name);
+                let source_mcp = mcp_json::mcp_json_path(asset_mcp_root);
+                let _ = mcp_json::remove_server_on_platform(
+                    plat,
+                    &adapter.mcp_deploy_path(),
+                    name,
+                    Some(&source_mcp),
+                );
             }
         }
         return;
@@ -92,6 +98,20 @@ pub fn retract_all_platforms_best_effort(
         let Some(dest) = asset_dest_for_at_base(plat, kind, name, &src, deploy_base) else {
             continue;
         };
-        let _ = materialize::retract(&dest);
+        remove_platform_copy_best_effort(&dest);
+    }
+}
+
+fn remove_platform_copy_best_effort(dest: &Utf8Path) {
+    if materialize::retract(dest).is_ok() {
+        return;
+    }
+    if std::fs::symlink_metadata(dest.as_std_path()).is_err() {
+        return;
+    }
+    if dest.is_dir() {
+        let _ = std::fs::remove_dir_all(dest.as_std_path());
+    } else {
+        let _ = std::fs::remove_file(dest.as_std_path());
     }
 }

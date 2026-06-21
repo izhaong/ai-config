@@ -39,6 +39,12 @@ const cursorView: EntryPlatformToggleContext = {
   issueKey: () => false,
 };
 
+const claudeView: EntryPlatformToggleContext = {
+  activePlatform: "claude",
+  browsingSource: false,
+  issueKey: () => false,
+};
+
 describe("resolveEntryPlatformToggleAction", () => {
   it("已链接时收回", () => {
     expect(
@@ -60,14 +66,44 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("deploy");
   });
 
-  it("aiconfig 已纳管时 icon 不删源", () => {
+  it("aiconfig 已纳管时在其它平台视图收回 ai-config 副本", () => {
     expect(
       resolveEntryPlatformToggleAction(
         entry({ aiconfig: "linked" }),
         "aiconfig",
         cursorView,
       ),
+    ).toBe("retract");
+  });
+
+  it("源视图浏览 ai-config 时点击 ai-config icon 不收回", () => {
+    expect(
+      resolveEntryPlatformToggleAction(
+        entry({ aiconfig: "linked" }),
+        "aiconfig",
+        sourceView,
+      ),
     ).toBe("skip");
+  });
+
+  it("平台视图点击当前浏览平台不收回", () => {
+    expect(
+      resolveEntryPlatformToggleAction(
+        entry({ claude: "linked", cursor: "unlinked" }),
+        "claude",
+        claudeView,
+      ),
+    ).toBe("skip");
+  });
+
+  it("synced 态点击下发而非收回", () => {
+    expect(
+      resolveEntryPlatformToggleAction(
+        entry({ hermes: "synced", claude: "linked" }),
+        "hermes",
+        claudeView,
+      ),
+    ).toBe("platform_copy");
   });
 });
 
@@ -77,7 +113,9 @@ describe("resolveBatchPlatformToggleMode", () => {
       entry({ cursor: "linked", aiconfig: "linked" }),
       entry({ cursor: "linked", aiconfig: "linked" }),
     ];
-    expect(resolveBatchPlatformToggleMode(rows, "cursor")).toBe("retract_all");
+    expect(
+      resolveBatchPlatformToggleMode(rows, "cursor", "aiconfig", true),
+    ).toBe("retract_all");
   });
 
   it("部分或全未激活 → activate_all", () => {
@@ -89,10 +127,32 @@ describe("resolveBatchPlatformToggleMode", () => {
       entry({ cursor: "unlinked", aiconfig: "linked" }),
       entry({ cursor: "missing", aiconfig: "linked" }),
     ];
-    expect(resolveBatchPlatformToggleMode(partial, "cursor")).toBe(
-      "activate_all",
-    );
-    expect(resolveBatchPlatformToggleMode(none, "cursor")).toBe("activate_all");
+    expect(
+      resolveBatchPlatformToggleMode(partial, "cursor", "aiconfig", true),
+    ).toBe("activate_all");
+    expect(
+      resolveBatchPlatformToggleMode(none, "cursor", "aiconfig", true),
+    ).toBe("activate_all");
+  });
+
+  it("平台视图浏览 Claude 时批量不收回 Claude", () => {
+    const rows = [
+      entry({ claude: "linked", cursor: "unlinked" }),
+      entry({ claude: "linked", cursor: "linked" }),
+    ];
+    expect(
+      resolveBatchPlatformToggleMode(rows, "claude", "claude", false),
+    ).toBe("activate_all");
+  });
+
+  it("源视图浏览 ai-config 时批量不收回 ai-config", () => {
+    const rows = [
+      entry({ aiconfig: "linked" }),
+      entry({ aiconfig: "linked" }),
+    ];
+    expect(
+      resolveBatchPlatformToggleMode(rows, "aiconfig", "aiconfig", true),
+    ).toBe("activate_all");
   });
 });
 
@@ -126,7 +186,7 @@ describe("resolveBatchEntryPlatformAction", () => {
         linked,
         "cursor",
         "retract_all",
-        cursorView,
+        sourceView,
       ),
     ).toBe("retract");
     expect(
@@ -134,12 +194,24 @@ describe("resolveBatchEntryPlatformAction", () => {
         unlinked,
         "cursor",
         "retract_all",
+        sourceView,
+      ),
+    ).toBe("skip");
+  });
+
+  it("retract_all：平台视图浏览 Cursor 时不收回 Cursor", () => {
+    const linked = entry({ cursor: "linked" });
+    expect(
+      resolveBatchEntryPlatformAction(
+        linked,
+        "cursor",
+        "retract_all",
         cursorView,
       ),
     ).toBe("skip");
   });
 
-  it("retract_all：ai-config 批量永不删源", () => {
+  it("retract_all：ai-config 批量收回平台副本", () => {
     const linked = entry({ aiconfig: "linked" });
     expect(
       resolveBatchEntryPlatformAction(
@@ -147,6 +219,18 @@ describe("resolveBatchEntryPlatformAction", () => {
         "aiconfig",
         "retract_all",
         cursorView,
+      ),
+    ).toBe("retract");
+  });
+
+  it("retract_all：源视图浏览 ai-config 时不批量收回", () => {
+    const linked = entry({ aiconfig: "linked" });
+    expect(
+      resolveBatchEntryPlatformAction(
+        linked,
+        "aiconfig",
+        "retract_all",
+        sourceView,
       ),
     ).toBe("skip");
   });

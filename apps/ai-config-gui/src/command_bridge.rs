@@ -3,6 +3,7 @@
 use ai_config_core::asset_ops::{self, AssetFileDetail, ScopeRoots};
 use ai_config_core::error::CoreError;
 use ai_config_core::model::{AssetKind, PlatformId};
+use ai_config_core::skills_add::{self, SkillAddBatchItem, SkillAddBatchOutcome, SkillsAddParams};
 use camino::Utf8PathBuf;
 
 pub async fn blocking<T, F>(f: F) -> Result<T, String>
@@ -26,6 +27,22 @@ pub fn scope_roots<'a>(
         asset_root,
         deploy_base,
     }
+}
+
+pub async fn deploy_from_platform(
+    default_root: Utf8PathBuf,
+    asset_root: Utf8PathBuf,
+    deploy_base: Utf8PathBuf,
+    kind: AssetKind,
+    name: String,
+    from_plat: PlatformId,
+    to_plat: PlatformId,
+) -> Result<String, String> {
+    blocking(move || {
+        let scope = scope_roots(&default_root, &asset_root, &deploy_base);
+        asset_ops::deploy_from_platform(&scope, kind, &name, from_plat, to_plat)
+    })
+    .await
 }
 
 pub async fn deploy(
@@ -87,6 +104,20 @@ pub async fn save_content(
     .await
 }
 
+pub async fn retract_source(
+    default_root: Utf8PathBuf,
+    asset_root: Utf8PathBuf,
+    deploy_base: Utf8PathBuf,
+    kind: AssetKind,
+    name: String,
+) -> Result<String, String> {
+    blocking(move || {
+        let scope = scope_roots(&default_root, &asset_root, &deploy_base);
+        asset_ops::retract_source(&scope, kind, &name)
+    })
+    .await
+}
+
 pub async fn delete_source(
     default_root: Utf8PathBuf,
     asset_root: Utf8PathBuf,
@@ -108,4 +139,42 @@ pub async fn read_platform_preview(
 ) -> Result<AssetFileDetail, String> {
     let platform_path = camino::Utf8PathBuf::from(path);
     blocking(move || asset_ops::read_platform_preview(kind, &platform_path, &name)).await
+}
+
+pub async fn add_remote_skill(
+    default_root: Utf8PathBuf,
+    asset_root: Utf8PathBuf,
+    deploy_base: Utf8PathBuf,
+    source: String,
+    skill_name: Option<String>,
+    target_platform: PlatformId,
+) -> Result<String, String> {
+    blocking(move || {
+        let scope = scope_roots(&default_root, &asset_root, &deploy_base);
+        skills_add::add_remote_skill(
+            &scope,
+            SkillsAddParams {
+                source: &source,
+                skill_name: skill_name.as_deref(),
+                target_platform,
+                deploy_base: &deploy_base,
+                asset_root: &asset_root,
+            },
+        )
+    })
+    .await
+}
+
+pub async fn add_remote_skills_batch(
+    default_root: Utf8PathBuf,
+    asset_root: Utf8PathBuf,
+    deploy_base: Utf8PathBuf,
+    items: Vec<SkillAddBatchItem>,
+    platforms: Vec<PlatformId>,
+) -> Result<SkillAddBatchOutcome, String> {
+    blocking(move || {
+        let scope = scope_roots(&default_root, &asset_root, &deploy_base);
+        skills_add::add_remote_skills_batch(&scope, &items, &platforms, &deploy_base, &asset_root)
+    })
+    .await
 }

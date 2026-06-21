@@ -59,7 +59,10 @@ impl<'a> SettingsRepo<'a> {
 
     pub fn delete(&self, key: &str) -> Result<(), SettingsError> {
         self.with_conn(|conn| {
-            conn.execute("DELETE FROM settings WHERE key = ?1", rusqlite::params![key])?;
+            conn.execute(
+                "DELETE FROM settings WHERE key = ?1",
+                rusqlite::params![key],
+            )?;
             Ok(())
         })
     }
@@ -77,7 +80,12 @@ impl<'a> SettingsRepo<'a> {
     }
 
     pub fn set_git_config(&self, config: &GitSyncConfig) -> Result<(), SettingsError> {
-        match config.remote_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        match config
+            .remote_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(url) => self.set(KEY_GIT_REMOTE_URL, url)?,
             None => {
                 let _ = self.delete(KEY_GIT_REMOTE_URL);
@@ -111,7 +119,10 @@ mod tests {
         })
         .unwrap();
         let cfg = repo.git_config().unwrap();
-        assert_eq!(cfg.remote_url.as_deref(), Some("https://gitea.example/a.git"));
+        assert_eq!(
+            cfg.remote_url.as_deref(),
+            Some("https://gitea.example/a.git")
+        );
         assert_eq!(cfg.branch, "develop");
     }
 }

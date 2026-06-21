@@ -394,7 +394,11 @@ mod tests {
             .iter()
             .filter(|a| matches!(a, SyncAction::RenderMcp { .. }))
             .collect();
-        assert_eq!(creates.len(), 12, "skill 4 + rule 3 + agent 3 + command 2 = 12");
+        assert_eq!(
+            creates.len(),
+            12,
+            "skill 4 + rule 3 + agent 3 + command 2 = 12"
+        );
         assert_eq!(renders.len(), 4, "mcp 4 platforms = 4 RenderMcp");
         assert_eq!(actions.len(), 16);
     }

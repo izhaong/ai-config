@@ -17,7 +17,6 @@
 //! - 默认:人类可读
 //! - `--quiet`:只一行 `ok: <summary>` / `fail: <msg>`
 
-use std::collections::HashMap;
 use std::process::ExitCode;
 
 use camino::Utf8Path;
@@ -44,7 +43,6 @@ struct SyncContext {
     scan: source::ScanResult,
     /// secrets 已加载(key→value)。**绝不**回显 value 到日志 / stdout / JSON。
     secrets_pairs: Vec<(String, String)>,
-    secrets_map: HashMap<String, String>,
     actions: Vec<SyncAction>,
 }
 
@@ -53,21 +51,11 @@ fn load_context(default_root: &Utf8Path) -> Result<SyncContext, CoreError> {
     let project = ai_config_core::model::Project::new("default", default_root.to_path_buf());
     let actions = sync::compute_for_project(&project, default_root)?;
     let pairs = core_secrets::load()?;
-    let map = pairs_to_map(&pairs);
     Ok(SyncContext {
         scan,
         secrets_pairs: pairs,
-        secrets_map: map,
         actions,
     })
-}
-
-fn pairs_to_map(pairs: &[(String, String)]) -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    for (k, v) in pairs {
-        m.insert(k.clone(), v.clone());
-    }
-    m
 }
 
 fn all_platforms() -> [PlatformId; 4] {
@@ -224,9 +212,49 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
                         }
                     };
                     let dest = adapter.mcp_deploy_path();
-                    match mcp_json::deploy_mcp_json_file(src, &dest, *platform) {
-                        Ok(_) => out.push(Outcome::ok(label, *platform, "mcp")),
-                        Err(e) => out.push(Outcome::failed(label, *platform, "mcp", &e)),
+                    let asset_root = src.parent().unwrap_or(src);
+                    let server_names = match mcp_json::list_server_names(asset_root) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            out.push(Outcome::failed(label, *platform, "mcp", &e));
+                            continue;
+                        }
+                    };
+                    let mut ok = true;
+                    for server_name in &server_names {
+                        let config = match mcp_json::get_server_config(asset_root, server_name) {
+                            Ok(Some(c)) => c,
+                            Ok(None) => continue,
+                            Err(e) => {
+                                out.push(Outcome::failed(
+                                    format!("{label} `{server_name}`"),
+                                    *platform,
+                                    "mcp",
+                                    &e,
+                                ));
+                                ok = false;
+                                break;
+                            }
+                        };
+                        if let Err(e) = mcp_json::upsert_server_on_platform(
+                            *platform,
+                            &dest,
+                            server_name,
+                            &config,
+                            Some(src),
+                        ) {
+                            out.push(Outcome::failed(
+                                format!("{label} `{server_name}`"),
+                                *platform,
+                                "mcp",
+                                &e,
+                            ));
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        out.push(Outcome::ok(label, *platform, "mcp"));
                     }
                 }
             }
@@ -481,7 +509,7 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
 // ── 3. sync ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-struct SyncReport {
+pub struct SyncReport {
     ok: bool,
     synced: usize,
     failed: usize,
@@ -489,15 +517,9 @@ struct SyncReport {
     exit_code: u8,
 }
 
-/// `ai-config sync`(PRD §10 A-5)
-pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
+/// `ai-config sync` — 返回结构化报告（CLI / MCP 共用）。
+pub fn sync_report(default_root: &Utf8Path) -> Result<SyncReport, CoreError> {
+    let ctx = load_context(default_root)?;
     let outcomes = execute_all_actions(&ctx);
     let synced = outcomes
         .iter()
@@ -509,14 +531,27 @@ pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
     } else {
         exit_code::SUCCESS
     };
-
-    let report = SyncReport {
+    Ok(SyncReport {
         ok: code == exit_code::SUCCESS,
         synced,
         failed,
         outcomes,
         exit_code: code,
+    })
+}
+
+/// `ai-config sync`(PRD §10 A-5)
+pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+    let report = match sync_report(default_root) {
+        Ok(r) => r,
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
     };
+    let synced = report.synced;
+    let failed = report.failed;
+    let code = report.exit_code;
 
     if mode.is_json() {
         emit_json(mode, &report);
@@ -530,7 +565,7 @@ pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
 // ── 4. status ───────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-struct StatusReport {
+pub struct StatusReport {
     projects: Vec<ProjectStatus>,
     summary: StatusSummary,
 }
@@ -566,16 +601,9 @@ struct StatusSummary {
     missing: usize,
 }
 
-/// `ai-config status`(PRD §6.1)
-pub fn run_status(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-
+/// `ai-config status` — 返回结构化报告（CLI / MCP 共用）。
+pub fn status_report(default_root: &Utf8Path) -> Result<StatusReport, CoreError> {
+    let ctx = load_context(default_root)?;
     let assets = flat_assets(&ctx.scan);
     let mut asset_statuses: Vec<AssetStatus> = Vec::new();
     let mut summary = StatusSummary {
@@ -614,12 +642,23 @@ pub fn run_status(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
         });
     }
 
-    let report = StatusReport {
+    Ok(StatusReport {
         projects: vec![ProjectStatus {
             project: "default".to_string(),
             assets: asset_statuses,
         }],
         summary,
+    })
+}
+
+/// `ai-config status`(PRD §6.1)
+pub fn run_status(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+    let report = match status_report(default_root) {
+        Ok(r) => r,
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
     };
 
     if mode.is_json() {
@@ -725,27 +764,21 @@ fn describe_for(
 // ── 5. list ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-struct ListReport {
-    count: usize,
-    assets: Vec<AssetEntry>,
+pub struct ListReport {
+    pub count: usize,
+    pub assets: Vec<AssetEntry>,
 }
 
 #[derive(Debug, Serialize)]
-struct AssetEntry {
-    kind: String,
-    name: String,
-    source_path: String,
+pub struct AssetEntry {
+    pub kind: String,
+    pub name: String,
+    pub source_path: String,
 }
 
-/// `ai-config list`
-pub fn run_list(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
+/// `ai-config list` — 返回结构化报告（CLI / MCP 共用）。
+pub fn list_report(default_root: &Utf8Path) -> Result<ListReport, CoreError> {
+    let ctx = load_context(default_root)?;
     let assets = flat_assets(&ctx.scan);
     let entries: Vec<AssetEntry> = assets
         .iter()
@@ -755,10 +788,20 @@ pub fn run_list(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
             source_path: p.as_str().to_string(),
         })
         .collect();
-
-    let report = ListReport {
+    Ok(ListReport {
         count: entries.len(),
         assets: entries,
+    })
+}
+
+/// `ai-config list`
+pub fn run_list(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+    let report = match list_report(default_root) {
+        Ok(r) => r,
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
     };
 
     if mode.is_json() {
@@ -861,7 +904,41 @@ pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCo
 // ── 7. doctor ───────────────────────────────────────────────────
 
 /// `ai-config doctor`(PRD §6.2 / §10 A-10)
-pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode, materialize: bool) -> ExitCode {
+    if materialize {
+        match ai_config_core::doctor::materialize_legacy_symlink_deploys(default_root) {
+            Ok(repaired) => {
+                if mode.is_json() {
+                    emit_json(
+                        mode,
+                        &serde_json::json!({
+                            "ok": true,
+                            "action": "materialize_legacy_deploys",
+                            "repaired": repaired,
+                            "count": repaired.len(),
+                        }),
+                    );
+                } else if !mode.is_quiet() {
+                    emit_line(
+                        mode,
+                        format!(
+                            "doctor --materialize: 已迁移 {} 条 symlink/同 inode 下发为实体硬拷贝",
+                            repaired.len()
+                        ),
+                    );
+                    for line in &repaired {
+                        emit_line(mode, format!("  - {line}"));
+                    }
+                }
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+                return ExitCode::from(e.exit_code());
+            }
+        }
+    }
+
     let report = match ai_config_core::doctor::compute_report(default_root) {
         Ok(r) => r,
         Err(e) => {
@@ -1006,16 +1083,20 @@ mod tests {
 
     /// 在测试期间,把 HOME 重定向到 tempdir,避免污染真实 ~/.config/ai-config
     /// 与 ~/.cursor/... 等。`HomeGuard` 析构时恢复。
+    static HOME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     struct HomeGuard {
         prev: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
     impl HomeGuard {
         fn set_to(p: &Path) -> Self {
+            let lock = HOME_TEST_LOCK.lock().expect("HOME test lock");
             let prev = std::env::var("HOME").ok();
             std::env::set_var("HOME", p);
             // 同时清掉 AI_CONFIG_HOME(防止旧 env 干扰)
             std::env::remove_var("AI_CONFIG_HOME");
-            Self { prev }
+            Self { prev, _lock: lock }
         }
     }
     impl Drop for HomeGuard {
@@ -1176,6 +1257,47 @@ mod tests {
         assert!(v["missing_secrets"].is_array());
         assert!(v["platform_capability_issues"].is_array());
 
+        drop(root_tmp);
+    }
+
+    #[test]
+    fn list_report_matches_fixture_assets() {
+        let (root_tmp, root) = make_project();
+        let report = super::list_report(&root).expect("list_report");
+        assert_eq!(report.count, 3);
+        let kinds: Vec<_> = report.assets.iter().map(|a| a.kind.as_str()).collect();
+        assert!(kinds.contains(&"skill"));
+        assert!(kinds.contains(&"rule"));
+        assert!(kinds.contains(&"mcp"));
+        drop(root_tmp);
+    }
+
+    #[test]
+    fn status_report_includes_per_platform_states() {
+        let (root_tmp, root) = make_project();
+        let home_tmp = tempfile::tempdir().expect("home");
+        let _home = HomeGuard::set_to(home_tmp.path());
+
+        let report = super::status_report(&root).expect("status_report");
+        assert_eq!(report.summary.total_assets, 3);
+        let mcp = report.projects[0]
+            .assets
+            .iter()
+            .find(|a| a.kind == "mcp")
+            .expect("mcp asset");
+        assert_eq!(mcp.platforms.len(), 4);
+        drop(root_tmp);
+    }
+
+    #[test]
+    fn sync_report_produces_outcomes() {
+        let (root_tmp, root) = make_project();
+        let home_tmp = tempfile::tempdir().expect("home");
+        let _home = HomeGuard::set_to(home_tmp.path());
+
+        let report = super::sync_report(&root).expect("sync_report");
+        assert!(!report.outcomes.is_empty());
+        assert!(report.synced > 0 || report.failed > 0);
         drop(root_tmp);
     }
 

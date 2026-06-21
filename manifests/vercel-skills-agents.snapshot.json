@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Upstream skill paths from vercel-labs/skills src/agents.ts. Refresh when upstream changes paths.",
+  "upstream": {
+    "repo": "https://github.com/vercel-labs/skills",
+    "source_file": "src/agents.ts",
+    "sync_readme_script": "scripts/sync-agents.ts",
+    "snapshot_note": "Manually updated from agents.ts; not auto-synced in CI"
+  },
+  "install_cli": {
+    "command": "npx skills add",
+    "global_flag": "-g",
+    "copy_flag": "--copy",
+    "default_mode": "symlink",
+    "universal_skills_dir": ".agents/skills"
+  },
+  "agents": {
+    "cursor": {
+      "vercel_agent_key": "cursor",
+      "display_name": "Cursor",
+      "skills_dir_project": ".agents/skills",
+      "skills_dir_global": "~/.cursor/skills",
+      "env_overrides": {}
+    },
+    "codex": {
+      "vercel_agent_key": "codex",
+      "display_name": "Codex",
+      "skills_dir_project": ".agents/skills",
+      "skills_dir_global": "~/.codex/skills",
+      "env_overrides": {
+        "CODEX_HOME": "Replaces ~/.codex for globalSkillsDir"
+      }
+    },
+    "claude-code": {
+      "vercel_agent_key": "claude-code",
+      "ai_config_platform_id": "claude",
+      "display_name": "Claude Code",
+      "skills_dir_project": ".claude/skills",
+      "skills_dir_global": "~/.claude/skills",
+      "env_overrides": {
+        "CLAUDE_CONFIG_DIR": "Replaces ~/.claude for globalSkillsDir"
+      }
+    },
+    "hermes-agent": {
+      "vercel_agent_key": "hermes-agent",
+      "ai_config_platform_id": "hermes",
+      "display_name": "Hermes Agent",
+      "skills_dir_project": ".hermes/skills",
+      "skills_dir_global": "~/.hermes/skills",
+      "env_overrides": {
+        "HERMES_HOME": "Replaces ~/.hermes for globalSkillsDir"
+      }
+    }
+  },
+  "ai_config_divergence": {
+    "note": "ai-config project scope uses per-IDE dirs; vercel uses .agents/skills for cursor/codex project",
+    "project_scope": {
+      "cursor": {
+        "ai_config": "<repo>/.cursor/skills",
+        "vercel": "<repo>/.agents/skills"
+      },
+      "codex": {
+        "ai_config": "<repo>/.codex/skills",
+        "vercel": "<repo>/.agents/skills"
+      },
+      "claude": {
+        "ai_config": "<repo>/.claude/skills",
+        "vercel": "<repo>/.claude/skills"
+      },
+      "hermes": {
+        "ai_config": "~/.hermes/skills (always global in ai-config)",
+        "vercel": "<repo>/.hermes/skills"
+      }
+    }
+  }
+}

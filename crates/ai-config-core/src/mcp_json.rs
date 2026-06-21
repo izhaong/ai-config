@@ -150,6 +150,7 @@ pub fn deploy_mcp_json_file(
     if plat == PlatformId::Hermes {
         return hermes_config::deploy_all_from_mcp_json(src, dest);
     }
+    ensure_platform_mcp_independent(dest, src)?;
     let Some(doc) = read_mcp_json(src)? else {
         return Err(CoreError::TemplateRender {
             template: src.to_string(),
@@ -162,9 +163,23 @@ pub fn deploy_mcp_json_file(
 
 /// 收回平台 MCP（Hermes 仅移除 `mcp_servers` 中 ai-config 管理的条目，见 per-server retract）。
 pub fn retract_platform_mcp_json(dest: &Utf8Path, plat: PlatformId) -> Result<(), CoreError> {
+    retract_platform_mcp_json_with_source(dest, plat, None)
+}
+
+/// 收回平台 MCP 整文件；若与 `source_mcp` 同路径则 noop，避免误删 ai-config 源。
+pub fn retract_platform_mcp_json_with_source(
+    dest: &Utf8Path,
+    plat: PlatformId,
+    source_mcp: Option<&Utf8Path>,
+) -> Result<(), CoreError> {
     if plat == PlatformId::Hermes {
         // 整文件 retract 不删除 config.yaml；per-server 用 remove_server_on_platform。
         return Ok(());
+    }
+    if let Some(src) = source_mcp {
+        if dest.as_str() == src.as_str() {
+            return Ok(());
+        }
     }
     if dest.is_file() {
         std::fs::remove_file(dest.as_std_path()).map_err(CoreError::Io)?;
@@ -276,13 +291,43 @@ pub fn server_transport_summary(config: &Value) -> String {
     }
 }
 
+/// 平台 `mcp.json` 是否与 ai-config 源共用同一文件（symlink / 硬链接 / 同路径）。
+pub fn platform_mcp_aliases_source(dest: &Utf8Path, source_mcp: &Utf8Path) -> bool {
+    crate::path_independence::paths_alias(dest, source_mcp)
+}
+
+/// 若平台 MCP 文件与源共用 inode/路径，则 materialize 为独立副本（硬拷贝 JSON 内容）。
+pub fn ensure_platform_mcp_independent(
+    dest: &Utf8Path,
+    source_mcp: &Utf8Path,
+) -> Result<(), CoreError> {
+    if !platform_mcp_aliases_source(dest, source_mcp) {
+        return Ok(());
+    }
+    let doc = match read_mcp_json(dest)? {
+        Some(d) => d,
+        None => read_mcp_json(source_mcp)?.unwrap_or_else(empty_mcp_document),
+    };
+    if let Some(parent) = dest.parent() {
+        crate::paths::ensure_parent_dir(parent)?;
+    }
+    if dest.exists() || std::fs::symlink_metadata(dest.as_std_path()).is_ok() {
+        std::fs::remove_file(dest.as_std_path()).map_err(CoreError::Io)?;
+    }
+    atomic_write_json(dest, &normalize_mcp_document(doc))
+}
+
 /// 向平台 MCP 写入/更新单条 server(保留其它 key)。
 pub fn upsert_server_on_platform(
     plat: PlatformId,
     dest: &Utf8Path,
     name: &str,
     config: &Value,
+    source_mcp: Option<&Utf8Path>,
 ) -> Result<(), CoreError> {
+    if let Some(src) = source_mcp.filter(|_| plat != PlatformId::Hermes) {
+        ensure_platform_mcp_independent(dest, src)?;
+    }
     match plat {
         PlatformId::Hermes => hermes_config::upsert_mcp_server(dest, name, config),
         _ => upsert_mcp_server_entry(dest, name, config.clone()),
@@ -294,7 +339,11 @@ pub fn remove_server_on_platform(
     plat: PlatformId,
     dest: &Utf8Path,
     name: &str,
+    source_mcp: Option<&Utf8Path>,
 ) -> Result<(), CoreError> {
+    if let Some(src) = source_mcp.filter(|_| plat != PlatformId::Hermes) {
+        ensure_platform_mcp_independent(dest, src)?;
+    }
     match plat {
         PlatformId::Hermes => hermes_config::remove_mcp_server(dest, name),
         _ => remove_mcp_server_entry(dest, name),
@@ -379,16 +428,93 @@ mod tests {
         let cfg = serde_json::json!({ "command": "uvx", "args": ["mcp-server"] });
         upsert_server_in_document(&root, "svc-a", cfg.clone()).unwrap();
         let plat_mcp = root.join("plat-mcp.json");
-        upsert_server_on_platform(PlatformId::Cursor, &plat_mcp, "svc-a", &cfg).unwrap();
+        upsert_server_on_platform(PlatformId::Cursor, &plat_mcp, "svc-a", &cfg, None).unwrap();
         assert_eq!(
             mcp_server_sync_state_on_platform(&root, "svc-a", PlatformId::Cursor, &plat_mcp),
             McpSyncState::Linked
         );
-        remove_server_on_platform(PlatformId::Cursor, &plat_mcp, "svc-a").unwrap();
+        remove_server_on_platform(PlatformId::Cursor, &plat_mcp, "svc-a", None).unwrap();
         assert_eq!(
             mcp_server_sync_state_on_platform(&root, "svc-a", PlatformId::Cursor, &plat_mcp),
             McpSyncState::Unlinked
         );
+    }
+
+    /// 删一条 server 必须保留其它 server 与顶层字段。
+    /// 这是 GUI「点击 Cursor 图标删除整个 mcp 记录」问题的核心防护：
+    /// 任何路径都不应清空 mcpServers 整张表。
+    #[test]
+    fn remove_one_server_keeps_others_and_top_level_fields() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+
+        let cfg_a = serde_json::json!({ "command": "uvx", "args": ["a"] });
+        let cfg_b = serde_json::json!({ "url": "https://example.com/b" });
+        let cfg_c = serde_json::json!({ "type": "stdio", "command": "c" });
+
+        upsert_server_in_document(&root, "alpha", cfg_a.clone()).unwrap();
+        upsert_server_in_document(&root, "beta", cfg_b.clone()).unwrap();
+        upsert_server_in_document(&root, "gamma", cfg_c.clone()).unwrap();
+
+        // 删 alpha
+        remove_server_from_document(&root, "alpha").unwrap();
+
+        let names = list_server_names(&root).unwrap();
+        assert_eq!(names, vec!["beta".to_string(), "gamma".to_string()]);
+
+        // 顶层 mcpServers 仍存在
+        let doc = load_mcp_document(&root).unwrap().unwrap();
+        assert!(doc.get("mcpServers").and_then(|v| v.as_object()).is_some());
+        assert_eq!(doc["mcpServers"]["beta"], cfg_b);
+        assert_eq!(doc["mcpServers"]["gamma"], cfg_c);
+        assert!(doc["mcpServers"].get("alpha").is_none());
+
+        // 删不存在的 server：noop，其它仍保留
+        remove_server_from_document(&root, "alpha").unwrap();
+        remove_server_from_document(&root, "nonexistent").unwrap();
+        let names = list_server_names(&root).unwrap();
+        assert_eq!(names, vec!["beta".to_string(), "gamma".to_string()]);
+    }
+
+    /// IDE 平台 mcp.json：删一条 server 不影响其它 server，也不影响 mcp.json 文件本身存在。
+    #[test]
+    fn remove_platform_server_keeps_other_servers() {
+        let tmp = TempDir::new().unwrap();
+        let plat = tmp.path().join(".cursor").join("mcp.json");
+        std::fs::create_dir_all(plat.parent().unwrap()).unwrap();
+
+        let cfg_a = serde_json::json!({ "command": "uvx", "args": ["a"] });
+        let cfg_b = serde_json::json!({ "command": "uvx", "args": ["b"] });
+
+        upsert_server_on_platform(
+            PlatformId::Cursor,
+            &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(),
+            "alpha",
+            &cfg_a,
+            None,
+        )
+        .unwrap();
+        upsert_server_on_platform(
+            PlatformId::Cursor,
+            &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(),
+            "beta",
+            &cfg_b,
+            None,
+        )
+        .unwrap();
+
+        remove_server_on_platform(
+            PlatformId::Cursor,
+            &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(),
+            "alpha",
+            None,
+        )
+        .unwrap();
+
+        let raw = std::fs::read_to_string(&plat).unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(doc["mcpServers"].get("alpha").is_none());
+        assert_eq!(doc["mcpServers"]["beta"], cfg_b);
     }
 
     #[test]
@@ -405,7 +531,7 @@ mod tests {
         });
         upsert_server_in_document(&root, "svc-a", cfg.clone()).unwrap();
         let dest = hermes_config::hermes_config_path_at(&home);
-        upsert_server_on_platform(PlatformId::Hermes, &dest, "svc-a", &cfg).unwrap();
+        upsert_server_on_platform(PlatformId::Hermes, &dest, "svc-a", &cfg, None).unwrap();
         assert_eq!(
             mcp_server_sync_state_on_platform(&root, "svc-a", PlatformId::Hermes, &dest),
             McpSyncState::Linked
@@ -413,5 +539,46 @@ mod tests {
         let raw = fs::read_to_string(dest.as_std_path()).unwrap();
         assert!(raw.contains("mcp_servers:"));
         assert!(!raw.contains("type:"));
+    }
+
+    /// 平台 mcp.json 若 symlink 到 ai-config 源，retract 单条 server 不得改动源文件。
+    #[test]
+    #[cfg(unix)]
+    fn remove_platform_server_does_not_mutate_symlinked_source() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let source_mcp = root.join("mcp.json");
+        let plat_dir = root.join(".cursor");
+        std::fs::create_dir_all(&plat_dir).unwrap();
+        let plat_mcp = plat_dir.join("mcp.json");
+
+        let cfg_a = serde_json::json!({ "command": "uvx", "args": ["a"] });
+        let cfg_b = serde_json::json!({ "command": "uvx", "args": ["b"] });
+        upsert_server_in_document(&root, "alpha", cfg_a.clone()).unwrap();
+        upsert_server_in_document(&root, "beta", cfg_b.clone()).unwrap();
+
+        std::os::unix::fs::symlink(&source_mcp, plat_mcp.as_std_path()).unwrap();
+        assert!(platform_mcp_aliases_source(&plat_mcp, &source_mcp));
+
+        remove_server_on_platform(PlatformId::Cursor, &plat_mcp, "alpha", Some(&source_mcp))
+            .unwrap();
+
+        let source_names = list_server_names(&root).unwrap();
+        assert_eq!(
+            source_names,
+            vec!["alpha".to_string(), "beta".to_string()],
+            "源 mcp.json 不得因平台 retract 丢失条目"
+        );
+
+        let plat_raw = std::fs::read_to_string(plat_mcp.as_std_path()).unwrap();
+        let plat_doc: serde_json::Value = serde_json::from_str(&plat_raw).unwrap();
+        assert!(plat_doc["mcpServers"].get("alpha").is_none());
+        assert_eq!(plat_doc["mcpServers"]["beta"], cfg_b);
+        assert!(
+            std::fs::symlink_metadata(plat_mcp.as_std_path())
+                .map(|m| !m.file_type().is_symlink())
+                .unwrap_or(false),
+            "materialize 后平台文件应为独立副本"
+        );
     }
 }

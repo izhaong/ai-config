@@ -1,5 +1,9 @@
 //! 5 平台适配器:ai-config 资产源 + 4 个 IDE 下发目标。
 //!
+//! **Skills 路径上游参考**：[vercel-labs/skills](https://github.com/vercel-labs/skills) `src/agents.ts`；
+//! 文档 `docs/reference/vercel-skills-agent-paths.md`，快照 `manifests/vercel-skills-agents.snapshot.json`。
+//! 上游变更时先更新参考文档/快照，再评估是否改本模块。
+//!
 //! 目录约定(PRD §7.1 + ARCHITECTURE §4.3 + §5):
 //! - **ai-config**: `<asset_root>/skills|rules|agents/` + `<asset_root>/mcp.json`
 //! - **Cursor**: `<base>/.cursor/skills|rules|agents|commands/` + `mcp.json`
@@ -444,12 +448,8 @@ pub fn capability_skip_reason(plat: PlatformId, kind: AssetKind) -> String {
         (PlatformId::Hermes, AssetKind::Agent) => {
             "Hermes 无静态 agents 目录；请用项目 AGENTS.md 或 delegate_task 子代理".into()
         }
-        (PlatformId::Codex, AssetKind::Command) => {
-            "Codex 无斜杠 commands 目录，不支持下发".into()
-        }
-        (PlatformId::Hermes, AssetKind::Command) => {
-            "Hermes 无斜杠 commands，不支持下发".into()
-        }
+        (PlatformId::Codex, AssetKind::Command) => "Codex 无斜杠 commands 目录，不支持下发".into(),
+        (PlatformId::Hermes, AssetKind::Command) => "Hermes 无斜杠 commands，不支持下发".into(),
         _ => format!(
             "platform `{}` 不支持 asset kind `{}`",
             platform_label(plat),

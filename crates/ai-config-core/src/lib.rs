@@ -24,10 +24,15 @@ pub mod link;
 pub mod materialize;
 pub mod mcp_json;
 pub mod model;
+pub mod path_independence;
 pub mod paths;
 pub mod platform;
 pub mod platform_scan;
 pub mod secrets;
+pub mod skills_add;
 pub mod source;
 pub mod sync;
 pub mod template;
+
+#[cfg(test)]
+pub(crate) mod test_env;

@@ -8,14 +8,14 @@
 //! |---|---|---|---|
 //! | `cmd_doctor` | — | `DoctorSummary` | (占位,W10 接真值) |
 //! | `cmd_list` | `project?` | `AssetList` | `source::scan_project_root`(项目) / 全局根 |
-//! | `cmd_skill_deploy` | `name, project, to` | `String` | `link::link` |
-//! | `cmd_skill_retract` | `name, project, from` | `String` | `link::unlink` |
-//! | `cmd_rule_deploy` | 同上 | `String` | `link::link`(.mdc 后缀) |
-//! | `cmd_rule_retract` | 同上 | `String` | `link::unlink` |
+//! | `cmd_skill_deploy` | `name, project, to` | `String` | `materialize::deploy`（实体硬拷贝） |
+//! | `cmd_skill_retract` | `name, project, from` | `String` | `materialize::retract` |
+//! | `cmd_rule_deploy` | 同上 | `String` | `materialize::deploy` |
+//! | `cmd_rule_retract` | 同上 | `String` | `materialize::retract` |
 //! | `cmd_mcp_deploy` | 同上 | `String` | `mcp_json::upsert_server_on_platform` |
 //! | `cmd_mcp_retract` | 同上 | `String` | `mcp_json::remove_server_on_platform` |
-//! | `cmd_agent_deploy` | 同上 | `String` | `link::link`(保留原 ext) |
-//! | `cmd_agent_retract` | 同上 | `String` | `link::unlink` |
+//! | `cmd_agent_deploy` | 同上 | `String` | `materialize::deploy` |
+//! | `cmd_agent_retract` | 同上 | `String` | `materialize::retract` |
 //! | `cmd_projects_list` | — | `Vec<Project>` | `Store::projects().list()` |
 //! | `cmd_projects_add` | `name, root_path` | `Project` | `Store::projects().add()` |
 //! | `cmd_projects_remove` | `name` | `()` | `Store::projects().remove()` |
@@ -26,6 +26,7 @@
 //! 同步阻塞 IO 走 `tokio::task::spawn_blocking` 包裹,避免锁住 Tauri runtime。
 
 mod command_bridge;
+mod marketplace;
 
 use std::sync::{Arc, Mutex};
 
@@ -50,8 +51,8 @@ use ai_config_core::template::McpSyncState;
 use ai_config_store::Store;
 use ai_config_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
 
-use ai_config_core::asset_ops::AssetFileDetail;
 use ai_config_core::asset_ops::parse_skill_meta;
+use ai_config_core::asset_ops::AssetFileDetail;
 
 // ── 共享状态 ──────────────────────────────────────────────────────
 
@@ -126,8 +127,10 @@ struct AssetEntry {
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum LinkState {
-    /// 链接存在且指向 src
+    /// 链接存在且指向 src（本工具纳管）
     Linked,
+    /// 内容一致但非本工具下发
+    Synced,
     /// dest 不存在
     Unlinked,
     /// dest 存在但不是链接,或源丢了(破损)
@@ -294,7 +297,13 @@ async fn cmd_list(
                     _ => src.clone(),
                 };
                 match materialize::check(&dest, &expected_src) {
-                    materialize::DeployHealth::Linked { .. } => LinkState::Linked,
+                    materialize::DeployHealth::Linked { .. } => {
+                        if materialize::is_managed_deploy(&dest) {
+                            LinkState::Linked
+                        } else {
+                            LinkState::Synced
+                        }
+                    }
                     materialize::DeployHealth::Broken => LinkState::Broken,
                     materialize::DeployHealth::Unlinked => LinkState::Unlinked,
                 }
@@ -425,6 +434,90 @@ async fn cmd_skill_import(
     .map_err(|e| format!("spawn_blocking join: {e}"))?
     .map_err(|e| e.to_string())?;
     Ok(format!("skill `{name_for_msg}` 已导入到 {dest}"))
+}
+
+/// 通过 `npx skills add` 从远程仓库安装 skill 到当前浏览平台。
+#[tauri::command]
+async fn cmd_skill_add(
+    state: State<'_, AppState>,
+    source: String,
+    skill_name: Option<String>,
+    project: Option<String>,
+    target_platform: String,
+) -> Result<String, String> {
+    let plat = parse_plat(&target_platform)?;
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::add_remote_skill(
+        default_root,
+        asset_root,
+        deploy_base,
+        source,
+        skill_name,
+        plat,
+    )
+    .await
+}
+
+/// 批量通过 `npx skills add` 安装到多个平台。
+#[tauri::command]
+async fn cmd_skill_add_batch(
+    state: State<'_, AppState>,
+    project: Option<String>,
+    skills: Vec<SkillAddBatchItemDto>,
+    target_platforms: Vec<String>,
+) -> Result<ai_config_core::skills_add::SkillAddBatchOutcome, String> {
+    if skills.is_empty() {
+        return Err("未选择任何 skill".into());
+    }
+    if target_platforms.is_empty() {
+        return Err("未选择任何目标平台".into());
+    }
+    let platforms: Result<Vec<PlatformId>, String> =
+        target_platforms.iter().map(|s| parse_plat(s)).collect();
+    let platforms = platforms?;
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let items: Vec<ai_config_core::skills_add::SkillAddBatchItem> = skills
+        .into_iter()
+        .map(|s| ai_config_core::skills_add::SkillAddBatchItem {
+            source: s.source,
+            skill_name: s.skill_name,
+        })
+        .collect();
+    command_bridge::add_remote_skills_batch(default_root, asset_root, deploy_base, items, platforms)
+        .await
+}
+
+#[derive(serde::Deserialize)]
+struct SkillAddBatchItemDto {
+    source: String,
+    skill_name: Option<String>,
+}
+
+/// 拉取 [Claude Marketplace](https://www.claudemarketplace.net/skills) skill 列表。
+#[tauri::command]
+async fn cmd_marketplace_list_skills(
+    sort: String,
+    q: Option<String>,
+    source_filter: Option<String>,
+    offset: Option<u32>,
+    limit: Option<u32>,
+) -> Result<marketplace::MarketplaceListResult, String> {
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(50);
+    let sort_owned = sort;
+    let q_owned = q;
+    let source_owned = source_filter;
+    tokio::task::spawn_blocking(move || {
+        marketplace::list_skills(
+            &sort_owned,
+            q_owned.as_deref(),
+            source_owned.as_deref(),
+            offset,
+            limit,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
 }
 
 #[tauri::command]
@@ -647,6 +740,24 @@ macro_rules! asset_deploy_cmd {
     };
 }
 
+macro_rules! asset_deploy_from_platform_cmd {
+    ($fn:ident, $kind:expr) => {
+        #[tauri::command]
+        async fn $fn(
+            state: State<'_, AppState>,
+            name: String,
+            project: Option<String>,
+            from: String,
+            to: String,
+        ) -> Result<String, String> {
+            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
+            let from_plat = parse_deploy_plat(&from)?;
+            let to_plat = parse_deploy_plat(&to)?;
+            command_bridge::deploy_from_platform(dr, ar, db, $kind, name, from_plat, to_plat).await
+        }
+    };
+}
+
 macro_rules! asset_retract_cmd {
     ($fn:ident, $kind:expr) => {
         #[tauri::command]
@@ -657,7 +768,7 @@ macro_rules! asset_retract_cmd {
             from: String,
         ) -> Result<String, String> {
             let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
-            let plat = parse_deploy_plat(&from)?;
+            let plat = platform::parse_platform_str(&from).map_err(|e| e.to_string())?;
             command_bridge::retract(dr, ar, db, $kind, name, plat).await
         }
     };
@@ -692,6 +803,20 @@ macro_rules! asset_save_cmd {
     };
 }
 
+macro_rules! asset_retract_source_cmd {
+    ($fn:ident, $kind:expr) => {
+        #[tauri::command]
+        async fn $fn(
+            state: State<'_, AppState>,
+            name: String,
+            project: Option<String>,
+        ) -> Result<String, String> {
+            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
+            command_bridge::retract_source(dr, ar, db, $kind, name).await
+        }
+    };
+}
+
 macro_rules! asset_delete_cmd {
     ($fn:ident, $kind:expr) => {
         #[tauri::command]
@@ -707,33 +832,42 @@ macro_rules! asset_delete_cmd {
 }
 
 asset_deploy_cmd!(cmd_skill_deploy, AssetKind::Skill);
+asset_deploy_from_platform_cmd!(cmd_skill_deploy_from_platform, AssetKind::Skill);
 asset_get_cmd!(cmd_skill_get, AssetKind::Skill);
 asset_save_cmd!(cmd_skill_save, AssetKind::Skill);
 asset_delete_cmd!(cmd_skill_delete, AssetKind::Skill);
+asset_retract_source_cmd!(cmd_skill_retract_source, AssetKind::Skill);
 asset_retract_cmd!(cmd_skill_retract, AssetKind::Skill);
 
 asset_deploy_cmd!(cmd_rule_deploy, AssetKind::Rule);
+asset_deploy_from_platform_cmd!(cmd_rule_deploy_from_platform, AssetKind::Rule);
 asset_get_cmd!(cmd_rule_get, AssetKind::Rule);
 asset_save_cmd!(cmd_rule_save, AssetKind::Rule);
 asset_delete_cmd!(cmd_rule_delete, AssetKind::Rule);
+asset_retract_source_cmd!(cmd_rule_retract_source, AssetKind::Rule);
 asset_retract_cmd!(cmd_rule_retract, AssetKind::Rule);
 
 asset_deploy_cmd!(cmd_command_deploy, AssetKind::Command);
+asset_deploy_from_platform_cmd!(cmd_command_deploy_from_platform, AssetKind::Command);
 asset_get_cmd!(cmd_command_get, AssetKind::Command);
 asset_save_cmd!(cmd_command_save, AssetKind::Command);
 asset_delete_cmd!(cmd_command_delete, AssetKind::Command);
+asset_retract_source_cmd!(cmd_command_retract_source, AssetKind::Command);
 asset_retract_cmd!(cmd_command_retract, AssetKind::Command);
 
 asset_deploy_cmd!(cmd_mcp_deploy, AssetKind::Mcp);
 asset_get_cmd!(cmd_mcp_get, AssetKind::Mcp);
 asset_save_cmd!(cmd_mcp_save, AssetKind::Mcp);
 asset_delete_cmd!(cmd_mcp_delete, AssetKind::Mcp);
+asset_retract_source_cmd!(cmd_mcp_retract_source, AssetKind::Mcp);
 asset_retract_cmd!(cmd_mcp_retract, AssetKind::Mcp);
 
 asset_deploy_cmd!(cmd_agent_deploy, AssetKind::Agent);
+asset_deploy_from_platform_cmd!(cmd_agent_deploy_from_platform, AssetKind::Agent);
 asset_get_cmd!(cmd_agent_get, AssetKind::Agent);
 asset_save_cmd!(cmd_agent_save, AssetKind::Agent);
 asset_delete_cmd!(cmd_agent_delete, AssetKind::Agent);
+asset_retract_source_cmd!(cmd_agent_retract_source, AssetKind::Agent);
 asset_retract_cmd!(cmd_agent_retract, AssetKind::Agent);
 
 #[tauri::command]
@@ -1133,7 +1267,12 @@ async fn cmd_git_pull(state: State<'_, AppState>) -> Result<String, String> {
     let store = Arc::clone(&state.store);
     tokio::task::spawn_blocking(move || {
         let config = store.settings().git_config().map_err(|e| e.to_string())?;
-        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+        if config
+            .remote_url
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
             return Err("未配置远程仓库".to_string());
         }
         git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
@@ -1154,7 +1293,12 @@ async fn cmd_git_push(state: State<'_, AppState>) -> Result<String, String> {
     let store = Arc::clone(&state.store);
     tokio::task::spawn_blocking(move || {
         let config = store.settings().git_config().map_err(|e| e.to_string())?;
-        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+        if config
+            .remote_url
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
             return Err("未配置远程仓库".to_string());
         }
         git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
@@ -1205,6 +1349,9 @@ pub fn run() {
             cmd_list_platform,
             cmd_platform_kind_paths,
             cmd_skill_import,
+            cmd_skill_add,
+            cmd_skill_add_batch,
+            cmd_marketplace_list_skills,
             cmd_rule_import,
             cmd_command_import,
             cmd_agent_import,
@@ -1212,27 +1359,36 @@ pub fn run() {
             cmd_skill_get,
             cmd_skill_save,
             cmd_skill_delete,
+            cmd_skill_retract_source,
             cmd_skill_deploy,
+            cmd_skill_deploy_from_platform,
             cmd_skill_retract,
             cmd_rule_get,
             cmd_rule_save,
             cmd_rule_delete,
+            cmd_rule_retract_source,
             cmd_rule_deploy,
+            cmd_rule_deploy_from_platform,
             cmd_rule_retract,
             cmd_command_get,
             cmd_command_save,
             cmd_command_delete,
+            cmd_command_retract_source,
             cmd_command_deploy,
+            cmd_command_deploy_from_platform,
             cmd_command_retract,
             cmd_mcp_get,
             cmd_mcp_save,
             cmd_mcp_delete,
+            cmd_mcp_retract_source,
             cmd_mcp_deploy,
             cmd_mcp_retract,
             cmd_agent_get,
             cmd_agent_save,
             cmd_agent_delete,
+            cmd_agent_retract_source,
             cmd_agent_deploy,
+            cmd_agent_deploy_from_platform,
             cmd_agent_retract,
             cmd_projects_list,
             cmd_projects_add,

@@ -49,6 +49,8 @@ tauri-build = { version = "2.5", features = [] }
 tauri-plugin-shell = "2.0"
 # 时间
 chrono = { version = "0.4", features = ["serde"] }
+# HTTP（GUI marketplace）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 
 # 仅测试
 tempfile = "3"

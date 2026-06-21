@@ -32,6 +32,56 @@ pub struct AssetFileDetail {
     pub parent_path: String,
 }
 
+/// 从已安装平台硬拷贝到另一平台（无 ai-config 源时，平台视图跨 IDE 同步）。
+pub fn deploy_from_platform(
+    scope: &ScopeRoots<'_>,
+    kind: AssetKind,
+    name: &str,
+    from_plat: PlatformId,
+    to_plat: PlatformId,
+) -> Result<String, CoreError> {
+    ensure_deploy_target(from_plat)?;
+    ensure_deploy_target(to_plat)?;
+    if from_plat == to_plat {
+        return Err(CoreError::InvalidPath("来源平台与目标平台不能相同".into()));
+    }
+    ensure_platform_supports(scope, from_plat, kind)?;
+    ensure_platform_supports(scope, to_plat, kind)?;
+    if kind == AssetKind::Mcp {
+        return Err(CoreError::InvalidPath(
+            "MCP 请使用导入到源后再下发，或单独编辑 mcp.json".into(),
+        ));
+    }
+
+    let from_adapter =
+        platform::for_scope_with_asset(from_plat, scope.deploy_base, scope.asset_root)?;
+    let to_adapter = platform::for_scope_with_asset(to_plat, scope.deploy_base, scope.asset_root)?;
+    let (from_src, dest) =
+        platform_asset_paths(from_adapter.as_ref(), to_adapter.as_ref(), kind, name)?;
+
+    if !from_src.exists() {
+        return Err(CoreError::AssetNotFound {
+            kind,
+            name: name.into(),
+            hint: format!(
+                "平台 `{}` 上找不到 {kind:?} `{name}`",
+                platform::platform_label(from_plat)
+            ),
+        });
+    }
+
+    materialize::deploy(&from_src, &dest)?;
+    if to_plat == PlatformId::Hermes && kind == AssetKind::Skill {
+        let skills_parent = dest.parent().unwrap_or(&dest).to_path_buf();
+        hermes_config::after_skill_deploy(&skills_parent)?;
+    }
+    Ok(format!(
+        "{kind:?} `{name}`: {} → {} OK ({dest})",
+        platform::platform_label(from_plat),
+        platform::platform_label(to_plat),
+    ))
+}
+
 /// 下发到目标平台。
 pub fn deploy(
     scope: &ScopeRoots<'_>,
@@ -50,22 +100,23 @@ pub fn deploy(
     }
 }
 
-/// 从平台收回。
+/// 从平台收回（含 ai-config 平台目录；不牵动其它平台副本）。
 pub fn retract(
     scope: &ScopeRoots<'_>,
     kind: AssetKind,
     name: &str,
     plat: PlatformId,
 ) -> Result<String, CoreError> {
+    if plat == PlatformId::AiConfig {
+        return retract_aiconfig_platform(scope, kind, name);
+    }
     ensure_deploy_target(plat)?;
     ensure_platform_supports(scope, plat, kind)?;
     match kind {
         AssetKind::Mcp => retract_mcp(scope, name, plat),
         _ => {
-            let src = locate_source(scope.default_root, scope.asset_root, kind, name)?;
-            let dest = asset_dest_for_at_base(plat, kind, name, &src, scope.deploy_base)
-                .ok_or_else(|| CoreError::InvalidPath(format!("无法算 {kind:?} `{name}` ← {plat:?} 的 dest")))?;
-            materialize::retract(&dest)?;
+            let dest = resolve_platform_retract_dest(scope, plat, kind, name)?;
+            remove_native_platform_copy(&dest)?;
             Ok(format!("{kind:?} `{name}` ← {plat:?} OK ({dest})"))
         }
     }
@@ -88,10 +139,7 @@ pub fn get_detail(
                 description,
                 content,
                 source_path: skill_md.to_string(),
-                parent_path: skill_md
-                    .parent()
-                    .map(|p| p.to_string())
-                    .unwrap_or_default(),
+                parent_path: skill_md.parent().map(|p| p.to_string()).unwrap_or_default(),
             })
         }
         AssetKind::Rule | AssetKind::Command => {
@@ -153,6 +201,17 @@ pub fn save_content(
     }
 }
 
+/// 仅从 ai-config 平台目录收回（与其它 IDE 平台 `retract` 语义一致，不牵动其它平台副本）。
+///
+/// 保留别名供 CLI / 旧命令；GUI 平台 icon 走 `retract(..., AiConfig)`。
+pub fn retract_source(
+    scope: &ScopeRoots<'_>,
+    kind: AssetKind,
+    name: &str,
+) -> Result<String, CoreError> {
+    retract(scope, kind, name, PlatformId::AiConfig)
+}
+
 /// 删除源并尽力收回各平台。
 ///
 /// **警告**：会先对 cursor/codex/claude/hermes 全部调用收回，再删除 `asset_root` 源文件。
@@ -169,6 +228,104 @@ pub fn delete_source(
         kind,
         name,
     );
+    remove_source_entry(scope, kind, name)
+}
+
+fn retract_aiconfig_platform(
+    scope: &ScopeRoots<'_>,
+    kind: AssetKind,
+    name: &str,
+) -> Result<String, CoreError> {
+    let label = platform::platform_label(PlatformId::AiConfig);
+    match kind {
+        AssetKind::Mcp => {
+            let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
+            let doc_root = mcp_asset_root(&mcp_path)?;
+            mcp_json::remove_server_from_document(doc_root, name)?;
+            Ok(format!("mcp `{name}` ← {label} OK ({mcp_path})"))
+        }
+        AssetKind::Skill => {
+            let adapter = platform::aiconfig_adapter(scope.asset_root);
+            let dest = adapter.skills_dir().join(name);
+            remove_native_platform_copy(&dest)?;
+            Ok(format!("skill `{name}` ← {label} OK ({dest})"))
+        }
+        AssetKind::Rule => {
+            let adapter = platform::aiconfig_adapter(scope.asset_root);
+            let dest = adapter.rules_dir().join(format!("{name}.mdc"));
+            remove_native_platform_copy(&dest)?;
+            Ok(format!("rule `{name}` ← {label} OK ({dest})"))
+        }
+        AssetKind::Command => {
+            let adapter = platform::aiconfig_adapter(scope.asset_root);
+            let dest = adapter.commands_dir().join(format!("{name}.md"));
+            remove_native_platform_copy(&dest)?;
+            Ok(format!("command `{name}` ← {label} OK ({dest})"))
+        }
+        AssetKind::Agent => {
+            let src = locate_source(scope.default_root, scope.asset_root, kind, name)?;
+            remove_native_platform_copy(&src)?;
+            Ok(format!("agent `{name}` ← {label} OK ({src})"))
+        }
+    }
+}
+
+/// 收回平台副本：优先走 marker / legacy symlink；无标记的本机副本直接删除。
+fn remove_native_platform_copy(dest: &Utf8Path) -> Result<(), CoreError> {
+    if materialize::retract(dest).is_ok() {
+        return Ok(());
+    }
+    if fs::symlink_metadata(dest.as_std_path()).is_err() {
+        return Ok(());
+    }
+    if dest.is_dir() {
+        fs::remove_dir_all(dest.as_std_path()).map_err(CoreError::Io)
+    } else {
+        fs::remove_file(dest.as_std_path()).map_err(CoreError::Io)
+    }
+}
+
+/// 计算平台收回路径：有源时按源映射；无源时按平台目录（外部 / synced 安装）。
+fn resolve_platform_retract_dest(
+    scope: &ScopeRoots<'_>,
+    plat: PlatformId,
+    kind: AssetKind,
+    name: &str,
+) -> Result<Utf8PathBuf, CoreError> {
+    if let Ok(src) = locate_source(scope.default_root, scope.asset_root, kind, name) {
+        if let Some(dest) = asset_dest_for_at_base(plat, kind, name, &src, scope.deploy_base) {
+            return Ok(dest);
+        }
+    }
+    platform_native_dest(scope, plat, kind, name)
+}
+
+fn platform_native_dest(
+    scope: &ScopeRoots<'_>,
+    plat: PlatformId,
+    kind: AssetKind,
+    name: &str,
+) -> Result<Utf8PathBuf, CoreError> {
+    let adapter = platform::for_scope_with_asset(plat, scope.deploy_base, scope.asset_root)?;
+    let dest = match kind {
+        AssetKind::Skill => adapter.skills_dir().join(name),
+        AssetKind::Rule => adapter.rules_dir().join(format!("{name}.mdc")),
+        AssetKind::Command => adapter.commands_dir().join(format!("{name}.md")),
+        AssetKind::Agent => adapter.agents_dir().join(name),
+        AssetKind::Mcp => {
+            return Err(CoreError::InvalidPath(
+                "MCP 收回需要 ai-config 源中的条目".into(),
+            ));
+        }
+    };
+    Ok(dest)
+}
+
+fn remove_source_entry(
+    scope: &ScopeRoots<'_>,
+    kind: AssetKind,
+    name: &str,
+) -> Result<String, CoreError> {
     match kind {
         AssetKind::Mcp => delete_mcp(scope, name),
         AssetKind::Skill => {
@@ -178,13 +335,13 @@ pub fn delete_source(
                 .ok_or_else(|| CoreError::InvalidPath(format!("skill `{name}` 无父目录")))?;
             let dir_str = skill_dir.to_string();
             fs::remove_dir_all(skill_dir).map_err(CoreError::Io)?;
-            Ok(format!("skill `{name}` 已删除 ({dir_str})"))
+            Ok(format!("skill `{name}` 已从源删除 ({dir_str})"))
         }
         AssetKind::Rule | AssetKind::Command => {
             let path = locate_source(scope.default_root, scope.asset_root, kind, name)?;
             let path_str = path.to_string();
             fs::remove_file(&path).map_err(CoreError::Io)?;
-            Ok(format!("{kind:?} `{name}` 已删除 ({path_str})"))
+            Ok(format!("{kind:?} `{name}` 已从源删除 ({path_str})"))
         }
         AssetKind::Agent => {
             let src = locate_source(scope.default_root, scope.asset_root, kind, name)?;
@@ -194,7 +351,7 @@ pub fn delete_source(
             } else {
                 fs::remove_file(&src).map_err(CoreError::Io)?;
             }
-            Ok(format!("agent `{name}` 已删除 ({path_str})"))
+            Ok(format!("agent `{name}` 已从源删除 ({path_str})"))
         }
     }
 }
@@ -245,17 +402,77 @@ fn ensure_platform_supports(
     }
 }
 
+fn platform_asset_paths(
+    from: &dyn platform::PlatformAdapter,
+    to: &dyn platform::PlatformAdapter,
+    kind: AssetKind,
+    name: &str,
+) -> Result<(Utf8PathBuf, Utf8PathBuf), CoreError> {
+    match kind {
+        AssetKind::Skill => {
+            let from_dir = from.skills_dir().join(name);
+            if !from_dir.join("SKILL.md").is_file() {
+                return Err(CoreError::AssetNotFound {
+                    kind,
+                    name: name.into(),
+                    hint: format!("缺少 SKILL.md: {from_dir}"),
+                });
+            }
+            Ok((from_dir, to.skills_dir().join(name)))
+        }
+        AssetKind::Rule => {
+            let from_path = from.rules_dir().join(format!("{name}.mdc"));
+            Ok((from_path, to.rules_dir().join(format!("{name}.mdc"))))
+        }
+        AssetKind::Command => {
+            let from_path = from.commands_dir().join(format!("{name}.md"));
+            Ok((from_path, to.commands_dir().join(format!("{name}.md"))))
+        }
+        AssetKind::Agent => {
+            let from_dir = from.agents_dir().join(name);
+            if from_dir.is_dir() {
+                Ok((from_dir.clone(), to.agents_dir().join(name)))
+            } else {
+                let from_file = find_agent_file(&from.agents_dir(), name)?;
+                let ext = from_file
+                    .extension()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "md".to_string());
+                Ok((from_file, to.agents_dir().join(format!("{name}.{ext}"))))
+            }
+        }
+        AssetKind::Mcp => Err(CoreError::InvalidPath("MCP 不支持平台间直拷".into())),
+    }
+}
+
+fn find_agent_file(agents_dir: &Utf8Path, name: &str) -> Result<Utf8PathBuf, CoreError> {
+    let direct = agents_dir.join(format!("{name}.md"));
+    if direct.is_file() {
+        return Ok(direct);
+    }
+    for ext in ["yaml", "yml", "toml"] {
+        let path = agents_dir.join(format!("{name}.{ext}"));
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    Err(CoreError::AssetNotFound {
+        kind: AssetKind::Agent,
+        name: name.into(),
+        hint: format!("agents 目录中找不到 agent `{name}`"),
+    })
+}
+
 fn deploy_skill(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
     let skill_md = locate_source(scope.default_root, scope.asset_root, AssetKind::Skill, name)?;
     let src = skill_link_src(&skill_md);
     let dest = asset_dest_for_at_base(plat, AssetKind::Skill, name, &skill_md, scope.deploy_base)
-        .ok_or_else(|| CoreError::InvalidPath(format!("无法算 skill `{name}` → {plat:?} 的 dest")))?;
+        .ok_or_else(|| {
+        CoreError::InvalidPath(format!("无法算 skill `{name}` → {plat:?} 的 dest"))
+    })?;
     materialize::deploy(&src, &dest)?;
     if plat == PlatformId::Hermes {
-        let skills_parent = dest
-            .parent()
-            .unwrap_or(&dest)
-            .to_path_buf();
+        let skills_parent = dest.parent().unwrap_or(&dest).to_path_buf();
         hermes_config::after_skill_deploy(&skills_parent)?;
     }
     Ok(format!("skill `{name}` → {plat:?} OK ({dest})"))
@@ -269,8 +486,10 @@ fn deploy_materialized(
 ) -> Result<String, CoreError> {
     let src = locate_source(scope.default_root, scope.asset_root, kind, name)?;
     let link_src = link_src_for_create(kind, &src);
-    let dest = asset_dest_for_at_base(plat, kind, name, &src, scope.deploy_base)
-        .ok_or_else(|| CoreError::InvalidPath(format!("无法算 {kind:?} `{name}` → {plat:?} 的 dest")))?;
+    let dest =
+        asset_dest_for_at_base(plat, kind, name, &src, scope.deploy_base).ok_or_else(|| {
+            CoreError::InvalidPath(format!("无法算 {kind:?} `{name}` → {plat:?} 的 dest"))
+        })?;
     materialize::deploy(&link_src, &dest)?;
     Ok(format!("{kind:?} `{name}` → {plat:?} OK ({dest})"))
 }
@@ -278,29 +497,29 @@ fn deploy_materialized(
 fn deploy_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
     let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
     let doc_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(doc_root, name)?
-        .ok_or_else(|| CoreError::AssetNotFound {
+    let config =
+        mcp_json::get_server_config(doc_root, name)?.ok_or_else(|| CoreError::AssetNotFound {
             kind: AssetKind::Mcp,
             name: name.into(),
             hint: "MCP server 在 mcp.json 中找不到".into(),
         })?;
     let dest = platform::for_scope(plat, scope.deploy_base)?.mcp_deploy_path();
-    mcp_json::upsert_server_on_platform(plat, &dest, name, &config)?;
+    mcp_json::upsert_server_on_platform(plat, &dest, name, &config, Some(&mcp_path))?;
     Ok(format!("mcp `{name}` → {plat:?} OK ({dest})"))
 }
 
 fn retract_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
-    let _ = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
+    let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
     let dest = platform::for_scope(plat, scope.deploy_base)?.mcp_deploy_path();
-    mcp_json::remove_server_on_platform(plat, &dest, name)?;
+    mcp_json::remove_server_on_platform(plat, &dest, name, Some(&mcp_path))?;
     Ok(format!("mcp `{name}` ← {plat:?} 已移除 ({dest})"))
 }
 
 fn get_mcp_detail(scope: &ScopeRoots<'_>, name: &str) -> Result<AssetFileDetail, CoreError> {
     let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
     let doc_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(doc_root, name)?
-        .ok_or_else(|| CoreError::AssetNotFound {
+    let config =
+        mcp_json::get_server_config(doc_root, name)?.ok_or_else(|| CoreError::AssetNotFound {
             kind: AssetKind::Mcp,
             name: name.into(),
             hint: "MCP server 找不到".into(),
@@ -430,7 +649,7 @@ fn split_yaml_block_scalar_prefix(s: &str) -> Option<(bool, &str)> {
     None
 }
 
-fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, folded: bool) -> (String, usize) {
+fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, _folded: bool) -> (String, usize) {
     let mut parts = Vec::new();
     let mut i = start;
     while i < lines.len() {
@@ -443,20 +662,13 @@ fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, folded: bool) -
         if is_frontmatter_key_line(cont) {
             break;
         }
-        let text = trimmed
-            .strip_prefix('>')
-            .map(str::trim)
-            .unwrap_or(trimmed);
+        let text = trimmed.strip_prefix('>').map(str::trim).unwrap_or(trimmed);
         if !text.is_empty() {
             parts.push(text.to_string());
         }
         i += 1;
     }
-    let joined = if folded {
-        parts.join(" ")
-    } else {
-        parts.join(" ")
-    };
+    let joined = parts.join(" ");
     (joined.chars().take(200).collect(), i)
 }
 
@@ -562,6 +774,122 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
             .ok()
             .map(|c| parse_skill_meta(&c).1)
             .unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod deploy_from_platform_tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn deploy_skill_from_claude_to_cursor_preserves_claude() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let claude_skill = home.join(".claude/skills/find-skills");
+        fs::create_dir_all(&claude_skill).unwrap();
+        fs::write(
+            claude_skill.join("SKILL.md"),
+            "---\nname: find-skills\ndescription: demo\n---\n# Find\n",
+        )
+        .unwrap();
+
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(asset_root.join("skills")).unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        deploy_from_platform(
+            &scope,
+            AssetKind::Skill,
+            "find-skills",
+            PlatformId::Claude,
+            PlatformId::Cursor,
+        )
+        .unwrap();
+
+        let cursor_skill = home.join(".cursor/skills/find-skills");
+        assert!(cursor_skill.join("SKILL.md").is_file());
+        assert!(
+            claude_skill.join("SKILL.md").is_file(),
+            "Claude 侧原始安装应保留"
+        );
+        assert!(
+            cursor_skill.join(".ai-config-deploy.json").is_file(),
+            "目标平台应有下发标记"
+        );
+        assert!(
+            !claude_skill.join(".ai-config-deploy.json").exists()
+                || claude_skill.join("SKILL.md").is_file(),
+            "Claude 侧不应因拷贝而被删除"
+        );
+    }
+    #[test]
+    fn retract_aiconfig_keeps_other_platform_copy() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let asset_root = home.join(".ai-config");
+        let skill_dir = asset_root.join("skills/keep-me");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# keep\n").unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let claude_skill = home.join(".claude/skills/keep-me");
+        fs::create_dir_all(&claude_skill).unwrap();
+        fs::write(claude_skill.join("SKILL.md"), "# keep\n").unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        let msg = retract(&scope, AssetKind::Skill, "keep-me", PlatformId::AiConfig).unwrap();
+        assert!(
+            msg.contains("← aiconfig"),
+            "expected platform retract message, got: {msg}"
+        );
+        assert!(!msg.contains("已从源收回"));
+
+        assert!(!skill_dir.exists());
+        assert!(
+            claude_skill.join("SKILL.md").is_file(),
+            "收回 ai-config 平台副本不应删除 Claude 侧 skill"
+        );
+    }
+
+    #[test]
+    fn retract_hermes_skill_without_aiconfig_source() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let hermes_skill = home.join(".hermes/skills/npx-only");
+        fs::create_dir_all(&hermes_skill).unwrap();
+        fs::write(hermes_skill.join("SKILL.md"), "# npx only\n").unwrap();
+
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(asset_root.join("skills")).unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        retract(&scope, AssetKind::Skill, "npx-only", PlatformId::Hermes).unwrap();
+        assert!(
+            !hermes_skill.exists(),
+            "应能删除无 ai-config 源的外部 Hermes skill"
+        );
     }
 }
 

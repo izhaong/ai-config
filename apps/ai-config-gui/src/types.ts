@@ -3,7 +3,7 @@ export type AssetKind = "skill" | "rule" | "mcp" | "agent" | "command";
 export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
 /** 可向 IDE deploy / retract 的 4 个目标 */
 export type DeployPlatform = Exclude<Platform, "aiconfig">;
-export type LinkState = "linked" | "unlinked" | "broken" | "missing";
+export type LinkState = "linked" | "synced" | "unlinked" | "broken" | "missing";
 
 export interface PlatformAssetEntry {
   name: string;
@@ -121,14 +121,33 @@ export function isSourcePlatform(platform: Platform): boolean {
 }
 
 export function canDeploy(state: LinkState): boolean {
-  return state === "unlinked" || state === "broken" || state === "missing";
+  return (
+    state === "unlinked" ||
+    state === "broken" ||
+    state === "missing" ||
+    state === "synced"
+  );
 }
 
 export function canRetract(state: LinkState): boolean {
   return state === "linked";
 }
 
+/** 平台视图删除：可移除该平台上的副本（含 synced / 外部安装） */
+export function canRemoveFromPlatform(state: LinkState): boolean {
+  return (
+    state === "linked" ||
+    state === "synced" ||
+    state === "unlinked" ||
+    state === "broken"
+  );
+}
+
 export function isPlatformActive(state: LinkState): boolean {
+  return state === "linked" || state === "synced";
+}
+
+export function isManagedPlatformState(state: LinkState): boolean {
   return state === "linked";
 }
 

@@ -390,7 +390,7 @@ mod tests {
         fs::create_dir_all(&custom).unwrap();
 
         // 使用与 global_deploy_base 无关的路径比较：直接测 ensure 逻辑
-        std::env::set_var("HOME", home.as_str());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", home.as_str());
         ensure_external_skills_dir(&cfg_path, &custom).unwrap();
         let raw = fs::read_to_string(cfg_path.as_std_path()).unwrap();
         assert!(raw.contains("external_dirs:"));

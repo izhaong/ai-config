@@ -56,7 +56,10 @@
     "userGlobal": "user-global",
     "registerProject": "+ Register project",
     "registerProjectTitle": "Register a new project",
-    "removeProject": "Remove {{name}}"
+    "removeProject": "Remove {{name}}",
+    "resizeSidebar": "Drag to resize sidebar width",
+    "resizeProjects": "Drag to resize projects pane height",
+    "resizeAssetsPlatforms": "Drag to resize assets vs platforms width"
   },
   "assetKind": {
     "skill": "Skills",
@@ -67,6 +70,7 @@
   },
   "linkState": {
     "linked": "Synced",
+    "synced": "Content match (not ai-config deploy)",
     "unlinked": "Not synced",
     "broken": "Link broken",
     "missing": "Target missing"
@@ -100,7 +104,8 @@
     "partialLinked": "Partially synced",
     "batchClickActivateAll": "Deploy all selected (including inactive)",
     "batchClickMixed": "Retract active, deploy inactive",
-    "unsupported": "{{platform}}: {{reason}}"
+    "unsupported": "{{platform}}: {{reason}}",
+    "browseCurrentStatus": "{{platform}} · {{state}} · current browse view (status only)"
   },
   "toolbar": {
     "selectAllTitle": "Select all in list",
@@ -116,6 +121,8 @@
     "batchDeleteTitle": "Select rows on the left, then batch delete",
     "deleteConfirmHint": "Click again to confirm delete (a dialog will appear)",
     "rowDeleteTitle": "Delete {{name}}",
+    "rowUpdateTitle": "Update {{name}} on active platforms from ai-config source",
+    "batchUpdateTitle": "Update selected items on active platforms from ai-config source",
     "batchSyncPlatform": "Batch sync to {{platform}} (selected rows)",
     "batchSyncPlatformState": "Batch {{platform}} · {{state}} · {{hint}}",
     "batchImportSourceState": "Batch ai-config source · {{state}} · {{hint}}",
@@ -124,7 +131,9 @@
     "batchDeployPlatform": "Deploy to {{platform}}",
     "batchRetractPlatform": "Retract from {{platform}}",
     "openFolder": "Open",
-    "openFolderTitle": "Reveal current browse path in the file manager"
+    "openFolderTitle": "Reveal current browse path in the file manager",
+    "addSkillTitle": "Add skill from remote (npx skills add)",
+    "addMarketplaceTitle": "Browse Claude Marketplace and import skills"
   },
   "empty": {
     "loading": "Loading…",
@@ -170,6 +179,42 @@
     "rootHint": "Repo root; creates <repo>/.ai-config/ (same layout as ~/.ai-config: skills, rules, agents, mcp.json)",
     "submit": "Register"
   },
+  "addSkill": {
+    "title": "Add skill",
+    "targetHint": "Install to current browse platform: {{platform}}",
+    "sourceLabel": "Source",
+    "sourceHint": "GitHub repo (e.g. vercel-labs/agent-skills) or full URL",
+    "skillNameLabel": "Skill name (optional)",
+    "skillNamePlaceholder": "Leave empty for single or all skills",
+    "skillNameHint": "Required when the repo has multiple skills (--skill)",
+    "submit": "Add"
+  },
+  "marketplace": {
+    "title": "Claude Marketplace",
+    "subtitle": "Browse community skills, select multiple, then install to chosen platforms",
+    "openSite": "Open site",
+    "sortLabel": "Sort",
+    "sortInstalls": "Most installed",
+    "sortStars": "Most stars",
+    "sortNewest": "Newest",
+    "searchLabel": "Search",
+    "searchPlaceholder": "Skill name or keyword",
+    "sourceLabel": "Source repo",
+    "selectAllPage": "Select all on page",
+    "colSkill": "Skill",
+    "colSource": "Source",
+    "colStars": "Stars",
+    "colInstalls": "Installs",
+    "loading": "Loading…",
+    "empty": "No matching skills",
+    "listMeta": "Showing {{shown}} / {{total}} · {{selected}} selected",
+    "loadMore": "Load more",
+    "platformsLabel": "Install to platforms",
+    "submit": "Import selected",
+    "importSuccess": "Installed {{ok}} items ({{skills}} skills × {{platforms}} platforms)",
+    "importPartial": "Partial success: {{ok}} ok, {{failed}} failed ({{detail}})",
+    "importFailed": "Import failed: {{detail}}"
+  },
   "statusbar": {
     "doctor": "doctor: {{count}} issues",
     "doctorLoading": "doctor: ...",
@@ -206,6 +251,10 @@
     "batchTogglePartial": "Batch: {{ok}} ok, {{failed}} failed (deploy {{deploy}}, retract {{retract}}, import {{import}}, delete source {{deleted}})",
     "batchToggled": "Batch done: deploy {{deploy}}, retract {{retract}}, import {{import}}, delete source {{deleted}}",
     "batchNoOps": "No batch operations to run",
+    "updateNothing": "Nothing to update (needs ai-config source and at least one active platform)",
+    "updatedCount": "Updated {{count}} platform copy/copies",
+    "updateFailed": "Update failed ({{count}} platform(s))",
+    "updatePartial": "Update: {{ok}} ok, {{failed}} failed",
     "batchAiconfigDeleteBlocked": "Batch ai-config icon cannot delete sources; use the delete button with confirmation",
     "batchDeleted": "Processed {{count}} item(s)",
     "selectRowsFirst": "Select rows to operate on first",
@@ -218,7 +267,8 @@
     "platformListFailed": "Failed to load platform list: {{error}}",
     "doctorFailed": "Failed to load doctor summary: {{error}}",
     "importSuccess": "{{message}}",
-    "importFailed": "Import failed: {{error}}"
+    "importFailed": "Import failed: {{error}}",
+    "addSkillFailed": "Failed to add skill: {{error}}"
   },
   "prompt": {
     "projectName": "Project name (unique in store):",

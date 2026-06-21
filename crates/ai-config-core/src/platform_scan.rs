@@ -49,7 +49,10 @@ pub struct PlatformAssetEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkState {
+    /// 本工具纳管的下发（可收回）
     Linked,
+    /// 内容与源/镜像一致，但非本工具下发（`npx skills` 等；可覆盖下发，不可收回）
+    Synced,
     Unlinked,
     Broken,
     Missing,
@@ -83,8 +86,15 @@ pub fn scan_platform_assets(
 
     let mut out = Vec::with_capacity(raw.len());
     for (name, platform_path, description) in raw {
-        let states =
-            compute_entry_states(plat, kind, &name, &platform_path, deploy_base, &source_scan);
+        let states = compute_entry_states(
+            plat,
+            kind,
+            &name,
+            &platform_path,
+            deploy_base,
+            asset_root,
+            &source_scan,
+        );
         let source_state = if states.get(&PlatformId::AiConfig) == Some(&LinkState::Linked) {
             SourceState::Managed
         } else {
@@ -129,6 +139,7 @@ fn scan_aiconfig_assets(
                 &name,
                 &platform_path,
                 &deploy_base,
+                asset_root,
                 &source_scan,
             );
             PlatformAssetEntry {
@@ -391,7 +402,11 @@ fn scan_hermes_mcp_servers(config_path: &Utf8Path) -> Result<Vec<RawEntry>, Core
         .collect())
 }
 
-pub fn find_source_path(kind: AssetKind, name: &str, source_scan: &ScanResult) -> Option<Utf8PathBuf> {
+pub fn find_source_path(
+    kind: AssetKind,
+    name: &str,
+    source_scan: &ScanResult,
+) -> Option<Utf8PathBuf> {
     match kind {
         AssetKind::Skill => source_scan.skills.iter().find(|p| {
             p.parent()
@@ -430,8 +445,9 @@ fn compute_entry_states(
     browse_plat: PlatformId,
     kind: AssetKind,
     name: &str,
-    _platform_path: &Utf8Path,
+    platform_path: &Utf8Path,
     deploy_base: &Utf8Path,
+    asset_root: &Utf8Path,
     source_scan: &ScanResult,
 ) -> std::collections::HashMap<PlatformId, LinkState> {
     use std::collections::HashMap;
@@ -446,7 +462,7 @@ fn compute_entry_states(
                 LinkState::Unlinked
             }
         } else if plat == browse_plat {
-            LinkState::Linked
+            browse_platform_link_state(kind, platform_path, src.as_deref(), deploy_base, plat, name)
         } else if !platform::supports_at_scope(plat, kind, deploy_base) {
             LinkState::Unlinked
         } else if kind == AssetKind::Mcp {
@@ -454,11 +470,91 @@ fn compute_entry_states(
         } else if let Some(src_path) = src.as_ref() {
             ide_asset_link_state(plat, kind, name, src_path, deploy_base)
         } else {
-            LinkState::Unlinked
+            platform_mirror_link_state(kind, name, platform_path, plat, deploy_base, asset_root)
         };
         states.insert(plat, st);
     }
     states
+}
+
+fn browse_platform_link_state(
+    kind: AssetKind,
+    platform_path: &Utf8Path,
+    src: Option<&Utf8Path>,
+    deploy_base: &Utf8Path,
+    plat: PlatformId,
+    name: &str,
+) -> LinkState {
+    if let Some(src_path) = src {
+        if kind == AssetKind::Mcp {
+            return ide_mcp_link_state(plat, name, Some(src_path), deploy_base);
+        }
+        return ide_asset_link_state(plat, kind, name, src_path, deploy_base);
+    }
+    if std::fs::symlink_metadata(platform_path.as_std_path()).is_err() {
+        return LinkState::Missing;
+    }
+    if kind == AssetKind::Mcp {
+        return LinkState::Unlinked;
+    }
+    if crate::materialize::is_managed_deploy(platform_path) {
+        LinkState::Linked
+    } else {
+        LinkState::Synced
+    }
+}
+
+/// 无 ai-config 源时：目标平台是否与当前浏览平台上的资产内容一致（跨 IDE 硬拷贝）。
+fn platform_mirror_link_state(
+    kind: AssetKind,
+    name: &str,
+    mirror_platform_path: &Utf8Path,
+    dest_plat: PlatformId,
+    deploy_base: &Utf8Path,
+    asset_root: &Utf8Path,
+) -> LinkState {
+    let Ok(dest_adapter) = platform::for_scope_with_asset(dest_plat, deploy_base, asset_root)
+    else {
+        return LinkState::Unlinked;
+    };
+    let dest = match kind {
+        AssetKind::Skill => dest_adapter.skills_dir().join(name),
+        AssetKind::Rule => dest_adapter.rules_dir().join(format!("{name}.mdc")),
+        AssetKind::Command => dest_adapter.commands_dir().join(format!("{name}.md")),
+        AssetKind::Agent => {
+            if mirror_platform_path.is_dir() {
+                dest_adapter.agents_dir().join(name)
+            } else {
+                let ext = mirror_platform_path
+                    .extension()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "md".to_string());
+                dest_adapter.agents_dir().join(format!("{name}.{ext}"))
+            }
+        }
+        AssetKind::Mcp => return LinkState::Unlinked,
+    };
+    if fs::symlink_metadata(dest.as_std_path()).is_err() {
+        return LinkState::Missing;
+    }
+    let matches = match kind {
+        AssetKind::Skill => {
+            let skill_md = mirror_platform_path.join("SKILL.md");
+            crate::materialize::content_matches_source(AssetKind::Skill, &skill_md, &dest)
+        }
+        AssetKind::Rule | AssetKind::Command | AssetKind::Agent => {
+            crate::materialize::content_matches_source(kind, mirror_platform_path, &dest)
+        }
+        AssetKind::Mcp => false,
+    };
+    if !matches {
+        return LinkState::Unlinked;
+    }
+    if crate::materialize::is_managed_deploy(&dest) {
+        LinkState::Linked
+    } else {
+        LinkState::Synced
+    }
 }
 
 fn ide_mcp_link_state(
@@ -480,6 +576,29 @@ fn ide_mcp_link_state(
     }
 }
 
+fn deploy_health_to_link_state(
+    dest: &Utf8Path,
+    health: crate::materialize::DeployHealth,
+) -> LinkState {
+    match health {
+        crate::materialize::DeployHealth::Linked { .. } => {
+            if crate::materialize::is_managed_deploy(dest) {
+                LinkState::Linked
+            } else {
+                LinkState::Synced
+            }
+        }
+        crate::materialize::DeployHealth::Broken => LinkState::Broken,
+        crate::materialize::DeployHealth::Unlinked => {
+            if fs::symlink_metadata(dest.as_std_path()).is_ok() {
+                LinkState::Unlinked
+            } else {
+                LinkState::Missing
+            }
+        }
+    }
+}
+
 fn ide_asset_link_state(
     plat: PlatformId,
     kind: AssetKind,
@@ -495,11 +614,7 @@ fn ide_asset_link_state(
         return LinkState::Broken;
     }
     let expected_src = link_src_for_create(kind, src);
-    match crate::materialize::check(&dest, &expected_src) {
-        crate::materialize::DeployHealth::Linked { .. } => LinkState::Linked,
-        crate::materialize::DeployHealth::Broken => LinkState::Broken,
-        crate::materialize::DeployHealth::Unlinked => LinkState::Unlinked,
-    }
+    deploy_health_to_link_state(&dest, crate::materialize::check(&dest, &expected_src))
 }
 
 fn is_symlink_path(path: &Utf8Path) -> bool {
@@ -674,7 +789,9 @@ pub fn import_command_from_platform(
     let platform_path = find_command_on_platform(&commands_dir, name)?;
     let source_scan = scan_source_for_scope(default_root, asset_root)?;
     if find_source_path(AssetKind::Command, name, &source_scan).is_some() {
-        return Err(CoreError::InvalidPath(format!("源中已存在 command `{name}`")));
+        return Err(CoreError::InvalidPath(format!(
+            "源中已存在 command `{name}`"
+        )));
     }
     let dest = asset_root.join("commands").join(format!("{name}.md"));
     crate::paths::ensure_parent_dir(&dest)?;
@@ -1015,7 +1132,7 @@ mod tests {
     fn import_skill_copies_to_source() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let claude_skills = home.join(".claude/skills/import-me");
         touch(
@@ -1050,6 +1167,7 @@ mod tests {
             "import-me",
             &claude_skills,
             home,
+            &asset_root,
             &source_scan,
         );
         assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
@@ -1058,8 +1176,106 @@ mod tests {
             Some(&LinkState::Linked),
             "从 Claude 导入后在 ai-config 视图应显示 Claude 已同步"
         );
+    }
 
-        std::env::remove_var("HOME");
+    #[test]
+    fn platform_mirror_detects_cross_ide_skill_copy() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let claude_skill = home.join(".claude/skills/find-skills");
+        fs::create_dir_all(&claude_skill).unwrap();
+        fs::write(claude_skill.join("SKILL.md"), "# Find\n").unwrap();
+
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(asset_root.join("skills")).unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = crate::asset_ops::ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        crate::asset_ops::deploy_from_platform(
+            &scope,
+            AssetKind::Skill,
+            "find-skills",
+            PlatformId::Claude,
+            PlatformId::Cursor,
+        )
+        .unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let states = compute_entry_states(
+            PlatformId::Claude,
+            AssetKind::Skill,
+            "find-skills",
+            &claude_skill,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Synced));
+        assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Linked));
+    }
+
+    #[test]
+    fn external_platform_copy_is_synced_not_retractable() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let claude_skill = home.join(".claude/skills/find-skills");
+        fs::create_dir_all(&claude_skill).unwrap();
+        fs::write(claude_skill.join("SKILL.md"), "# Find\n").unwrap();
+
+        let hermes_skill = home.join(".hermes/skills/find-skills");
+        fs::create_dir_all(&hermes_skill).unwrap();
+        fs::write(hermes_skill.join("SKILL.md"), "# Find\n").unwrap();
+
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(asset_root.join("skills")).unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let states = compute_entry_states(
+            PlatformId::Claude,
+            AssetKind::Skill,
+            "find-skills",
+            &claude_skill,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(states.get(&PlatformId::Hermes), Some(&LinkState::Synced));
+    }
+
+    #[test]
+    fn browse_hermes_shows_synced_for_external_skill() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let hermes_skill = home.join(".hermes/skills/external-one");
+        fs::create_dir_all(&hermes_skill).unwrap();
+        fs::write(hermes_skill.join("SKILL.md"), "# ext\n").unwrap();
+
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(asset_root.join("skills")).unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let states = compute_entry_states(
+            PlatformId::Hermes,
+            AssetKind::Skill,
+            "external-one",
+            &hermes_skill,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(states.get(&PlatformId::Hermes), Some(&LinkState::Synced));
     }
 
     #[test]
@@ -1072,12 +1288,13 @@ mod tests {
             "x",
             &root.join("platform-skill"),
             root,
+            root,
             &ScanResult::default(),
         );
         assert_eq!(
             states.get(&PlatformId::AiConfig),
             Some(&LinkState::Unlinked)
         );
-        assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Missing));
     }
 }

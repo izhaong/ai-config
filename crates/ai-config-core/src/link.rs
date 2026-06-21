@@ -319,14 +319,14 @@ pub fn remove_dest_path(dest: &Utf8Path) -> Result<(), CoreError> {
     };
 
     if meta.file_type().is_symlink() {
-        fs::remove_file(dest).or_else(|_| fs::remove_dir(dest)).map_err(|e| {
-            CoreError::LinkFailed {
+        fs::remove_file(dest)
+            .or_else(|_| fs::remove_dir(dest))
+            .map_err(|e| CoreError::LinkFailed {
                 src: String::new(),
                 dest: dest.to_string(),
                 reason: format!("无法删除旧链接: {e}"),
                 hint: "检查 dest 所在目录权限,或手动 `rm` 后重试".to_string(),
-            }
-        })?;
+            })?;
         return Ok(());
     }
 

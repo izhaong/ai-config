@@ -9,6 +9,8 @@ interface PlatformIconButtonsProps {
   loading: boolean;
   disabled?: boolean;
   variant?: "row" | "batch";
+  /** 左侧当前浏览的平台；对应 icon 仅展示状态、不可点击 */
+  activePlatform?: Platform;
   browsingSource?: boolean;
   selectedCount?: number;
   issueReasonFor?: (plat: DeployPlatform) => string | undefined;
@@ -20,6 +22,7 @@ export function PlatformIconButtons({
   loading,
   disabled = false,
   variant = "row",
+  activePlatform,
   browsingSource = false,
   selectedCount = 0,
   issueReasonFor,
@@ -36,41 +39,36 @@ export function PlatformIconButtons({
         const issueReason = isDeploy ? issueReasonFor?.(p) : undefined;
         const platUnsupported = !!issueReason;
         const state = linkStateFor?.(p);
+        const synced = state === "synced";
         const active =
           state !== "mixed" && state !== undefined && isPlatformActive(state);
-        const partial = state === "mixed";
-        const batchSourceView = isBatch && browsingSource && p === "aiconfig";
+        const partial = state === "mixed" || synced;
         const batchNoSelection = isBatch && selectedCount === 0;
-        const batchAiconfigAllInSource =
-          isBatch && p === "aiconfig" && active && !partial;
+        const isBrowseCurrent =
+          activePlatform !== undefined && p === activePlatform;
         const btnDisabled =
           loading ||
           disabled ||
           platUnsupported ||
-          batchSourceView ||
           batchNoSelection ||
-          batchAiconfigAllInSource;
+          isBrowseCurrent;
 
         const uiLabel = partial
           ? t("platform.partialLinked")
           : platformUiLabel(t, active);
 
         const batchActionHint =
-          isBatch && batchAiconfigAllInSource
-            ? t("platform.batchAiconfigUseDeleteButton")
-            : isBatch && !active
-              ? t("platform.batchClickActivateAll")
-              : isBatch && active
-                ? t("platform.clickRemove")
-                : partial
-                  ? t("platform.batchClickMixed")
-                  : active
-                    ? p === "aiconfig"
-                      ? t("platform.aiconfigDeleteNeedsConfirm")
-                      : t("platform.clickRemove")
-                    : p === "aiconfig"
-                      ? t("platform.clickImportSource")
-                      : t("platform.clickDeploy");
+          isBatch && !active
+            ? t("platform.batchClickActivateAll")
+            : isBatch && active
+              ? t("platform.clickRemove")
+              : partial
+                ? t("platform.batchClickMixed")
+                : active
+                  ? t("platform.clickRemove")
+                  : p === "aiconfig"
+                    ? t("platform.clickImportSource")
+                    : t("platform.clickDeploy");
 
         const ariaPressed = partial ? "mixed" : active ? "true" : "false";
 
@@ -79,7 +77,12 @@ export function PlatformIconButtons({
               platform: PLATFORM_NAME[p],
               reason: issueReason,
             })
-          : isBatch
+          : isBrowseCurrent
+            ? t("platform.browseCurrentStatus", {
+                platform: PLATFORM_NAME[p],
+                state: uiLabel,
+              })
+            : isBatch
             ? batchNoSelection
               ? t("toolbar.batchSyncNeedSelection")
               : p === "aiconfig"
@@ -97,7 +100,7 @@ export function PlatformIconButtons({
             : p === "aiconfig"
               ? `${PLATFORM_NAME[p]} · ${uiLabel} · ${
                   active
-                    ? t("platform.aiconfigDeleteNeedsConfirm")
+                    ? t("platform.clickRemove")
                     : t("platform.clickImportSource")
                 }`
               : `${PLATFORM_NAME[p]} · ${uiLabel} · ${
@@ -111,6 +114,7 @@ export function PlatformIconButtons({
           partial ? "partial" : active ? "active" : "inactive",
           isBatch ? "plat-btn-batch" : "",
           platUnsupported ? "unsupported" : "",
+          isBrowseCurrent ? "browse-current" : "",
         ]
           .filter(Boolean)
           .join(" ");
@@ -123,7 +127,10 @@ export function PlatformIconButtons({
             disabled={btnDisabled}
             title={title}
             aria-pressed={ariaPressed}
-            onClick={() => onPlatformClick(p)}
+            aria-disabled={isBrowseCurrent ? true : undefined}
+            onClick={() => {
+              if (!isBrowseCurrent) onPlatformClick(p);
+            }}
           >
             <img src={PLATFORM_FAVICON[p]} alt={PLATFORM_NAME[p]} draggable={false} />
           </button>

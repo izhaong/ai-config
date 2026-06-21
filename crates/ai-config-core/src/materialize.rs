@@ -17,6 +17,7 @@ use walkdir::WalkDir;
 use crate::error::CoreError;
 use crate::link;
 use crate::model::AssetKind;
+use crate::path_independence;
 use crate::paths;
 use crate::sync::link_src_for_create;
 
@@ -93,6 +94,14 @@ fn has_copy_marker(dest: &Utf8Path) -> bool {
     }
 }
 
+/// 是否由本工具下发（`.ai-config-deploy.json` 或 legacy symlink）。
+pub fn is_managed_deploy(dest: &Utf8Path) -> bool {
+    if is_symlink_entry(dest) {
+        return true;
+    }
+    has_copy_marker(dest)
+}
+
 /// 沿 symlink 链解析到真实文件/目录（用于导入与硬拷贝源）。
 pub fn resolve_copy_source(path: &Utf8Path) -> Utf8PathBuf {
     if is_symlink_entry(path) {
@@ -123,13 +132,19 @@ pub fn copy_tree(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
 }
 
 /// 幂等复制下发（目录或单文件）。历史 symlink 会在本次操作中迁移为实体副本。
+///
+/// **硬约束**：
+/// - **永远写硬拷贝**（实体复制；不生成 symlink / junction / Unix 硬链接）。
+/// - ai-config 源（`~/.ai-config` / `project/.ai-config`）与各 IDE 平台目录 **互不共享 inode**；
+///   删/改某一平台副本不影响源，也不影响其它平台。
+/// - MCP：`mcp.json` 为单文件 JSON，下发前 `ensure_platform_mcp_independent` 断开与源的链接。
 pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
-    if src == dest {
+    let material_src = resolve_copy_source(src);
+    if material_src.as_str() == dest.as_str() {
         return Err(CoreError::InvalidPath(format!(
-            "src 与 dest 相同,无法下发: {src}"
+            "dest 与 src 为同一路径,无法下发: {dest}"
         )));
     }
-    let material_src = resolve_copy_source(src);
     if !material_src.exists() {
         return Err(CoreError::LinkFailed {
             src: src.to_string(),
@@ -139,9 +154,14 @@ pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
         });
     }
 
+    // 与源共用 inode / symlink 的旧下发：先断开再写独立副本
+    if path_independence::paths_alias(dest, &material_src) {
+        link::remove_dest_path(dest)?;
+    }
+
     let canonical = canonical_src(&material_src);
 
-    // 历史 symlink：后续操作一律迁移为实体副本
+    // 历史 symlink（remove 后可能已不存在）：后续仍按实体副本流程
     if is_symlink_entry(dest) {
         let _ = link::unlink(dest);
     } else {
@@ -538,5 +558,23 @@ mod tests {
             fs::read_to_string(dest.join("SKILL.md").as_std_path()).unwrap(),
             "body"
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn deploy_replaces_hardlink_with_independent_copy() {
+        let tmp = TempDir::new().unwrap();
+        let src = Utf8PathBuf::from_path_buf(tmp.path().join("src.md")).unwrap();
+        let dest = Utf8PathBuf::from_path_buf(tmp.path().join("plat.md")).unwrap();
+        fs::write(src.as_std_path(), "v1").unwrap();
+        fs::hard_link(src.as_std_path(), dest.as_std_path()).unwrap();
+        assert!(path_independence::paths_alias(&dest, &src));
+
+        deploy(&src, &dest).unwrap();
+        assert!(!path_independence::paths_alias(&dest, &src));
+        assert_eq!(fs::read_to_string(dest.as_std_path()).unwrap(), "v1");
+
+        fs::write(src.as_std_path(), "v2").unwrap();
+        assert_eq!(fs::read_to_string(dest.as_std_path()).unwrap(), "v1");
     }
 }

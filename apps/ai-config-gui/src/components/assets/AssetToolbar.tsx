@@ -6,6 +6,7 @@ import { assetKindLabel } from "../../i18n/labels";
 import { PLATFORM_NAME } from "../../platformIcons";
 import type { AssetKind, DeployPlatform, Platform, PlatformAssetEntry } from "../../types";
 import { aggregateLinkStateForUi } from "../../utils/aggregatePlatformState";
+import { canUpdateEntry } from "../../utils/entryUpdate";
 import { RowSyncActions } from "./RowSyncActions";
 
 interface AssetToolbarProps {
@@ -23,8 +24,11 @@ interface AssetToolbarProps {
   issueReasonForKind: (plat: DeployPlatform) => string | undefined;
   onToggleSelectAll: () => void;
   onBatchSyncPlatform: (plat: Platform) => void;
+  onBatchUpdate: () => void;
   onBatchDelete: () => void;
   onOpenFolder: () => void;
+  onAddSkill?: () => void;
+  onAddMarketplace?: () => void;
 }
 
 export function AssetToolbar({
@@ -42,8 +46,11 @@ export function AssetToolbar({
   issueReasonForKind,
   onToggleSelectAll,
   onBatchSyncPlatform,
+  onBatchUpdate,
   onBatchDelete,
   onOpenFolder,
+  onAddSkill,
+  onAddMarketplace,
 }: AssetToolbarProps) {
   const { t } = useTranslation();
   const kindLabel = assetKindLabel(t, activeKind);
@@ -58,6 +65,15 @@ export function AssetToolbar({
 
   const batchDeleteDisabled =
     loading || busy || selectedCount === 0 || visibleCount === 0;
+
+  const batchUpdateDisabled =
+    loading ||
+    busy ||
+    selectedCount === 0 ||
+    visibleCount === 0 ||
+    !selectedEntries.some((entry) =>
+      canUpdateEntry(entry, (plat) => !!issueReasonForKind(plat)),
+    );
 
   return (
     <header className="list-header">
@@ -109,11 +125,20 @@ export function AssetToolbar({
           <RowSyncActions
             variant="batch"
             loading={loading || busy}
+            activePlatform={activePlatform}
             browsingSource={browsingSource}
             selectedCount={selectedCount}
             issueReasonFor={issueReasonForKind}
             linkStateFor={batchLinkStateFor}
             onPlatformClick={onBatchSyncPlatform}
+            onAdd={activeKind === "skill" ? onAddSkill : undefined}
+            addDisabled={loading || busy}
+            addTitle={t("toolbar.addSkillTitle")}
+            onAddMarketplace={activeKind === "skill" ? onAddMarketplace : undefined}
+            addMarketplaceTitle={t("toolbar.addMarketplaceTitle")}
+            onUpdate={onBatchUpdate}
+            updateDisabled={batchUpdateDisabled}
+            updateTitle={t("toolbar.batchUpdateTitle")}
             onDelete={onBatchDelete}
             deleteDisabled={batchDeleteDisabled}
             deleteTitle={t("toolbar.batchDeleteTitle")}

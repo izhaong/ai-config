@@ -1,6 +1,6 @@
 # ai-config 桌面端 — 产品设计稿
 
-> 状态：Draft v0.1 · 2026-06-12
+> 状态：Draft v0.2 · 2026-06-21（附录 §19 对齐 Phase 3 已实现 GUI）
 > 范围：GUI 信息架构 / 组件清单 / 状态枚举 / 交互流程
 > 上游：`PRD.md`（做什么）·`ARCHITECTURE.md`（组件边界）
 > 下游：Tauri + Solid 前端代码（不在本文件）
@@ -18,7 +18,7 @@
 ## 1. 设计原则
 
 1. **三栏是常态，不是变体** — 项目 / 资产类型 / 内容；用户定位一次后不会跳栏
-2. **per-item × per-platform 状态徽标是核心** — 一个条目在 4 个平台什么状态，肉眼能扫
+2. **per-item × per-platform 状态徽标是核心** — 一个条目在 **5 个平台**（含 ai-config）什么状态，肉眼能扫
 3. **MCP 是表，不是 JSON** — 一行一条 server；JSON 编辑器**不**出现在产品表面
 4. **secrets 永不明文** — 任何位置、任何状态、任何字体大小下，明文值不可达
 5. **守护进程状态常显** — 用户随时知道 daemon 在不在跑
@@ -88,7 +88,22 @@
 
 ### 3.3 平台徽标状态（核心）
 
-| 状态 | 视觉 | 触发 | 点击行为 |
+| 状态 | 视觉（实现） | 含义 | 点击行为 |
+|---|---|---|---|
+| **linked** | 实心边框 + 绿高亮 | 本工具下发的硬拷贝（有 marker） | **收回**该平台目录（浏览当前平台时 **skip**） |
+| **synced** | 蓝色 partial / 虚线 | 外部安装或手工目录，内容一致 | **覆盖下发** → linked |
+| **unlinked** | 空心 + 低透明度 | 该平台无副本 | **下发** / **导入** / **跨平台拷贝** |
+| **broken** | 异常态 | marker 或链断裂 | deploy 修复 |
+| **missing** | 应对照缺失 | 源侧应有但平台无 | deploy |
+| **unsupported** | 灰 + 禁用 | 平台不支持该资产类型 | 无操作 |
+
+平台顺序（固定）：**ai-config** → Cursor → Codex → Claude → Hermes。
+
+列表行右侧控件顺序：**五平台 icon** → **更新（↻）** → **删除（🗑）**。详见 PRD §3.5。
+
+> 下列为 v0.1 线框时代的 4 平台枚举，保留作历史参考；实现以本表与 PRD §3.5 为准。
+
+| 状态 | 视觉 | 触发 | 点击行为（v0.1 草案） |
 |---|---|---|---|
 | **linked** | `●` 实心 + 平台色 | 软链存在 / JSON 已渲染 | 跳 S6（看日志） |
 | **unlinked** | `◯` 空心 + 灰 | 未同步（首次 / 平台关） | 触发单条 sync |
@@ -96,7 +111,7 @@
 | **missing** | `⚠` 红色三角 | 源文件不存在 | 跳 S6（看错误） |
 | **failed** | `✕` 红 X | 上次 sync 失败 | 跳 S6（重试） |
 
-**关键设计**：4 个平台徽标**横排**在卡片右侧，**1 秒扫**完一个项目所有条目的状态。
+**关键设计**：平台徽标横排在卡片右侧，1 秒扫完一个项目所有条目的状态。
 
 ---
 
@@ -601,3 +616,46 @@ S3 用户编辑一行
 ## 18. 变更日志
 
 - **2026-06-12 v0.1** — 初版（来自 PRD v0.2 + ARCHITECTURE.md §11）
+- **2026-06-21 v0.2** — §3.3 对齐五平台 + `synced`；附录 §19 记录已实现列表行交互
+
+---
+
+## 19. 附录：Phase 3 已实现 GUI（与线框差异）
+
+当前 `apps/ai-config-gui` 已落地行为（PRD v0.5 §3.5 为权威产品语义）：
+
+### 19.1 布局
+
+| 线框（§3） | 实现 |
+| --- | --- |
+| 三栏：项目 / 类型 / 内容 | **侧栏**（项目 + 类型 + 五平台浏览）+ **主列表**（工具栏 + 行）+ **抽屉** |
+| 4 平台徽标 | **5 平台** favicon 按钮（`PlatformIconButtons`） |
+| S6 同步详情页 | **无独立页**；操作在行内完成 + toast |
+
+### 19.2 行内操作（`RowSyncActions`）
+
+```
+[☑]  name + description          [ai][Cu][Cx][Cl][He]  [↻]  [🗑]
+```
+
+| 控件 | 组件 / 逻辑 |
+| --- | --- |
+| 五平台 icon | `entryPlatformToggle.ts` → `asset_ops::deploy` / `retract` / `import` / `deploy_from_platform` |
+| 更新 ↻ | `entryUpdate.ts` → 对已激活平台批量 `deploy` |
+| 删除 🗑 | 二次 arm → `ConfirmModal` → `delete_source`（源视图）或单平台 `retract`（平台视图） |
+
+### 19.3 关键交互规则
+
+1. **五平台对等**：ai-config 目录与其它 IDE 目录均为独立副本；收回 ai-config **不**自动收回 IDE。
+2. **浏览当前平台不收回**：`activePlatform === plat` 且非源浏览 / 或源浏览 ai-config 时 skip。
+3. **synced**：`platform_scan` + `materialize::is_managed_deploy`；可覆盖为 linked。
+4. **跨平台拷贝**：在 IDE 平台 A 视图点平台 B → `deploy_from_platform(A→B)`。
+
+### 19.4 参考实现路径
+
+| 层 | 路径 |
+| --- | --- |
+| 产品语义 | `docs/product/PRD.md` §3.5 |
+| Core | `crates/ai-config-core/src/asset_ops.rs`、`materialize.rs`、`platform_scan.rs` |
+| GUI | `apps/ai-config-gui/src/utils/entryPlatformToggle.ts`、`hooks/useAssetOperations.ts` |
+| 上游路径 | `docs/reference/vercel-skills-agent-paths.md` |

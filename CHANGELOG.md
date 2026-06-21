@@ -6,13 +6,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **MCP 外部控制**：`ai-config serve` 启动 stdio MCP 服务器（10 个工具：list/show/save/deploy/retract/doctor/status/sync/env），供 Cursor / Claude Code 等 Agent 原生操作资产；参考 [ant-design-cli](https://github.com/ant-design/ant-design-cli) 的 `antd mcp` 模式。
+- **Agent Skill**：`.cursor/skills/ai-config-agent/SKILL.md` — 教 Agent 何时用 MCP 或 CLI `--json`。
+- **GUI 五平台对等**：ai-config 与 4 IDE 并列；平台 icon deploy / retract / import / 跨平台硬拷贝（`deploy_from_platform`）。
+- **链接态 `synced`**：外部安装（如 `npx skills`）内容一致但无 marker；点击可覆盖为 `linked`。
+- **列表行「更新」**：从 ai-config 平台副本重新 deploy 到各已激活平台。
+- **GUI Skill 添加**：列表顶栏「+」；`npx skills add` 拉取到 ai-config 源，IDE 目标则再 `deploy` 下发。
+- **GUI Claude Marketplace 导入**：顶栏「购物袋」；多选 Skill 与平台后，先写入 ai-config 源再 deploy 到各 IDE。
+- **参考文档**：`docs/reference/vercel-skills-agent-paths.md`、`manifests/vercel-skills-agents.snapshot.json`。
+
+### Changed
+
+- **ai-config 平台 icon 收回**：`retract(..., AiConfig)` 仅删 ai-config 平台目录；源视图浏览时点击 ai-config icon 不收回；与「删除」全平台收回区分。
+- **产品文档**：PRD **v0.5**（§3.5 五平台硬拷贝语义）、DESIGN **v0.2**（§19 实现附录）、ARCHITECTURE 模块图对齐 `materialize` / `asset_ops`。
+
+### Fixed
+
+- **多平台 Skill 安装**：Marketplace / 批量添加时 IDE 平台改为「先写 ai-config 源 → deploy」，修复仅 ai-config 可见的问题（`npx skills` 路径与 ai-config 扫描目录不一致）。
+- **平台视图删除**：外部 / `synced` 的 Hermes（及其它 IDE）skill 可从平台目录删除，无需 ai-config 源。
+
 ### Removed
 
 - **`global-config/`**：早期仓库内资产目录已废弃；用户全局资产统一在 `~/.ai-config/`。原 vendored `antd` skill 改记于 `manifests/plugins.md`（上游 ant-design-cli）。
 
 ### Changed
 
-- **GUI 规范**：组件迁入 `components/`；抽 `utils/canOpenEntry`；批量操作 toast 按成功/失败计数；`cmd_doctor` 接 core 真值；侧边栏改用 `<button>` + a11y。
+- **GUI 侧边栏可拖拽调节**：项目区高度、资产/平台左右宽度、侧栏总宽均可手动调整，布局持久化至 `localStorage`。
 - **Core 收敛**：新增 `asset_scope`、`doctor`、`asset_ops`；`platform` 统一解析/能力说明；GUI `lib.rs` 单条资产命令经 `command_bridge` 调 core；CLI `lifecycle::run_doctor` 改调 `doctor::compute_report`。
 - **GUI 工程化**：`eslint.config.js`、`vitest` + `canOpenEntry` 单测；`npm run lint|test` 脚本。
 
