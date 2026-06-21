@@ -10,6 +10,7 @@ description = "ai-config 业务逻辑核心:model / source / platform / link / t
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 serde_yaml.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true

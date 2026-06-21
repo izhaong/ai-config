@@ -8,7 +8,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **MCP 外部控制**（开发中）：`ai-config serve` stdio MCP 服务器，供 Agent 原生操作资产。
+- **MCP 外部控制**：`ai-config serve` 启动 stdio MCP 服务器（list/show/save/deploy/retract/doctor/status/sync/env），供 Cursor / Claude Code 等 Agent 原生操作资产。
+- **Agent Skill**：`.cursor/skills/ai-config-agent/SKILL.md` — 教 Agent 何时用 MCP 或 CLI `--json`。
+- **GUI 添加 MCP**：顶栏「+」打开 `AddMcpModal`，粘贴 JSON 写入 `~/.ai-config/mcp.json` 并可选 deploy。
+
+### Fixed
+
+- **MCP `serve` 启动崩溃**：工具返回 `serde_json::Value` 时 `outputSchema` 不符合 MCP 规范；改为具名类型 + `JsonSchema` 派生。
 
 ## [0.3.0] - 2026-06-21
 

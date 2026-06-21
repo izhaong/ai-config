@@ -9,6 +9,7 @@ import {
   importAsset,
   retractAsset,
   revealPath,
+  saveAsset,
 } from "../api/tauriAssets";
 import { PLATFORM_NAME } from "../platformIcons";
 import type { ConfirmRequest } from "./useConfirm";
@@ -21,7 +22,11 @@ import type {
   Platform,
   PlatformAssetEntry,
 } from "../types";
-import { canRemoveFromPlatform, hasSourceEntry, isSourcePlatform } from "../types";
+import {
+  canRemoveFromPlatform,
+  hasSourceEntry,
+  isSourcePlatform,
+} from "../types";
 import {
   resolveBatchEntryPlatformAction,
   resolveBatchPlatformToggleMode,
@@ -580,6 +585,7 @@ export function useAssetOperations({
   });
 
   const [addSkillOpen, setAddSkillOpen] = useState(false);
+  const [addMcpOpen, setAddMcpOpen] = useState(false);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
 
   const openAddSkill = useMemoizedFn(() => {
@@ -606,6 +612,31 @@ export function useAssetOperations({
         await refreshView(true);
       } catch (e) {
         showToast("err", t("toast.addSkillFailed", { error: e }));
+      } finally {
+        setBusy(false);
+      }
+    },
+  );
+
+  const openAddMcp = useMemoizedFn(() => {
+    if (activeKind !== "mcp" || !browsingSource) return;
+    setAddMcpOpen(true);
+  });
+
+  const closeAddMcp = useMemoizedFn(() => {
+    setAddMcpOpen(false);
+  });
+
+  const submitAddMcp = useMemoizedFn(
+    async (name: string, configJson: string) => {
+      setBusy(true);
+      try {
+        const msg = await saveAsset("mcp", name, configJson, activeProject);
+        showToast("ok", msg);
+        setAddMcpOpen(false);
+        await refreshView(true);
+      } catch (e) {
+        showToast("err", t("toast.addMcpFailed", { error: e }));
       } finally {
         setBusy(false);
       }
@@ -643,6 +674,10 @@ export function useAssetOperations({
     openAddSkill,
     closeAddSkill,
     submitAddSkill,
+    addMcpOpen,
+    openAddMcp,
+    closeAddMcp,
+    submitAddMcp,
     marketplaceOpen,
     openAddMarketplace,
     closeAddMarketplace,

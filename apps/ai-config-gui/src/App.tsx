@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { ConfirmModal } from "./components/feedback/ConfirmModal";
 import { AddSkillModal } from "./components/feedback/AddSkillModal";
+import { AddMcpModal } from "./components/feedback/AddMcpModal";
 import { MarketplaceSkillModal } from "./components/feedback/MarketplaceSkillModal";
 import { RegisterProjectModal } from "./components/feedback/RegisterProjectModal";
 import { AssetListPane } from "./components/assets/AssetListPane";
@@ -136,6 +137,7 @@ export function App() {
             onBatchDelete={ops.requestBatchDelete}
             onOpenFolder={() => void ops.openBrowseFolder()}
             onAddSkill={() => ops.openAddSkill()}
+            onAddMcp={() => ops.openAddMcp()}
             onAddMarketplace={() => ops.openAddMarketplace()}
           />
 
@@ -230,6 +232,16 @@ export function App() {
           onCancel={ops.closeAddSkill}
           onSubmit={(source, skillName) =>
             void ops.submitAddSkill(source, skillName)
+          }
+        />
+      ) : null}
+
+      {ops.addMcpOpen ? (
+        <AddMcpModal
+          busy={busy}
+          onCancel={ops.closeAddMcp}
+          onSubmit={(name, configJson) =>
+            void ops.submitAddMcp(name, configJson)
           }
         />
       ) : null}

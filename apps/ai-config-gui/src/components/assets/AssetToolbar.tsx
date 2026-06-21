@@ -28,6 +28,7 @@ interface AssetToolbarProps {
   onBatchDelete: () => void;
   onOpenFolder: () => void;
   onAddSkill?: () => void;
+  onAddMcp?: () => void;
   onAddMarketplace?: () => void;
 }
 
@@ -50,6 +51,7 @@ export function AssetToolbar({
   onBatchDelete,
   onOpenFolder,
   onAddSkill,
+  onAddMcp,
   onAddMarketplace,
 }: AssetToolbarProps) {
   const { t } = useTranslation();
@@ -131,9 +133,19 @@ export function AssetToolbar({
             issueReasonFor={issueReasonForKind}
             linkStateFor={batchLinkStateFor}
             onPlatformClick={onBatchSyncPlatform}
-            onAdd={activeKind === "skill" ? onAddSkill : undefined}
+            onAdd={
+              activeKind === "skill"
+                ? onAddSkill
+                : activeKind === "mcp" && browsingSource
+                  ? onAddMcp
+                  : undefined
+            }
             addDisabled={loading || busy}
-            addTitle={t("toolbar.addSkillTitle")}
+            addTitle={
+              activeKind === "mcp"
+                ? t("toolbar.addMcpTitle")
+                : t("toolbar.addSkillTitle")
+            }
             onAddMarketplace={activeKind === "skill" ? onAddMarketplace : undefined}
             addMarketplaceTitle={t("toolbar.addMarketplaceTitle")}
             onUpdate={onBatchUpdate}
