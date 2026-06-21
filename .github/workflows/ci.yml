@@ -54,7 +54,8 @@ jobs:
       - name: cargo test
         run: |
           cargo test -p ai-config-core -p ai-config-cli -p ai-config-store \
-            -p ai-config-daemon -p ai-config-bus -p ai-config-watcher
+            -p ai-config-daemon -p ai-config-bus -p ai-config-watcher \
+            -- --test-threads=1
       - name: cargo build release (CLI)
         run: cargo build -p ai-config-cli --release
 
