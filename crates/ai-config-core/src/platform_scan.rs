@@ -1142,7 +1142,7 @@ mod tests {
     fn import_skill_copies_to_source() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let claude_skills = home.join(".claude/skills/import-me");
         touch(
@@ -1186,15 +1186,13 @@ mod tests {
             Some(&LinkState::Linked),
             "从 Claude 导入后在 ai-config 视图应显示 Claude 已同步"
         );
-
-        std::env::remove_var("HOME");
     }
 
     #[test]
     fn platform_mirror_detects_cross_ide_skill_copy() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let claude_skill = home.join(".claude/skills/find-skills");
         fs::create_dir_all(&claude_skill).unwrap();
@@ -1230,15 +1228,13 @@ mod tests {
         );
         assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Synced));
         assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Linked));
-
-        std::env::remove_var("HOME");
     }
 
     #[test]
     fn external_platform_copy_is_synced_not_retractable() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let claude_skill = home.join(".claude/skills/find-skills");
         fs::create_dir_all(&claude_skill).unwrap();
@@ -1263,15 +1259,13 @@ mod tests {
             &source_scan,
         );
         assert_eq!(states.get(&PlatformId::Hermes), Some(&LinkState::Synced));
-
-        std::env::remove_var("HOME");
     }
 
     #[test]
     fn browse_hermes_shows_synced_for_external_skill() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let hermes_skill = home.join(".hermes/skills/external-one");
         fs::create_dir_all(&hermes_skill).unwrap();
@@ -1292,8 +1286,6 @@ mod tests {
             &source_scan,
         );
         assert_eq!(states.get(&PlatformId::Hermes), Some(&LinkState::Synced));
-
-        std::env::remove_var("HOME");
     }
 
     #[test]

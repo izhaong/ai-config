@@ -33,3 +33,6 @@ pub mod skills_add;
 pub mod source;
 pub mod sync;
 pub mod template;
+
+#[cfg(test)]
+pub(crate) mod test_env;

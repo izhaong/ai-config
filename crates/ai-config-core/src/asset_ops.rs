@@ -800,7 +800,7 @@ mod deploy_from_platform_tests {
     fn deploy_skill_from_claude_to_cursor_preserves_claude() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let claude_skill = home.join(".claude/skills/find-skills");
         fs::create_dir_all(&claude_skill).unwrap();
@@ -843,14 +843,12 @@ mod deploy_from_platform_tests {
                 || claude_skill.join("SKILL.md").is_file(),
             "Claude 侧不应因拷贝而被删除"
         );
-
-        std::env::remove_var("HOME");
     }
     #[test]
     fn retract_aiconfig_keeps_other_platform_copy() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let asset_root = home.join(".ai-config");
         let skill_dir = asset_root.join("skills/keep-me");
@@ -879,15 +877,13 @@ mod deploy_from_platform_tests {
             claude_skill.join("SKILL.md").is_file(),
             "收回 ai-config 平台副本不应删除 Claude 侧 skill"
         );
-
-        std::env::remove_var("HOME");
     }
 
     #[test]
     fn retract_hermes_skill_without_aiconfig_source() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let hermes_skill = home.join(".hermes/skills/npx-only");
         fs::create_dir_all(&hermes_skill).unwrap();
@@ -907,8 +903,6 @@ mod deploy_from_platform_tests {
             !hermes_skill.exists(),
             "应能删除无 ai-config 源的外部 Hermes skill"
         );
-
-        std::env::remove_var("HOME");
     }
 }
 
