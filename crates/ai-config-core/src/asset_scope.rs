@@ -98,7 +98,7 @@ pub fn retract_all_platforms_best_effort(
         let Some(dest) = asset_dest_for_at_base(plat, kind, name, &src, deploy_base) else {
             continue;
         };
-        let _ = remove_platform_copy_best_effort(&dest);
+        remove_platform_copy_best_effort(&dest);
     }
 }
 

@@ -671,7 +671,7 @@ fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, folded: bool) -
     let joined = if folded {
         parts.join(" ")
     } else {
-        parts.join(" ")
+        parts.join("\n")
     };
     (joined.chars().take(200).collect(), i)
 }

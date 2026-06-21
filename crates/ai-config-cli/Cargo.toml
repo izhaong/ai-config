@@ -23,6 +23,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 camino.workspace = true
+rmcp = { version = "1.7.0", features = ["server", "transport-io", "macros", "schemars"] }
 
 [dev-dependencies]
 tempfile.workspace = true

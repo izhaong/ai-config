@@ -170,11 +170,7 @@ pub fn ensure_repo(root: &Utf8Path, default_branch: &str) -> Result<GitEnsureOut
         if repo_has_trackable_files(root) {
             run_git_ok(root, &["add", "-A"])?;
             // 可能全是 ignore 的文件；允许空提交失败
-            if run_git_ok(root, &["commit", "-m", "chore: ai-config 初始提交"]).is_ok() {
-                true
-            } else {
-                false
-            }
+            run_git_ok(root, &["commit", "-m", "chore: ai-config 初始提交"]).is_ok()
         } else {
             false
         }

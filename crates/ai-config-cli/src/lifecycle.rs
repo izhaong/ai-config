@@ -17,7 +17,6 @@
 //! - 默认:人类可读
 //! - `--quiet`:只一行 `ok: <summary>` / `fail: <msg>`
 
-use std::collections::HashMap;
 use std::process::ExitCode;
 
 use camino::Utf8Path;
@@ -44,7 +43,6 @@ struct SyncContext {
     scan: source::ScanResult,
     /// secrets 已加载(key→value)。**绝不**回显 value 到日志 / stdout / JSON。
     secrets_pairs: Vec<(String, String)>,
-    secrets_map: HashMap<String, String>,
     actions: Vec<SyncAction>,
 }
 
@@ -53,21 +51,11 @@ fn load_context(default_root: &Utf8Path) -> Result<SyncContext, CoreError> {
     let project = ai_config_core::model::Project::new("default", default_root.to_path_buf());
     let actions = sync::compute_for_project(&project, default_root)?;
     let pairs = core_secrets::load()?;
-    let map = pairs_to_map(&pairs);
     Ok(SyncContext {
         scan,
         secrets_pairs: pairs,
-        secrets_map: map,
         actions,
     })
-}
-
-fn pairs_to_map(pairs: &[(String, String)]) -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    for (k, v) in pairs {
-        m.insert(k.clone(), v.clone());
-    }
-    m
 }
 
 fn all_platforms() -> [PlatformId; 4] {
@@ -521,7 +509,7 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
 // ── 3. sync ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-struct SyncReport {
+pub struct SyncReport {
     ok: bool,
     synced: usize,
     failed: usize,
@@ -529,15 +517,9 @@ struct SyncReport {
     exit_code: u8,
 }
 
-/// `ai-config sync`(PRD §10 A-5)
-pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
+/// `ai-config sync` — 返回结构化报告（CLI / MCP 共用）。
+pub fn sync_report(default_root: &Utf8Path) -> Result<SyncReport, CoreError> {
+    let ctx = load_context(default_root)?;
     let outcomes = execute_all_actions(&ctx);
     let synced = outcomes
         .iter()
@@ -549,14 +531,27 @@ pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
     } else {
         exit_code::SUCCESS
     };
-
-    let report = SyncReport {
+    Ok(SyncReport {
         ok: code == exit_code::SUCCESS,
         synced,
         failed,
         outcomes,
         exit_code: code,
+    })
+}
+
+/// `ai-config sync`(PRD §10 A-5)
+pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+    let report = match sync_report(default_root) {
+        Ok(r) => r,
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
     };
+    let synced = report.synced;
+    let failed = report.failed;
+    let code = report.exit_code;
 
     if mode.is_json() {
         emit_json(mode, &report);
@@ -570,7 +565,7 @@ pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
 // ── 4. status ───────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-struct StatusReport {
+pub struct StatusReport {
     projects: Vec<ProjectStatus>,
     summary: StatusSummary,
 }
@@ -606,16 +601,9 @@ struct StatusSummary {
     missing: usize,
 }
 
-/// `ai-config status`(PRD §6.1)
-pub fn run_status(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-
+/// `ai-config status` — 返回结构化报告（CLI / MCP 共用）。
+pub fn status_report(default_root: &Utf8Path) -> Result<StatusReport, CoreError> {
+    let ctx = load_context(default_root)?;
     let assets = flat_assets(&ctx.scan);
     let mut asset_statuses: Vec<AssetStatus> = Vec::new();
     let mut summary = StatusSummary {
@@ -654,12 +642,23 @@ pub fn run_status(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
         });
     }
 
-    let report = StatusReport {
+    Ok(StatusReport {
         projects: vec![ProjectStatus {
             project: "default".to_string(),
             assets: asset_statuses,
         }],
         summary,
+    })
+}
+
+/// `ai-config status`(PRD §6.1)
+pub fn run_status(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+    let report = match status_report(default_root) {
+        Ok(r) => r,
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
     };
 
     if mode.is_json() {
@@ -765,27 +764,21 @@ fn describe_for(
 // ── 5. list ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
-struct ListReport {
-    count: usize,
-    assets: Vec<AssetEntry>,
+pub struct ListReport {
+    pub count: usize,
+    pub assets: Vec<AssetEntry>,
 }
 
 #[derive(Debug, Serialize)]
-struct AssetEntry {
-    kind: String,
-    name: String,
-    source_path: String,
+pub struct AssetEntry {
+    pub kind: String,
+    pub name: String,
+    pub source_path: String,
 }
 
-/// `ai-config list`
-pub fn run_list(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
+/// `ai-config list` — 返回结构化报告（CLI / MCP 共用）。
+pub fn list_report(default_root: &Utf8Path) -> Result<ListReport, CoreError> {
+    let ctx = load_context(default_root)?;
     let assets = flat_assets(&ctx.scan);
     let entries: Vec<AssetEntry> = assets
         .iter()
@@ -795,10 +788,20 @@ pub fn run_list(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
             source_path: p.as_str().to_string(),
         })
         .collect();
-
-    let report = ListReport {
+    Ok(ListReport {
         count: entries.len(),
         assets: entries,
+    })
+}
+
+/// `ai-config list`
+pub fn run_list(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+    let report = match list_report(default_root) {
+        Ok(r) => r,
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
     };
 
     if mode.is_json() {
