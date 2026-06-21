@@ -427,8 +427,8 @@ pub fn asset_root_display(root: &Utf8Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use camino::Utf8PathBuf;
     use super::*;
+    use camino::Utf8PathBuf;
     use tempfile::tempdir;
 
     fn skip_without_git() -> bool {

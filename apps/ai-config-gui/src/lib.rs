@@ -51,8 +51,8 @@ use ai_config_core::template::McpSyncState;
 use ai_config_store::Store;
 use ai_config_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
 
-use ai_config_core::asset_ops::AssetFileDetail;
 use ai_config_core::asset_ops::parse_skill_meta;
+use ai_config_core::asset_ops::AssetFileDetail;
 
 // ── 共享状态 ──────────────────────────────────────────────────────
 
@@ -483,14 +483,8 @@ async fn cmd_skill_add_batch(
             skill_name: s.skill_name,
         })
         .collect();
-    command_bridge::add_remote_skills_batch(
-        default_root,
-        asset_root,
-        deploy_base,
-        items,
-        platforms,
-    )
-    .await
+    command_bridge::add_remote_skills_batch(default_root, asset_root, deploy_base, items, platforms)
+        .await
 }
 
 #[derive(serde::Deserialize)]
@@ -1273,7 +1267,12 @@ async fn cmd_git_pull(state: State<'_, AppState>) -> Result<String, String> {
     let store = Arc::clone(&state.store);
     tokio::task::spawn_blocking(move || {
         let config = store.settings().git_config().map_err(|e| e.to_string())?;
-        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+        if config
+            .remote_url
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
             return Err("未配置远程仓库".to_string());
         }
         git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;
@@ -1294,7 +1293,12 @@ async fn cmd_git_push(state: State<'_, AppState>) -> Result<String, String> {
     let store = Arc::clone(&state.store);
     tokio::task::spawn_blocking(move || {
         let config = store.settings().git_config().map_err(|e| e.to_string())?;
-        if config.remote_url.as_deref().filter(|s| !s.is_empty()).is_none() {
+        if config
+            .remote_url
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .is_none()
+        {
             return Err("未配置远程仓库".to_string());
         }
         git::apply_remote(&root, config.remote_url.as_deref()).map_err(|e| e.to_string())?;

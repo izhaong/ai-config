@@ -73,11 +73,13 @@ pub fn compute_report(default_root: &Utf8Path) -> Result<DoctorReport, CoreError
     }
 
     for issue in platform::collect_capability_issues(&crate::paths::global_deploy_base()) {
-        report.platform_capability_issues.push(PlatformCapabilityIssue {
-            platform: platform_label(issue.platform).to_string(),
-            kind: issue.kind,
-            reason: issue.reason,
-        });
+        report
+            .platform_capability_issues
+            .push(PlatformCapabilityIssue {
+                platform: platform_label(issue.platform).to_string(),
+                kind: issue.kind,
+                reason: issue.reason,
+            });
     }
 
     report.exit_code = 0;
@@ -127,8 +129,7 @@ fn try_materialize_legacy_dest(
     src: &Utf8Path,
 ) -> Result<bool, CoreError> {
     let link_src = sync::link_src_for_create(kind, src);
-    let needs_repair =
-        dest_is_symlink(dest) || path_independence::paths_alias(dest, &link_src);
+    let needs_repair = dest_is_symlink(dest) || path_independence::paths_alias(dest, &link_src);
     if !needs_repair {
         return Ok(false);
     }
@@ -161,7 +162,11 @@ fn materialize_orphan_symlinks_under_ai_config(
             if !dir.is_dir() {
                 continue;
             }
-            for entry in std::fs::read_dir(dir.as_std_path()).into_iter().flatten().flatten() {
+            for entry in std::fs::read_dir(dir.as_std_path())
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
                 let path = Utf8PathBuf::from(entry.path().to_string_lossy().into_owned());
                 if !dest_is_symlink(&path) {
                     continue;

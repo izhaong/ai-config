@@ -36,7 +36,10 @@ pub struct SkillsAddParams<'a> {
 }
 
 /// 安装远程 skill 到目标平台或 ai-config 平台目录。
-pub fn add_remote_skill(scope: &ScopeRoots<'_>, params: SkillsAddParams<'_>) -> Result<String, CoreError> {
+pub fn add_remote_skill(
+    scope: &ScopeRoots<'_>,
+    params: SkillsAddParams<'_>,
+) -> Result<String, CoreError> {
     let source = params.source.trim();
     if source.is_empty() {
         return Err(CoreError::InvalidPath(
@@ -53,12 +56,7 @@ pub fn add_remote_skill(scope: &ScopeRoots<'_>, params: SkillsAddParams<'_>) -> 
     }
 
     let skill_name = ensure_skill_in_aiconfig(scope.asset_root, source, params.skill_name)?;
-    asset_ops::deploy(
-        scope,
-        AssetKind::Skill,
-        &skill_name,
-        params.target_platform,
-    )
+    asset_ops::deploy(scope, AssetKind::Skill, &skill_name, params.target_platform)
 }
 
 fn add_to_aiconfig_platform(
@@ -67,9 +65,8 @@ fn add_to_aiconfig_platform(
     skill_name: Option<&str>,
 ) -> Result<String, CoreError> {
     let temp = TempDir::new().map_err(CoreError::Io)?;
-    let temp_utf8 = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).map_err(|_| {
-        CoreError::InvalidPath("临时目录路径非 UTF-8".into())
-    })?;
+    let temp_utf8 = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
+        .map_err(|_| CoreError::InvalidPath("临时目录路径非 UTF-8".into()))?;
 
     let args = build_aiconfig_add_args(source, skill_name);
     run_npx(&temp_utf8, &args)?;
@@ -131,9 +128,11 @@ fn run_npx(cwd: &Utf8Path, args: &[String]) -> Result<String, CoreError> {
         .args(&arg_refs)
         .current_dir(cwd.as_std_path())
         .output()
-        .map_err(|e| CoreError::InvalidPath(format!(
-            "无法执行 npx skills add（请确认已安装 Node.js/npx）: {e}"
-        )))?;
+        .map_err(|e| {
+            CoreError::InvalidPath(format!(
+                "无法执行 npx skills add（请确认已安装 Node.js/npx）: {e}"
+            ))
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -196,7 +195,9 @@ fn pick_skill_dir(
     }
     if let Some(name) = skill_name.filter(|s| !s.trim().is_empty()) {
         let name = name.trim();
-        if let Some(found) = dirs.iter().find(|d| d.file_name().map(|n| n == name).unwrap_or(false))
+        if let Some(found) = dirs
+            .iter()
+            .find(|d| d.file_name().map(|n| n == name).unwrap_or(false))
         {
             return Ok(found.clone());
         }
@@ -213,7 +214,7 @@ fn pick_skill_dir(
             .filter_map(|d| d.file_name())
             .collect::<Vec<_>>()
             .join(", ")
-    )    ))
+    )))
 }
 
 /// 批量安装：先写入 ai-config 源，再 deploy 到各 IDE 平台。
@@ -257,10 +258,7 @@ pub fn add_remote_skills_batch(
             Ok(name) => name,
             Err(e) => {
                 failed += platforms.len();
-                let label = item
-                    .skill_name
-                    .as_deref()
-                    .unwrap_or(item.source.as_str());
+                let label = item.skill_name.as_deref().unwrap_or(item.source.as_str());
                 errors.push(format!("{label}（写入 ai-config 源失败）: {e}"));
                 continue;
             }
@@ -284,11 +282,7 @@ pub fn add_remote_skills_batch(
         }
     }
 
-    Ok(SkillAddBatchOutcome {
-        ok,
-        failed,
-        errors,
-    })
+    Ok(SkillAddBatchOutcome { ok, failed, errors })
 }
 
 #[cfg(test)]
@@ -329,7 +323,12 @@ mod tests {
 
     #[test]
     fn build_ide_add_args_includes_copy_and_agent() {
-        let args = build_ide_add_args("vercel-labs/agent-skills", Some("web-design"), "cursor", true);
+        let args = build_ide_add_args(
+            "vercel-labs/agent-skills",
+            Some("web-design"),
+            "cursor",
+            true,
+        );
         assert!(args.contains(&"skills".to_string()));
         assert!(args.contains(&"--copy".to_string()));
         assert!(args.contains(&"-a".to_string()));
@@ -344,6 +343,9 @@ mod tests {
         let a = Utf8PathBuf::from("/tmp/a");
         let b = Utf8PathBuf::from("/tmp/b");
         assert!(pick_skill_dir(&[a.clone(), b], None).is_err());
-        assert_eq!(pick_skill_dir(&[a], None).unwrap(), Utf8PathBuf::from("/tmp/a"));
+        assert_eq!(
+            pick_skill_dir(&[a], None).unwrap(),
+            Utf8PathBuf::from("/tmp/a")
+        );
     }
 }

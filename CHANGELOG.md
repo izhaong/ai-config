@@ -8,6 +8,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **MCP 外部控制**：`ai-config serve` 启动 stdio MCP 服务器（10 个工具：list/show/save/deploy/retract/doctor/status/sync/env），供 Cursor / Claude Code 等 Agent 原生操作资产；参考 [ant-design-cli](https://github.com/ant-design/ant-design-cli) 的 `antd mcp` 模式。
+- **Agent Skill**：`.cursor/skills/ai-config-agent/SKILL.md` — 教 Agent 何时用 MCP 或 CLI `--json`。
 - **GUI 五平台对等**：ai-config 与 4 IDE 并列；平台 icon deploy / retract / import / 跨平台硬拷贝（`deploy_from_platform`）。
 - **链接态 `synced`**：外部安装（如 `npx skills`）内容一致但无 marker；点击可覆盖为 `linked`。
 - **列表行「更新」**：从 ai-config 平台副本重新 deploy 到各已激活平台。

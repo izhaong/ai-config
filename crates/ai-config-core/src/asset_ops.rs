@@ -43,9 +43,7 @@ pub fn deploy_from_platform(
     ensure_deploy_target(from_plat)?;
     ensure_deploy_target(to_plat)?;
     if from_plat == to_plat {
-        return Err(CoreError::InvalidPath(
-            "来源平台与目标平台不能相同".into(),
-        ));
+        return Err(CoreError::InvalidPath("来源平台与目标平台不能相同".into()));
     }
     ensure_platform_supports(scope, from_plat, kind)?;
     ensure_platform_supports(scope, to_plat, kind)?;
@@ -58,7 +56,8 @@ pub fn deploy_from_platform(
     let from_adapter =
         platform::for_scope_with_asset(from_plat, scope.deploy_base, scope.asset_root)?;
     let to_adapter = platform::for_scope_with_asset(to_plat, scope.deploy_base, scope.asset_root)?;
-    let (from_src, dest) = platform_asset_paths(from_adapter.as_ref(), to_adapter.as_ref(), kind, name)?;
+    let (from_src, dest) =
+        platform_asset_paths(from_adapter.as_ref(), to_adapter.as_ref(), kind, name)?;
 
     if !from_src.exists() {
         return Err(CoreError::AssetNotFound {
@@ -140,10 +139,7 @@ pub fn get_detail(
                 description,
                 content,
                 source_path: skill_md.to_string(),
-                parent_path: skill_md
-                    .parent()
-                    .map(|p| p.to_string())
-                    .unwrap_or_default(),
+                parent_path: skill_md.parent().map(|p| p.to_string()).unwrap_or_default(),
             })
         }
         AssetKind::Rule | AssetKind::Command => {
@@ -442,10 +438,7 @@ fn platform_asset_paths(
                     .extension()
                     .map(|e| e.to_string())
                     .unwrap_or_else(|| "md".to_string());
-                Ok((
-                    from_file,
-                    to.agents_dir().join(format!("{name}.{ext}")),
-                ))
+                Ok((from_file, to.agents_dir().join(format!("{name}.{ext}"))))
             }
         }
         AssetKind::Mcp => Err(CoreError::InvalidPath("MCP 不支持平台间直拷".into())),
@@ -474,13 +467,12 @@ fn deploy_skill(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<
     let skill_md = locate_source(scope.default_root, scope.asset_root, AssetKind::Skill, name)?;
     let src = skill_link_src(&skill_md);
     let dest = asset_dest_for_at_base(plat, AssetKind::Skill, name, &skill_md, scope.deploy_base)
-        .ok_or_else(|| CoreError::InvalidPath(format!("无法算 skill `{name}` → {plat:?} 的 dest")))?;
+        .ok_or_else(|| {
+        CoreError::InvalidPath(format!("无法算 skill `{name}` → {plat:?} 的 dest"))
+    })?;
     materialize::deploy(&src, &dest)?;
     if plat == PlatformId::Hermes {
-        let skills_parent = dest
-            .parent()
-            .unwrap_or(&dest)
-            .to_path_buf();
+        let skills_parent = dest.parent().unwrap_or(&dest).to_path_buf();
         hermes_config::after_skill_deploy(&skills_parent)?;
     }
     Ok(format!("skill `{name}` → {plat:?} OK ({dest})"))
@@ -494,8 +486,10 @@ fn deploy_materialized(
 ) -> Result<String, CoreError> {
     let src = locate_source(scope.default_root, scope.asset_root, kind, name)?;
     let link_src = link_src_for_create(kind, &src);
-    let dest = asset_dest_for_at_base(plat, kind, name, &src, scope.deploy_base)
-        .ok_or_else(|| CoreError::InvalidPath(format!("无法算 {kind:?} `{name}` → {plat:?} 的 dest")))?;
+    let dest =
+        asset_dest_for_at_base(plat, kind, name, &src, scope.deploy_base).ok_or_else(|| {
+            CoreError::InvalidPath(format!("无法算 {kind:?} `{name}` → {plat:?} 的 dest"))
+        })?;
     materialize::deploy(&link_src, &dest)?;
     Ok(format!("{kind:?} `{name}` → {plat:?} OK ({dest})"))
 }
@@ -503,8 +497,8 @@ fn deploy_materialized(
 fn deploy_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
     let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
     let doc_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(doc_root, name)?
-        .ok_or_else(|| CoreError::AssetNotFound {
+    let config =
+        mcp_json::get_server_config(doc_root, name)?.ok_or_else(|| CoreError::AssetNotFound {
             kind: AssetKind::Mcp,
             name: name.into(),
             hint: "MCP server 在 mcp.json 中找不到".into(),
@@ -524,8 +518,8 @@ fn retract_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<S
 fn get_mcp_detail(scope: &ScopeRoots<'_>, name: &str) -> Result<AssetFileDetail, CoreError> {
     let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
     let doc_root = mcp_asset_root(&mcp_path)?;
-    let config = mcp_json::get_server_config(doc_root, name)?
-        .ok_or_else(|| CoreError::AssetNotFound {
+    let config =
+        mcp_json::get_server_config(doc_root, name)?.ok_or_else(|| CoreError::AssetNotFound {
             kind: AssetKind::Mcp,
             name: name.into(),
             hint: "MCP server 找不到".into(),
@@ -668,10 +662,7 @@ fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, folded: bool) -
         if is_frontmatter_key_line(cont) {
             break;
         }
-        let text = trimmed
-            .strip_prefix('>')
-            .map(str::trim)
-            .unwrap_or(trimmed);
+        let text = trimmed.strip_prefix('>').map(str::trim).unwrap_or(trimmed);
         if !text.is_empty() {
             parts.push(text.to_string());
         }

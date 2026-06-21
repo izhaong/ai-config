@@ -297,9 +297,7 @@ fn main() -> ExitCode {
         Cmd::Status => lifecycle::run_status(&default_root, mode),
         Cmd::List => lifecycle::run_list(&default_root, mode),
         Cmd::Show { name } => lifecycle::run_show(&default_root, &name, mode),
-        Cmd::Doctor { materialize } => {
-            lifecycle::run_doctor(&default_root, mode, materialize)
-        }
+        Cmd::Doctor { materialize } => lifecycle::run_doctor(&default_root, mode, materialize),
     }
 }
 

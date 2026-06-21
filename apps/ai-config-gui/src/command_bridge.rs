@@ -174,13 +174,7 @@ pub async fn add_remote_skills_batch(
 ) -> Result<SkillAddBatchOutcome, String> {
     blocking(move || {
         let scope = scope_roots(&default_root, &asset_root, &deploy_base);
-        skills_add::add_remote_skills_batch(
-            &scope,
-            &items,
-            &platforms,
-            &deploy_base,
-            &asset_root,
-        )
+        skills_add::add_remote_skills_batch(&scope, &items, &platforms, &deploy_base, &asset_root)
     })
     .await
 }

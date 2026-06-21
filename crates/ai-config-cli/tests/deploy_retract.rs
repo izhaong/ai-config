@@ -80,9 +80,7 @@ fn retract_removes_platform_mcp_json() {
         !cursor_mcp.exists() || {
             let raw = fs::read_to_string(&cursor_mcp).unwrap_or_default();
             let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
-            v.get("mcpServers")
-                .and_then(|m| m.get("minio"))
-                .is_none()
+            v.get("mcpServers").and_then(|m| m.get("minio")).is_none()
         },
         "retract should remove minio server entry from platform mcp.json"
     );

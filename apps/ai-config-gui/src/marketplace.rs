@@ -57,9 +57,11 @@ pub fn list_skills(
         .build()
         .map_err(|e| format!("HTTP 客户端初始化失败: {e}"))?;
 
-    let mut req = client
-        .get(API_BASE)
-        .query(&[("sort", sort), ("offset", &offset.to_string()), ("limit", &limit.to_string())]);
+    let mut req = client.get(API_BASE).query(&[
+        ("sort", sort),
+        ("offset", &offset.to_string()),
+        ("limit", &limit.to_string()),
+    ]);
 
     if let Some(query) = q.filter(|s| !s.trim().is_empty()) {
         req = req.query(&[("q", query.trim())]);

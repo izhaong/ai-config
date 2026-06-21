@@ -486,10 +486,30 @@ mod tests {
         let cfg_a = serde_json::json!({ "command": "uvx", "args": ["a"] });
         let cfg_b = serde_json::json!({ "command": "uvx", "args": ["b"] });
 
-        upsert_server_on_platform(PlatformId::Cursor, &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(), "alpha", &cfg_a, None).unwrap();
-        upsert_server_on_platform(PlatformId::Cursor, &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(), "beta", &cfg_b, None).unwrap();
+        upsert_server_on_platform(
+            PlatformId::Cursor,
+            &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(),
+            "alpha",
+            &cfg_a,
+            None,
+        )
+        .unwrap();
+        upsert_server_on_platform(
+            PlatformId::Cursor,
+            &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(),
+            "beta",
+            &cfg_b,
+            None,
+        )
+        .unwrap();
 
-        remove_server_on_platform(PlatformId::Cursor, &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(), "alpha", None).unwrap();
+        remove_server_on_platform(
+            PlatformId::Cursor,
+            &Utf8PathBuf::from_path_buf(plat.clone()).unwrap(),
+            "alpha",
+            None,
+        )
+        .unwrap();
 
         let raw = std::fs::read_to_string(&plat).unwrap();
         let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -540,13 +560,8 @@ mod tests {
         std::os::unix::fs::symlink(&source_mcp, plat_mcp.as_std_path()).unwrap();
         assert!(platform_mcp_aliases_source(&plat_mcp, &source_mcp));
 
-        remove_server_on_platform(
-            PlatformId::Cursor,
-            &plat_mcp,
-            "alpha",
-            Some(&source_mcp),
-        )
-        .unwrap();
+        remove_server_on_platform(PlatformId::Cursor, &plat_mcp, "alpha", Some(&source_mcp))
+            .unwrap();
 
         let source_names = list_server_names(&root).unwrap();
         assert_eq!(

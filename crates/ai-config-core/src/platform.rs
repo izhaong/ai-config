@@ -448,12 +448,8 @@ pub fn capability_skip_reason(plat: PlatformId, kind: AssetKind) -> String {
         (PlatformId::Hermes, AssetKind::Agent) => {
             "Hermes 无静态 agents 目录；请用项目 AGENTS.md 或 delegate_task 子代理".into()
         }
-        (PlatformId::Codex, AssetKind::Command) => {
-            "Codex 无斜杠 commands 目录，不支持下发".into()
-        }
-        (PlatformId::Hermes, AssetKind::Command) => {
-            "Hermes 无斜杠 commands，不支持下发".into()
-        }
+        (PlatformId::Codex, AssetKind::Command) => "Codex 无斜杠 commands 目录，不支持下发".into(),
+        (PlatformId::Hermes, AssetKind::Command) => "Hermes 无斜杠 commands，不支持下发".into(),
         _ => format!(
             "platform `{}` 不支持 asset kind `{}`",
             platform_label(plat),

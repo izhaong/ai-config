@@ -402,7 +402,11 @@ fn scan_hermes_mcp_servers(config_path: &Utf8Path) -> Result<Vec<RawEntry>, Core
         .collect())
 }
 
-pub fn find_source_path(kind: AssetKind, name: &str, source_scan: &ScanResult) -> Option<Utf8PathBuf> {
+pub fn find_source_path(
+    kind: AssetKind,
+    name: &str,
+    source_scan: &ScanResult,
+) -> Option<Utf8PathBuf> {
     match kind {
         AssetKind::Skill => source_scan.skills.iter().find(|p| {
             p.parent()
@@ -458,14 +462,7 @@ fn compute_entry_states(
                 LinkState::Unlinked
             }
         } else if plat == browse_plat {
-            browse_platform_link_state(
-                kind,
-                platform_path,
-                src.as_deref(),
-                deploy_base,
-                plat,
-                name,
-            )
+            browse_platform_link_state(kind, platform_path, src.as_deref(), deploy_base, plat, name)
         } else if !platform::supports_at_scope(plat, kind, deploy_base) {
             LinkState::Unlinked
         } else if kind == AssetKind::Mcp {
@@ -473,14 +470,7 @@ fn compute_entry_states(
         } else if let Some(src_path) = src.as_ref() {
             ide_asset_link_state(plat, kind, name, src_path, deploy_base)
         } else {
-            platform_mirror_link_state(
-                kind,
-                name,
-                platform_path,
-                plat,
-                deploy_base,
-                asset_root,
-            )
+            platform_mirror_link_state(kind, name, platform_path, plat, deploy_base, asset_root)
         };
         states.insert(plat, st);
     }
@@ -523,7 +513,8 @@ fn platform_mirror_link_state(
     deploy_base: &Utf8Path,
     asset_root: &Utf8Path,
 ) -> LinkState {
-    let Ok(dest_adapter) = platform::for_scope_with_asset(dest_plat, deploy_base, asset_root) else {
+    let Ok(dest_adapter) = platform::for_scope_with_asset(dest_plat, deploy_base, asset_root)
+    else {
         return LinkState::Unlinked;
     };
     let dest = match kind {
@@ -623,10 +614,7 @@ fn ide_asset_link_state(
         return LinkState::Broken;
     }
     let expected_src = link_src_for_create(kind, src);
-    deploy_health_to_link_state(
-        &dest,
-        crate::materialize::check(&dest, &expected_src),
-    )
+    deploy_health_to_link_state(&dest, crate::materialize::check(&dest, &expected_src))
 }
 
 fn is_symlink_path(path: &Utf8Path) -> bool {
@@ -801,7 +789,9 @@ pub fn import_command_from_platform(
     let platform_path = find_command_on_platform(&commands_dir, name)?;
     let source_scan = scan_source_for_scope(default_root, asset_root)?;
     if find_source_path(AssetKind::Command, name, &source_scan).is_some() {
-        return Err(CoreError::InvalidPath(format!("源中已存在 command `{name}`")));
+        return Err(CoreError::InvalidPath(format!(
+            "源中已存在 command `{name}`"
+        )));
     }
     let dest = asset_root.join("commands").join(format!("{name}.md"));
     crate::paths::ensure_parent_dir(&dest)?;
