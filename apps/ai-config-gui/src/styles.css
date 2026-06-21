@@ -20,7 +20,8 @@
   --list-row-pad-x: 12px;
   --list-col-gap: 10px;
   --list-check-w: 14px;
-  --list-actions-w: 193px;
+  /* 操作列用 max-content 自适应；勿再用固定宽度（易与 description 重叠） */
+  --list-actions-min: 196px;
 }
 
 * {
@@ -81,43 +82,98 @@ button.primary:hover:not(:disabled) {
 
 /* ── 中部:左导航(项目/资产/平台) + 右内容区 ── */
 .main {
-  display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
   overflow: hidden;
+  min-height: 0;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   background: var(--bg);
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
+}
+
+.sidebar-bottom-row {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sidebar-resizer {
+  flex-shrink: 0;
+  background: var(--border);
+  touch-action: none;
+  z-index: 2;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer:active,
+body.sidebar-resizing .sidebar-resizer {
+  background: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.sidebar-resizer-row {
+  height: 5px;
+  cursor: row-resize;
+}
+
+.sidebar-resizer-col {
+  width: 5px;
+  cursor: col-resize;
+}
+
+.sidebar-resizer-main {
+  width: 5px;
+  align-self: stretch;
+  cursor: col-resize;
+  flex-shrink: 0;
+}
+
+body.sidebar-resizing {
+  cursor: inherit;
+  user-select: none;
+}
+
+body.sidebar-resizing .sidebar-resizer-main {
+  cursor: col-resize;
+}
+
+body.sidebar-resizing .sidebar-resizer-row {
+  cursor: row-resize;
+}
+
+body.sidebar-resizing .sidebar-resizer-col {
+  cursor: col-resize;
 }
 
 .sidebar-section {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.sidebar-section:last-child {
-  border-bottom: 0;
-}
-
-.sidebar-projects {
-  flex: 1 1 auto;
-  min-height: 100px;
+  min-width: 0;
+  border-bottom: none;
   overflow: hidden;
 }
 
+.sidebar-projects {
+  min-height: 72px;
+}
+
 .sidebar-assets {
-  flex: 0 0 auto;
+  min-width: 88px;
 }
 
 .sidebar-platforms {
-  flex: 0 0 auto;
+  flex: 1 1 0;
+  min-width: 88px;
 }
 
 .sidebar-section h2 {
@@ -126,7 +182,7 @@ button.primary:hover:not(:disabled) {
   letter-spacing: 0.06em;
   color: var(--fg-dim);
   margin: 0;
-  padding: 10px 14px 6px;
+  padding: 10px 10px 6px;
   font-weight: 600;
   flex-shrink: 0;
   background: var(--bg);
@@ -157,8 +213,8 @@ button.primary:hover:not(:disabled) {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
+  gap: 6px;
+  padding: 6px 10px;
   margin: 0;
   border: none;
   background: transparent;
@@ -284,6 +340,8 @@ button.primary:hover:not(:disabled) {
 .content {
   display: flex;
   flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -297,9 +355,7 @@ button.primary:hover:not(:disabled) {
 
 .list-row-shell {
   display: grid;
-  grid-template-columns: var(--list-check-w) minmax(0, 1fr) var(
-      --list-actions-w
-    );
+  grid-template-columns: var(--list-check-w) minmax(0, 1fr) max-content;
   column-gap: var(--list-col-gap);
   align-items: center;
   min-width: 0;
@@ -331,14 +387,15 @@ button.primary:hover:not(:disabled) {
 
 .list-col-main {
   min-width: 0;
+  overflow: hidden;
 }
 
 .list-col-actions {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  width: var(--list-actions-w);
-  min-width: var(--list-actions-w);
+  flex-shrink: 0;
+  min-width: var(--list-actions-min);
 }
 
 .list-col-actions .platform-actions {
@@ -354,6 +411,36 @@ button.primary:hover:not(:disabled) {
 
 .row-delete-btn {
   color: var(--fg-dim);
+}
+
+.row-add-btn {
+  color: var(--fg-dim);
+}
+
+.row-add-btn:hover:not(:disabled) {
+  border-color: rgba(94, 200, 140, 0.45);
+  color: #5ec88c;
+  background: rgba(94, 200, 140, 0.1);
+}
+
+.row-add-btn:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
+}
+
+.row-update-btn {
+  color: var(--fg-dim);
+}
+
+.row-update-btn:hover:not(:disabled) {
+  border-color: rgba(94, 155, 255, 0.45);
+  color: var(--accent);
+  background: rgba(94, 155, 255, 0.1);
+}
+
+.row-update-btn:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
 }
 
 .row-delete-btn:hover:not(:disabled) {
@@ -555,6 +642,7 @@ button.danger:disabled {
 .asset-row-main {
   min-width: 0;
   overflow: hidden;
+  padding-right: 4px;
 }
 
 .asset-row-main.clickable {
@@ -642,6 +730,22 @@ button.danger:disabled {
   opacity: 0.28;
   filter: grayscale(1);
   cursor: not-allowed;
+}
+
+/* 左侧当前浏览平台：保留 linked/synced 样式，不可点击 */
+.plat-btn.browse-current:disabled {
+  cursor: default;
+  opacity: 1;
+  filter: none;
+}
+
+.plat-btn.browse-current.inactive:disabled {
+  opacity: 0.42;
+  filter: grayscale(0.75);
+}
+
+.plat-btn.browse-current.partial:disabled {
+  opacity: 0.88;
 }
 
 .plat-btn:hover:not(:disabled):not(.unsupported) {
@@ -1136,6 +1240,201 @@ button.danger:disabled {
 
 .confirm-dialog form .confirm-actions {
   margin-top: 4px;
+}
+
+.marketplace-dialog {
+  width: min(920px, 100%);
+  max-height: min(88vh, 900px);
+  display: flex;
+  flex-direction: column;
+}
+
+.marketplace-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.marketplace-subtitle {
+  margin: 4px 0 0;
+}
+
+.marketplace-ext-link {
+  font-size: 12px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.marketplace-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.marketplace-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.marketplace-field-grow {
+  flex: 1;
+  min-width: 140px;
+}
+
+.marketplace-field select,
+.marketplace-field input {
+  font-size: 13px;
+}
+
+.marketplace-list-wrap {
+  flex: 1;
+  min-height: 200px;
+  max-height: 46vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.marketplace-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.marketplace-table th,
+.marketplace-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.marketplace-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev);
+  z-index: 1;
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+
+.marketplace-col-check {
+  width: 36px;
+}
+
+.marketplace-table tbody tr {
+  cursor: pointer;
+}
+
+.marketplace-table tbody tr:hover {
+  background: rgba(94, 155, 255, 0.06);
+}
+
+.marketplace-row-selected {
+  background: rgba(94, 155, 255, 0.1);
+}
+
+.marketplace-skill-name {
+  font-weight: 600;
+}
+
+.marketplace-skill-summary {
+  margin-top: 2px;
+  color: var(--fg-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.marketplace-source {
+  font-size: 11px;
+}
+
+.marketplace-list-status,
+.marketplace-list-error {
+  padding: 12px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.marketplace-list-error {
+  color: var(--err);
+}
+
+.marketplace-footer-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 10px 0;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
+.marketplace-load-more {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.marketplace-platforms {
+  margin-bottom: 14px;
+}
+
+.marketplace-platforms-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+}
+
+.marketplace-platform-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.marketplace-platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.marketplace-platform-chip.selected {
+  border-color: rgba(94, 155, 255, 0.5);
+  background: rgba(94, 155, 255, 0.12);
+}
+
+.marketplace-platform-chip input {
+  margin: 0;
+}
+
+.row-add-marketplace-btn {
+  color: var(--fg-dim);
+}
+
+.row-add-marketplace-btn:hover:not(:disabled) {
+  border-color: rgba(200, 160, 94, 0.45);
+  color: #d4a85c;
+  background: rgba(200, 160, 94, 0.1);
+}
+
+.row-add-marketplace-btn:disabled {
+  opacity: 0.32;
+  cursor: not-allowed;
 }
 
 /* ── Skill 详情抽屉（仅遮罩列表区，不挡工具栏） ───────────── */

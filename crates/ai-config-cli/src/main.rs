@@ -56,7 +56,11 @@ enum Cmd {
     /// 显示单条资产详情
     Show { name: String },
     /// 健康检查(输出 `--json` 可被 agent 解析,PRD §10 A-10)
-    Doctor,
+    Doctor {
+        /// 将平台目录中 symlink / 同 inode 的旧下发迁移为实体硬拷贝
+        #[arg(long)]
+        materialize: bool,
+    },
 
     /// secrets 维度(PRD §5.1 必做)
     Secrets {
@@ -293,7 +297,9 @@ fn main() -> ExitCode {
         Cmd::Status => lifecycle::run_status(&default_root, mode),
         Cmd::List => lifecycle::run_list(&default_root, mode),
         Cmd::Show { name } => lifecycle::run_show(&default_root, &name, mode),
-        Cmd::Doctor => lifecycle::run_doctor(&default_root, mode),
+        Cmd::Doctor { materialize } => {
+            lifecycle::run_doctor(&default_root, mode, materialize)
+        }
     }
 }
 

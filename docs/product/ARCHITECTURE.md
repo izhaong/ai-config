@@ -70,12 +70,13 @@ ai-configd-core
 ├── config         # 读 ~/.config/ai-config/config.toml（per-user 全局配置）
 ├── model          # 数据类型：Skill / Rule / McpServer / Agent / SymlinkTarget / SyncStatus
 ├── source         # 资产源解析：扫 skills/ rules/ mcp/ agents/ 目录 → 资产清单
-├── platform       # 4 个平台适配器：Cursor / Codex / Claude / Hermes
-│   ├── cursor     #   target_paths() / install_path() / mcp_json_path()
-│   ├── codex      #   同上
-│   ├── claude     #   同上
-│   └── hermes     #   同上
-├── link           # 链接：symlink / junction + 备份覆盖 + 幂等
+├── platform       # 5 个平台适配器：AiConfig + Cursor / Codex / Claude / Hermes
+│   └── (trait)    #   skills_dir / rules_dir / agents_dir / mcp_deploy_path
+├── materialize    # GUI 下发：硬拷贝 + `.ai-config-deploy.json` marker；retract / check
+├── asset_ops      # 单条 CRUD + deploy / retract / import / deploy_from_platform
+├── asset_scope    # 资产根定位、全平台收回（delete_source）
+├── platform_scan  # 列表扫描 + per-platform LinkState（含 synced）
+├── link           # 遗留：symlink / junction（守护进程 sync 等路径；与 materialize 并存）
 ├── template       # minijinja 渲染 MCP / secrets 注入 + 原子 rename
 ├── secrets        # secrets.env 读写（0600），**不**入 SQLite
 ├── store          # SQLite 持久化：items / targets / events / config
@@ -103,10 +104,10 @@ ai-configd-core
                     ┌─────────────────┐
                     │ 资产源（文件）   │
                     │ ┌─────────────┐ │
-                    │ │ skills/     │ │   symlink (overridable)
-                    │ │ rules/      │ │   symlink
+                    │ │ skills/     │ │   硬拷贝（GUI asset_ops / materialize）
+                    │ │ rules/      │ │   硬拷贝
                     │ │ mcp/servers/│ │   文件 + 模板渲染
-                    │ │ agents/     │ │   symlink
+                    │ │ agents/     │ │   硬拷贝
                     │ └─────────────┘ │
                     └────────┬────────┘
                              │  source::scan()
@@ -180,28 +181,24 @@ mcp/servers/<name>.json (逐项)          secrets.env (0600, git 外)
 
 ## 5. 平台适配器（核心抽象）
 
-`platform` 模块暴露**唯一** trait：
+`platform` 模块暴露 **5 个** `PlatformAdapter` 实现：**AiConfig**（`asset_root` 下目录）+ 4 个 IDE 目标。
 
 ```rust
 pub trait PlatformAdapter {
-    fn id(&self) -> PlatformId;             // "cursor" | "codex" | "claude" | "hermes"
-    fn skills_dir(&self) -> PathBuf;         // ~/.cursor/skills
-    fn rules_dir(&self) -> PathBuf;          // ~/.cursor/rules
-    fn agents_dir(&self) -> PathBuf;         // ~/.cursor/agents   (注：Codex 叫 subagents)
-    fn mcp_json_path(&self) -> PathBuf;      // ~/.cursor/mcp.json（Hermes → ~/.hermes/config.yaml）
-    fn mcp_deploy_path(&self) -> PathBuf;     // 同上；Hermes 项目作用域仍返回 $HOME/.hermes/config.yaml
-    fn supports(&self, asset: AssetKind) -> bool {  // 平台级能力探测
-        match asset {
-            AssetKind::Mcp => true,
-            AssetKind::Rules => true,
-            AssetKind::Skills => true,
-            AssetKind::Agents => self.id() != PlatformId::Codex,  // 示例：Codex 不直接消费 rules
-        }
-    }
+    fn id(&self) -> PlatformId;             // "aiconfig" | "cursor" | "codex" | "claude" | "hermes"
+    fn skills_dir(&self) -> PathBuf;         // ~/.ai-config/skills 或 ~/.cursor/skills 等
+    fn rules_dir(&self) -> PathBuf;
+    fn agents_dir(&self) -> PathBuf;
+    fn mcp_deploy_path(&self) -> PathBuf;    // mcp.json 或 Hermes config.yaml
+    fn supports(&self, kind: AssetKind) -> bool;
 }
 ```
 
-**为什么 4 个适配器都自己写**（vs 一个 trait + 4 份配置）：
+**GUI 下发**走 `materialize::deploy`（硬拷贝 + marker），**不**与源目录共享 inode。`asset_ops::retract(..., AiConfig)` 只删 ai-config 平台目录，语义与其它平台 `retract` 一致（PRD §3.5）。
+
+**上游路径**：IDE skill 目录以 [vercel-labs/skills `src/agents.ts`](https://github.com/vercel-labs/skills/blob/main/src/agents.ts) 为参考；见 `docs/reference/vercel-skills-agent-paths.md`。
+
+**为什么 trait + 多 impl**（vs 纯配置表）：
 
 - 各平台的目录约定**不**是纯路径差异 —— agents 在 Codex 叫 subagents、文件格式可能是 YAML/JSON/MD、mcp.json 里某些字段是平台独有
 - 集中在一个 trait 里**未来**支持新平台（Gemini / Zed）= 加一份 impl，**不**改 core
@@ -298,8 +295,8 @@ items
   │  1:N
   ▼
 targets
-  │  (item_id, platform, dest_path, kind: symlink|rendered_json, status)
-  │  status: linked | unlinked | disabled | missing | failed
+  │  (item_id, platform, dest_path, kind: copy|rendered_json, status)
+  │  status: linked | synced | unlinked | disabled | missing | failed
   │
   │  1:N
   ▼

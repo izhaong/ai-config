@@ -224,9 +224,49 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
                         }
                     };
                     let dest = adapter.mcp_deploy_path();
-                    match mcp_json::deploy_mcp_json_file(src, &dest, *platform) {
-                        Ok(_) => out.push(Outcome::ok(label, *platform, "mcp")),
-                        Err(e) => out.push(Outcome::failed(label, *platform, "mcp", &e)),
+                    let asset_root = src.parent().unwrap_or(src);
+                    let server_names = match mcp_json::list_server_names(asset_root) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            out.push(Outcome::failed(label, *platform, "mcp", &e));
+                            continue;
+                        }
+                    };
+                    let mut ok = true;
+                    for server_name in &server_names {
+                        let config = match mcp_json::get_server_config(asset_root, server_name) {
+                            Ok(Some(c)) => c,
+                            Ok(None) => continue,
+                            Err(e) => {
+                                out.push(Outcome::failed(
+                                    format!("{label} `{server_name}`"),
+                                    *platform,
+                                    "mcp",
+                                    &e,
+                                ));
+                                ok = false;
+                                break;
+                            }
+                        };
+                        if let Err(e) = mcp_json::upsert_server_on_platform(
+                            *platform,
+                            &dest,
+                            server_name,
+                            &config,
+                            Some(src),
+                        ) {
+                            out.push(Outcome::failed(
+                                format!("{label} `{server_name}`"),
+                                *platform,
+                                "mcp",
+                                &e,
+                            ));
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        out.push(Outcome::ok(label, *platform, "mcp"));
                     }
                 }
             }
@@ -861,7 +901,41 @@ pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCo
 // ── 7. doctor ───────────────────────────────────────────────────
 
 /// `ai-config doctor`(PRD §6.2 / §10 A-10)
-pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode, materialize: bool) -> ExitCode {
+    if materialize {
+        match ai_config_core::doctor::materialize_legacy_symlink_deploys(default_root) {
+            Ok(repaired) => {
+                if mode.is_json() {
+                    emit_json(
+                        mode,
+                        &serde_json::json!({
+                            "ok": true,
+                            "action": "materialize_legacy_deploys",
+                            "repaired": repaired,
+                            "count": repaired.len(),
+                        }),
+                    );
+                } else if !mode.is_quiet() {
+                    emit_line(
+                        mode,
+                        format!(
+                            "doctor --materialize: 已迁移 {} 条 symlink/同 inode 下发为实体硬拷贝",
+                            repaired.len()
+                        ),
+                    );
+                    for line in &repaired {
+                        emit_line(mode, format!("  - {line}"));
+                    }
+                }
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+                return ExitCode::from(e.exit_code());
+            }
+        }
+    }
+
     let report = match ai_config_core::doctor::compute_report(default_root) {
         Ok(r) => r,
         Err(e) => {

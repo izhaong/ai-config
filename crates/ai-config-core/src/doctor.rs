@@ -8,6 +8,7 @@ use crate::link::{self, LinkHealth};
 use crate::materialize;
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId};
+use crate::path_independence;
 use crate::platform::{self, platform_label};
 use crate::source;
 use crate::sync;
@@ -81,6 +82,120 @@ pub fn compute_report(default_root: &Utf8Path) -> Result<DoctorReport, CoreError
 
     report.exit_code = 0;
     Ok(report)
+}
+
+fn dest_is_symlink(path: &Utf8Path) -> bool {
+    std::fs::symlink_metadata(path.as_std_path())
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// 将各 IDE 平台目录中仍指向 ai-config 源的 **symlink / 同 inode** 下发迁移为实体硬拷贝。
+pub fn materialize_legacy_symlink_deploys(
+    default_root: &Utf8Path,
+) -> Result<Vec<String>, CoreError> {
+    let scan = source::scan_project_root(default_root)?;
+    let assets = flat_assets(&scan);
+    let deploy_base = crate::paths::global_deploy_base();
+    let mut repaired = Vec::new();
+
+    for (kind, name, src) in assets {
+        if kind == AssetKind::Mcp {
+            continue;
+        }
+        for plat in platform::deploy_platform_ids() {
+            if !platform::supports_at_scope(plat, kind, &deploy_base) {
+                continue;
+            }
+            let Some(dest) = sync::asset_dest_for_at_base(plat, kind, &name, &src, &deploy_base)
+            else {
+                continue;
+            };
+            if try_materialize_legacy_dest(&dest, kind, &src)? {
+                repaired.push(format!("{kind:?}/{name} → {}", platform_label(plat)));
+            }
+        }
+    }
+
+    repaired.extend(materialize_orphan_symlinks_under_ai_config(default_root)?);
+    Ok(repaired)
+}
+
+fn try_materialize_legacy_dest(
+    dest: &Utf8Path,
+    kind: AssetKind,
+    src: &Utf8Path,
+) -> Result<bool, CoreError> {
+    let link_src = sync::link_src_for_create(kind, src);
+    let needs_repair =
+        dest_is_symlink(dest) || path_independence::paths_alias(dest, &link_src);
+    if !needs_repair {
+        return Ok(false);
+    }
+    materialize::deploy(&link_src, dest)?;
+    Ok(true)
+}
+
+/// 扫描各平台目录：凡 symlink 指向 `default_root` 下资产的，一律迁移为实体硬拷贝
+/// （含 Hermes agents 等 capability 表未列出的历史下发）。
+fn materialize_orphan_symlinks_under_ai_config(
+    default_root: &Utf8Path,
+) -> Result<Vec<String>, CoreError> {
+    let mut repaired = Vec::new();
+    let ai_canon = std::fs::canonicalize(default_root.as_std_path())
+        .map(|p| Utf8PathBuf::from(p.to_string_lossy().into_owned()))
+        .unwrap_or_else(|_| default_root.to_path_buf());
+
+    for plat in platform::deploy_platform_ids() {
+        let adapter = match platform::for_id(plat) {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
+        let dirs = [
+            adapter.skills_dir(),
+            adapter.rules_dir(),
+            adapter.agents_dir(),
+            adapter.commands_dir(),
+        ];
+        for dir in dirs {
+            if !dir.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(dir.as_std_path()).into_iter().flatten().flatten() {
+                let path = Utf8PathBuf::from(entry.path().to_string_lossy().into_owned());
+                if !dest_is_symlink(&path) {
+                    continue;
+                }
+                let Ok(target) = std::fs::read_link(entry.path()) else {
+                    continue;
+                };
+                let mut resolved = Utf8PathBuf::from(target.to_string_lossy().into_owned());
+                if resolved.is_relative() {
+                    if let Some(parent) = path.parent() {
+                        resolved = parent.join(resolved);
+                    }
+                }
+                let under_ai = std::fs::canonicalize(resolved.as_std_path())
+                    .ok()
+                    .map(|p| {
+                        let u = Utf8PathBuf::from(p.to_string_lossy().into_owned());
+                        u.starts_with(&ai_canon)
+                    })
+                    .unwrap_or(false);
+                if !under_ai {
+                    continue;
+                }
+                let copy_src = materialize::resolve_copy_source(&resolved);
+                materialize::deploy(&copy_src, &path)?;
+                repaired.push(format!(
+                    "orphan {} → {}",
+                    path.file_name().unwrap_or("?"),
+                    platform_label(plat)
+                ));
+            }
+        }
+    }
+    Ok(repaired)
 }
 
 fn flat_assets(scan: &source::ScanResult) -> Vec<(AssetKind, String, Utf8PathBuf)> {

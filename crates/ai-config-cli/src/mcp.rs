@@ -463,36 +463,31 @@ fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -
         }
     };
     let dest = adapter.mcp_deploy_path();
-    let result = if plat == PlatformId::Hermes {
-        let config = match mcp_json::get_server_config(root, name) {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                let msg = format!("mcp server `{name}` 找不到");
-                emit_error_envelope(
-                    mode,
-                    exit_code::PARTIAL_FAILURE,
-                    &msg,
-                    Some("跑 `ai-config mcp list` 看全部"),
-                );
-                return ExitCode::from(exit_code::PARTIAL_FAILURE);
-            }
-            Err(e) => {
-                emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-                return ExitCode::from(e.exit_code());
-            }
-        };
-        mcp_json::upsert_server_on_platform(plat, &dest, name, &config)
-    } else {
-        let src = match mcp_json_path_for_root(root) {
-            Ok(p) => p,
-            Err(e) => {
-                emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
-                return ExitCode::from(exit_code::FS_ERROR);
-            }
-        };
-        let _ = name;
-        mcp_json::deploy_mcp_json_file(&src, &dest, plat)
+    let src_mcp = match mcp_json_path_for_root(root) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
+            return ExitCode::from(exit_code::FS_ERROR);
+        }
     };
+    let config = match mcp_json::get_server_config(root, name) {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            let msg = format!("mcp server `{name}` 找不到");
+            emit_error_envelope(
+                mode,
+                exit_code::PARTIAL_FAILURE,
+                &msg,
+                Some("跑 `ai-config mcp list` 看全部"),
+            );
+            return ExitCode::from(exit_code::PARTIAL_FAILURE);
+        }
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
+    };
+    let result = mcp_json::upsert_server_on_platform(plat, &dest, name, &config, Some(&src_mcp));
     match result {
         Ok(()) => {
             if mode.is_json() {
@@ -524,7 +519,6 @@ fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -
 }
 
 fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
-    let _ = root;
     let adapter = match platform::for_id(plat) {
         Ok(a) => a,
         Err(e) => {
@@ -533,12 +527,14 @@ fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) 
         }
     };
     let dest = adapter.mcp_deploy_path();
-    let result = if plat == PlatformId::Hermes {
-        mcp_json::remove_server_on_platform(plat, &dest, name)
-    } else {
-        let _ = name;
-        mcp_json::retract_platform_mcp_json(&dest, plat)
+    let src_mcp = match mcp_json_path_for_root(root) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
+            return ExitCode::from(exit_code::FS_ERROR);
+        }
     };
+    let result = mcp_json::remove_server_on_platform(plat, &dest, name, Some(&src_mcp));
     match result {
         Ok(()) => {
             if mode.is_json() {

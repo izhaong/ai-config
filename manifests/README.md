@@ -23,3 +23,10 @@
 3. 配置 `~/.config/ai-config/secrets.env` 后 `ai-config sync`
 
 自研 Skills 索引见 `~/.ai-config/skills/README.md`。
+
+## 上游平台路径
+
+| 文件                                                                                          | 说明                                                                                                               |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| [vercel-skills-agents.snapshot.json](./vercel-skills-agents.snapshot.json)                    | [vercel-labs/skills](https://github.com/vercel-labs/skills) `src/agents.ts` 中 Cursor/Codex/Claude/Hermes 路径快照 |
+| [docs/reference/vercel-skills-agent-paths.md](../docs/reference/vercel-skills-agent-paths.md) | 下发逻辑说明、与 ai-config `platform.rs` 的差异                                                                    |

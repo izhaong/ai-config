@@ -1,6 +1,6 @@
 # ai-config 桌面端 — 产品需求文档 (PRD)
 
-> 状态：**Approved v0.4** · 2026-06-14（同步 Phase 3 W9 实现与对话需求）
+> 状态：**Approved v0.5** · 2026-06-21（五平台对等、GUI 硬拷贝下发、链接态 `synced`、平台 icon / 更新 / 删除语义）
 > 范围：本产品本身
 > 同级：`../../README.md` ·`../../AGENTS.md` ·`../../HERMES.md` ·`../../manifests/plugins.md`
 > 技术方案：`.claude/plans/ai-config/20260612_ai-config_rust-desktop.plan.md`
@@ -11,8 +11,8 @@
 
 **写一套（skills / rules / mcp / agents）→ 同步到多个 AI 编码平台。**
 
-- **写一套**：本工具的资产 = 5 种 — 全局在 `~/.ai-config/{skills,rules,commands,mcp.json,agents}/`；项目覆盖在 `<project>/.ai-config/` 下同结构
-- **同步到多个平台**：Cursor / Codex / Claude Code / Hermes
+- **写一套**：本工具在 **ai-config 平台目录**（`~/.ai-config/` 或 `<project>/.ai-config/`）维护 skills / rules / mcp / agents / commands
+- **同步到多个平台**：Cursor / Codex / Claude Code / Hermes — 各平台为**独立硬拷贝目录**，与 ai-config 平台**对等**（见 §3.5）
 - **分层**：全局（user-global，`~/.ai-config/`）+ 项目（per-project，`<repo>/.ai-config/` 与全局**同目录结构**）
 
 ### 1.1 资产根目录同构（全局 ≡ 项目）
@@ -35,12 +35,12 @@
 
 ## 2. 资产模型
 
-| 资产       | 物理形态                                         | 一份"项"是什么                                                    | 平台消费形式（见 §3.4 作用域）                                 |
-| ---------- | ------------------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------- |
-| **skills** | 目录（`SKILL.md` + 可选 scripts/assets/agents/） | 一个 skill = 一个目录                                             | 软链到平台 `skills/<name>/`                                    |
-| **rules**  | 单文件                                           | 一条 rule = 一个 `.mdc` / `.md`                                   | 软链到平台 rules 目录                                          |
-| **mcp**    | 列表（一项一记录）                               | 一条 mcp server = 一条记录（name + command/args/env/url/headers） | 合并写入平台 `mcp.json`（一份输出）                            |
-| **agents** | **目录或单文件**（按源形态）                     | 一个 agent / subagent = 一个目录或一个文件                        | 目录链目录、单文件链单文件；软链到平台 agents / subagents 目录 |
+| 资产       | 物理形态                                         | 一份"项"是什么                                                    | 平台消费形式（见 §3.4 作用域）                                                                                             |
+| ---------- | ------------------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **skills** | 目录（`SKILL.md` + 可选 scripts/assets/agents/） | 一个 skill = 一个目录                                             | **硬拷贝**到各平台 `skills/<name>/`（GUI / `asset_ops`）；守护进程批量 sync 可走 `link` 模块（遗留路径，逐步与硬拷贝对齐） |
+| **rules**  | 单文件                                           | 一条 rule = 一个 `.mdc` / `.md`                                   | 硬拷贝到平台 rules 目录                                                                                                    |
+| **mcp**    | 列表（一项一记录）                               | 一条 mcp server = 一条记录（name + command/args/env/url/headers） | 合并写入平台 `mcp.json` / Hermes `config.yaml`（一份输出）                                                                 |
+| **agents** | **目录或单文件**（按源形态）                     | 一个 agent / subagent = 一个目录或一个文件                        | 目录 / 单文件**硬拷贝**到平台 agents / subagents 目录                                                                      |
 
 ### 2.1 MCP 逐项的关键设计
 
@@ -62,8 +62,8 @@
 
 用户**只**关心"我有几个 agent，每个 agent 叫什么、做什么、适用哪些平台"。平台目录叫什么、放哪、文件格式，**适配器**负责。
 
-- **目录型 agent**：源为目录时，下发链整个目录到 `<deploy_base>/.X/agents/<name>/`（或 subagents）
-- **单文件 agent**：源为 `.md` / `.yaml` 等时，保留原扩展名软链到平台 agents 目录
+- **目录型 agent**：源为目录时，下发**复制**整个目录到 `<deploy_base>/.X/agents/<name>/`（或 subagents）
+- **单文件 agent**：源为 `.md` / `.yaml` 等时，保留原扩展名**复制**到平台 agents 目录
 - **列表 description**：agent / rule 与 skill 一致，优先读 frontmatter `description`，回退 H1 标题
 
 ---
@@ -107,8 +107,19 @@
 - **MCP 同 name 覆盖** — 项目下 `mcp/servers/my-srv.json` 覆盖全局同名条目
 - **平台级开关** — 每个条目可独立勾选"同步到哪些平台"（`platforms: [cursor, claude, codex, hermes]`）
 - **幂等** — 重复跑同步结果一致
-- **父目录自愈** — 首次 deploy 时若平台目标父目录不存在（如 `~/.cursor/skills/` 或 `<repo>/.cursor/skills/`），工具自动创建，**不**因父目录缺失导致软链 / `mcp.json` 写入失败
+- **父目录自愈** — 首次 deploy 时若平台目标父目录不存在（如 `~/.cursor/skills/` 或 `<repo>/.cursor/skills/`），工具自动创建，**不**因父目录缺失导致硬拷贝 / `mcp.json` 写入失败
 - **运行期刷新（GUI）** — 监听 `~/.ai-config/` 与各已注册项目的 `<repo>/.ai-config/`；debounce 后自动刷新资产列表与 per-platform 链接状态（无需手动点刷新）
+
+### 3.3 持久化
+
+| 数据类型                                   | 存放位置                                   | 理由                                            |
+| ------------------------------------------ | ------------------------------------------ | ----------------------------------------------- |
+| **资产源**                                 | 文件系统（仓库 + `<project>/.ai-config/`） | 资产本身要进 git 协作                           |
+| **同步状态**（per-item × per-platform）    | **SQLite**（守护进程）                     | 关系性查询："哪些项目下哪些条目没同步到 Hermes" |
+| **per-platform 勾选**                      | **SQLite**                                 | "skill `foo` 同步到哪些平台"这种状态随项目变化  |
+| **事件日志**                               | **SQLite**                                 | 排错用，可选导出                                |
+| **secrets**                                | `secrets.env`（0600，git 外）              | **不**入 SQLite、不入仓                         |
+| **GUI 配置**（窗口大小 / 主题 / 最近项目） | **SQLite**                                 | 跨机器不必要                                    |
 
 ### 3.4 作用域与下发目标（产品契约）
 
@@ -130,16 +141,43 @@
   - **Agents**：不下发（Hermes 用 `AGENTS.md` / `delegate_task`，无 `~/.hermes/agents`）。
   - **MCP**：始终 `~/.hermes/config.yaml` 的 `mcp_servers:`（见 [Hermes MCP 文档](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)）。
 
-### 3.3 持久化
+### 3.5 五平台对等 + GUI 下发语义（v0.5）
 
-| 数据类型                                   | 存放位置                                   | 理由                                            |
-| ------------------------------------------ | ------------------------------------------ | ----------------------------------------------- |
-| **资产源**                                 | 文件系统（仓库 + `<project>/.ai-config/`） | 资产本身要进 git 协作                           |
-| **同步状态**（per-item × per-platform）    | **SQLite**（守护进程）                     | 关系性查询："哪些项目下哪些条目没同步到 Hermes" |
-| **per-platform 勾选**                      | **SQLite**                                 | "skill `foo` 同步到哪些平台"这种状态随项目变化  |
-| **事件日志**                               | **SQLite**                                 | 排错用，可选导出                                |
-| **secrets**                                | `secrets.env`（0600，git 外）              | **不**入 SQLite、不入仓                         |
-| **GUI 配置**（窗口大小 / 主题 / 最近项目） | **SQLite**                                 | 跨机器不必要                                    |
+GUI 将 **ai-config** 与 4 个 IDE **并列**为 5 个平台；**不存在**「唯一总源、其它全是下发副本」的产品语义——`~/.ai-config/skills/<name>/` 是 **ai-config 平台目录**，与 `~/.cursor/skills/<name>/` 等**地位相同**。
+
+#### 3.5.1 硬拷贝与链接态
+
+| 机制                            | 说明                                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **下发**                        | `materialize::deploy` — 实体复制到目标平台目录，并写入 `.ai-config-deploy.json`（记录 canonical 源路径） |
+| **收回**                        | `materialize::retract` — **仅删除目标平台目录下副本**；不牵动其它平台                                    |
+| **linked**                      | 本工具下发或已纳管（有 marker 或 legacy symlink）                                                        |
+| **synced**                      | 目录存在、内容与 ai-config 或其它平台副本一致，但**无**本工具 marker（常见于 `npx skills add` 外部安装） |
+| **unlinked / broken / missing** | 未安装 / 断链 / 应对照源缺失                                                                             |
+
+各平台副本 **inode 独立**；修改或删除某一平台目录**不**自动影响其它平台。
+
+#### 3.5.2 平台 icon（单行 / 工具栏批量）
+
+| 条件                                      | 行为                                                                                                         |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 目标平台 **linked**                       | **收回**该平台目录副本                                                                                       |
+| 目标平台 **synced**                       | **覆盖下发**（写 marker，变为 linked）                                                                       |
+| 目标平台 **unlinked** 等                  | **下发** / **导入到 ai-config** / **跨平台硬拷贝**（见 `entryPlatformToggle`）                               |
+| **正在浏览的平台**（含 ai-config 源视图） | 列表中**对应平台 icon 禁用**（仍显示 linked / synced 等状态）；逻辑上收回为 skip                             |
+| ai-config icon + 未纳管                   | 从当前浏览平台 **import** 到 `~/.ai-config` 或项目 `.ai-config`                                              |
+| ai-config icon + 已 linked                | 在**非** ai-config 源视图 → 收回 **ai-config 平台目录**（`retract(..., AiConfig)`），**不**联动收回 IDE 平台 |
+
+#### 3.5.3 更新与删除（列表行右侧）
+
+| 控件                                | 行为                                                                                                       |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **更新**（↻，平台 icon 与删除之间） | 从 ai-config 平台副本 **重新 deploy** 到该条目所有已激活平台（linked + synced）；无 ai-config 副本时禁用   |
+| **删除**（🗑，二次点击 + 确认）     | **源视图**：`delete_source` — 删 ai-config 副本并尽力收回全部 IDE 平台；**平台视图**：仅从当前浏览平台收回 |
+
+#### 3.5.4 平台 skill 路径（上游）
+
+各 IDE 的 skill 下发目录以 [vercel-labs/skills](https://github.com/vercel-labs/skills) `src/agents.ts` 为上游参考；本仓快照见 `manifests/vercel-skills-agents.snapshot.json` 与 `docs/reference/vercel-skills-agent-paths.md`。ai-config 项目作用域与 `npx skills` 项目路径存在已知差异（Cursor/Codex 项目级 `.agents/skills`），见该文档。
 
 ---
 
@@ -158,16 +196,16 @@
 #### A — 全新机器首次接入
 
 1. `git clone ai-config` → 1 条命令 `ai-config install --all`
-2. 工具自动：检测已安装 IDE → 软链 skills/rules/agents → 引导 secrets → 渲染 4 份 mcp.json
+2. 工具自动：检测已安装 IDE → 复制 / 链接 skills/rules/agents → 引导 secrets → 渲染 4 份 mcp.json
 3. 4 个 IDE 重启即可使用
 
 **验收**：从 clone 到 4 个 IDE 全可见，**只跑一条命令**。
 
 #### B — 添加新 skill
 
-1. 在 `skills/<new>/SKILL.md` 创建
-2. 守护进程 < 1s 检测到 → 软链到 4 个 IDE
-3. GUI 状态从 "pending" → "linked"
+1. 在 `skills/<new>/SKILL.md` 创建（或 GUI 导入）
+2. 守护进程 < 1s 检测到 → 同步到已启用平台（GUI 单条为硬拷贝 deploy）
+3. GUI 状态从 unlinked → linked（或外部安装为 synced）
 
 **验收**：从 `mkdir` 到 4 个 IDE 可见，**人类零操作**。
 
@@ -186,7 +224,7 @@
 3. 工具自动：项目下 `skill-foo` 指向项目源，覆盖全局同名
 4. GUI 选中该项目后单条下发写入 `<project>/.cursor/skills/skill-foo` 等（**不**写 `~/.cursor/`）
 
-**验收**：在该项目工作区 IDE 见项目版；其他项目见全局版。项目作用域 deploy 后软链仅出现在项目仓 `.cursor` / `.claude` 等平台目录。
+**验收**：在该项目工作区 IDE 见项目版；其他项目见全局版。项目作用域 deploy 后副本仅出现在项目仓 `.cursor` / `.claude` 等平台目录。
 
 #### E — agent 排查
 
@@ -210,22 +248,23 @@
 
 ### 5.1 必做（MVP / GA）
 
-| 模块          | 功能                                                                             |
-| ------------- | -------------------------------------------------------------------------------- |
-| **CLI**       | `install` / `uninstall` / `sync` / `status` / `doctor` / `list` / `show`         |
-| **CLI**       | `mcp` 子命令组（`add` / `remove` / `enable` / `disable` / `list`）— 逐项操作     |
-| **CLI**       | `agent` 子命令组（`list` / `show` / `reveal`）— 浏览 agents 源与路径             |
-| **CLI**       | `secrets` 子命令组（`bootstrap` / `set` / `list` / `unset`）                     |
-| **守护进程**  | `watch` 子命令 — 监听源目录变化、自动同步、暴露事件                              |
-| **事件流**    | `events --follow` — agent 实时订阅                                               |
-| **Tauri GUI** | 项目注册 / 取消注册（**应用内模态框**；禁止 `window.prompt` / `window.confirm`） |
-| **Tauri GUI** | 浏览 + 编辑（skills / rules / agents）+ 资产详情抽屉（关闭钮固定右上角）         |
-| **Tauri GUI** | 单条 deploy / retract（per-item × per-platform，尊重 §3.4 作用域）               |
-| **Tauri GUI** | 运行期监听资产目录变更并自动刷新列表与链接状态                                   |
-| **Tauri GUI** | MCP 表格化编辑（每行一条 server）— **不**是 JSON 编辑器                          |
-| **Tauri GUI** | 同步状态（per-item × per-platform 徽标）                                         |
-| **Tauri GUI** | secrets 列表（**不**显示明文值）                                                 |
-| **跨平台**    | macOS 14+ 完整 / Linux (Ubuntu 22.04+) 完整 / Windows 11 best-effort             |
+| 模块          | 功能                                                                                       |
+| ------------- | ------------------------------------------------------------------------------------------ |
+| **CLI**       | `install` / `uninstall` / `sync` / `status` / `doctor` / `list` / `show`                   |
+| **CLI**       | `mcp` 子命令组（`add` / `remove` / `enable` / `disable` / `list`）— 逐项操作               |
+| **CLI**       | `agent` 子命令组（`list` / `show` / `reveal`）— 浏览 agents 源与路径                       |
+| **CLI**       | `secrets` 子命令组（`bootstrap` / `set` / `list` / `unset`）                               |
+| **守护进程**  | `watch` 子命令 — 监听源目录变化、自动同步、暴露事件                                        |
+| **事件流**    | `events --follow` — agent 实时订阅                                                         |
+| **Tauri GUI** | 项目注册 / 取消注册（**应用内模态框**；禁止 `window.prompt` / `window.confirm`）           |
+| **Tauri GUI** | 浏览 + 编辑（skills / rules / agents）+ 资产详情抽屉（关闭钮固定右上角）                   |
+| **Tauri GUI** | 五平台 icon 切换（deploy / retract / import / 跨平台拷贝）+ **更新** + **删除**（见 §3.5） |
+| **Tauri GUI** | 链接态含 `synced`（外部安装与本工具内容一致）                                              |
+| **Tauri GUI** | 运行期监听资产目录变更并自动刷新列表与链接状态                                             |
+| **Tauri GUI** | MCP 表格化编辑（每行一条 server）— **不**是 JSON 编辑器                                    |
+| **Tauri GUI** | 同步状态（per-item × per-platform 徽标：linked / synced / unlinked / broken / missing）    |
+| **Tauri GUI** | secrets 列表（**不**显示明文值）                                                           |
+| **跨平台**    | macOS 14+ 完整 / Linux (Ubuntu 22.04+) 完整 / Windows 11 best-effort                       |
 
 ### 5.2 显式不做（非目标）
 
@@ -263,16 +302,16 @@
 
 ### 6.2 GUI（人类视角）
 
-- **三栏**：左 = 项目列表（含 "user-global"） / 中 = 资产类型（Skills / Rules / MCP / Agents） / 右 = 内容
+- **布局**：左 = 项目 + 资产类型 + **五平台**浏览切换；右 = 统一资产列表 + 工具栏 + 编辑抽屉
 - **项目注册**：点击「+ 注册项目」打开**应用内表单**（项目名 + 仓库根路径）；提示文案说明资产在 `<repo>/.ai-config/`、下发在 `<repo>/.cursor` 等。**不**使用 WebView 原生 `prompt` / `confirm`（Tauri 下不可靠）
 - **项目移除**：点击项目旁 `×` 弹出**确认模态框**后再调用 `projects.remove`
 - **Tauri 命令参数**：前端 `invoke` 使用 camelCase（如 `rootPath`），与 Rust 命令签名映射由 Tauri 处理
-- **顶部**：项目名 + git 分支 + ahead/behind 徽标
-- **每条卡片右侧**：4 个平台的状态指示（linked / unlinked / broken / missing）+ 单条 deploy / retract
+- **列表行右侧**（从左到右）：**五平台 favicon 按钮** → **更新（↻）** → **删除（🗑）**；行为见 §3.5
+- **平台 icon 视觉**：实心 = linked；虚线 / partial = synced 或批量混合态；空心 = unlinked
+- **工具栏**：全选 + 批量五平台操作 + 批量更新 + 批量删除；打开当前浏览路径
 - **资产详情抽屉**：关闭按钮固定于抽屉右上角；编辑 skill / rule / agent 正文
-- **MCP 编辑**：表格化（一行 = 一条 server），不暴露原始 JSON；右侧面板显示 `${VAR}` 占位符 vs `secrets.env` 实有值
-- **secrets 编辑**：列表 + `••••••` 占位；点 "Set" 才弹输入框
-- **底部状态栏**：`● daemon running` / `○ daemon stopped` 常显
+- **MCP 编辑**：表格化（一行 = 一条 server），不暴露原始 JSON
+- **底部状态栏**：doctor / git / 刷新；`secrets` **不**显示明文值
 
 ### 6.3 错误与故障
 
@@ -289,9 +328,9 @@
 - **A-1** 全新 macOS 机器，从 `git clone` 到 4 个 IDE 可见所有资产，**只跑一条** `ai-config install --all`
 - **A-2** `ai-config uninstall` 后 `~/.X/mcp.json` 仍存在（备份为 `*.ai-config.bak.<ts>`），用户手写内容完整保留
 - **A-3** 安装 / 卸载幂等：跑 10 次 == 跑 1 次
-- **A-4** 改 `skills/foo/SKILL.md` 一行，4 个 IDE 的 `skills/foo` 软链目标在 1 秒内反映新内容（守护进程跑着的条件下）
+- **A-4** 改 ai-config 平台目录下 `skills/foo/SKILL.md` 一行后，点 GUI **更新** 或单平台 deploy，各 IDE 平台副本内容与 ai-config 一致（各平台 inode 仍独立）
 - **A-5** 守护进程未跑时，CLI `sync` 手工补做一次效果一致
-- **A-6** 源文件被删 → 4 个 IDE 目标对应软链接自动移除
+- **A-6** 在 GUI 从某平台 icon **收回** 后，**仅**该平台目录副本移除，其它平台与 ai-config 平台目录不变
 - **A-7** 加一条 MCP server → 4 份 `mcp.json` 都包含它；缺变量时输出明确告警
 - **A-8** 删一条 MCP server → 4 份 `mcp.json` 都不再包含它（**不**残留）
 - **A-9** 任意 CLI 子命令 `--json` 都能解析，**不**夹杂人类文本
@@ -301,11 +340,15 @@
 - **A-13** GUI 全屏找不到 secrets 明文值
 - **A-14** SQLite DB 中没有任何字段保存 secrets 明文值
 - **A-15** GUI 选中已注册项目时，资产列表**仅**来自 `<repo>/.ai-config/`（空目录则空列表，不显示全局 `~/.ai-config/` 条目）
-- **A-16** 项目作用域单条 deploy 后，软链 / MCP 仅出现在 `<repo>/.cursor`、`<repo>/.claude` 等平台目录，**不**出现在 `~/.cursor` 等用户主目录
+- **A-16** 项目作用域单条 deploy 后，副本仅出现在 `<repo>/.cursor`、`<repo>/.claude` 等平台目录，**不**出现在 `~/.cursor` 等用户主目录
 - **A-17** GUI 运行期间修改 `~/.ai-config/` 或已注册项目 `<repo>/.ai-config/`，资产列表与链接状态在约 2s 内自动刷新（文件监听 + debounce）
 - **A-18** 平台目标父目录首次不存在时，deploy 自动创建父目录并成功完成，**不**报 `No such file or directory`
 - **A-19** Tauri GUI 注册 / 移除项目使用应用内模态框，**不**依赖 `window.prompt` / `window.confirm`
 - **A-21** 注册项目后 `<repo>/.ai-config/` 自动具备与 `~/.ai-config/` 相同的 `skills/`、`rules/`、`agents/` 子目录及 `mcp.json` 占位
+- **A-22** 在平台视图浏览 Hermes 时，点击 Hermes icon **不**收回该 skill；在 ai-config 源视图点击 ai-config icon **不**收回 ai-config 平台目录
+- **A-23** `npx skills` 等外部装入且内容一致的 skill 显示 **synced**；点击对应平台 icon 覆盖下发为 **linked**（写 marker），**更新**按钮可将 ai-config 副本推到各已激活平台
+- **A-24** 点击 ai-config icon 收回时，提示为 `← aiconfig OK`，**不**使用「从源收回」文案；其它 IDE 平台副本保留
+- **A-25** **删除**（确认后）删除 ai-config 平台副本并尽力收回全部 IDE 平台，与平台 icon 单平台收回区分
 
 ---
 

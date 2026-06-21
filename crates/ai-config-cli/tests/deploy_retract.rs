@@ -77,8 +77,14 @@ fn retract_removes_platform_mcp_json() {
         .success();
 
     assert!(
-        !cursor_mcp.exists(),
-        "retract should delete platform mcp.json"
+        !cursor_mcp.exists() || {
+            let raw = fs::read_to_string(&cursor_mcp).unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
+            v.get("mcpServers")
+                .and_then(|m| m.get("minio"))
+                .is_none()
+        },
+        "retract should remove minio server entry from platform mcp.json"
     );
 }
 
@@ -105,7 +111,7 @@ fn deploy_does_not_touch_other_platforms() {
 }
 
 #[test]
-fn deploy_overwrites_existing_platform_mcp_json() {
+fn deploy_merges_into_existing_platform_mcp_json() {
     let (home, root) = setup();
     let cursor_mcp = home.path().join(".cursor").join("mcp.json");
     fs::write(
@@ -123,7 +129,10 @@ fn deploy_overwrites_existing_platform_mcp_json() {
         serde_json::from_str(&fs::read_to_string(&cursor_mcp).unwrap()).unwrap();
     let mcp = v["mcpServers"].as_object().unwrap();
     assert!(mcp.contains_key("minio"));
-    assert!(!mcp.contains_key("user-thing"));
+    assert!(
+        mcp.contains_key("user-thing"),
+        "per-server deploy must preserve other platform entries"
+    );
 }
 
 #[test]

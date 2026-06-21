@@ -1,0 +1,80 @@
+# vercel-labs/skills 平台 Skill 路径（上游参考）
+
+ai-config 维护的 4 个 IDE 平台 skill **下发目录**应以 [vercel-labs/skills](https://github.com/vercel-labs/skills) 为上游事实来源。该仓库是 `npx skills add` CLI 的实现；路径定义在 **`src/agents.ts`**，README 的 Supported Agents 表由 `scripts/sync-agents.ts` 从该文件生成。
+
+> **何时更新**：vercel-labs/skills 发版或 Cursor/Codex/Claude/Hermes 官方改路径后，拉取最新 `src/agents.ts`，对照本文与 `manifests/vercel-skills-agents.snapshot.json`，再决定是否改 `crates/ai-config-core/src/platform.rs`。
+
+## 上游文件
+
+| 文件                                                                                               | 说明                                                        |
+| -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [`src/agents.ts`](https://github.com/vercel-labs/skills/blob/main/src/agents.ts)                   | 各 agent 的 `skillsDir`（项目）与 `globalSkillsDir`（全局） |
+| [`src/add.ts`](https://github.com/vercel-labs/skills/blob/main/src/add.ts)                         | `skills add` 安装：全局/项目、symlink vs copy               |
+| [`scripts/sync-agents.ts`](https://github.com/vercel-labs/skills/blob/main/scripts/sync-agents.ts) | 从 `agents.ts` 刷新 README 表格                             |
+
+### 刷新快照（本仓）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vercel-labs/skills/main/src/agents.ts \
+  -o /tmp/vercel-agents.ts
+# 人工对照 agents.ts 中 cursor / codex / claude-code / hermes-agent 四段，更新 manifests/vercel-skills-agents.snapshot.json 与下表
+```
+
+## ai-config 关心的 4 平台（vercel `--agent` 键）
+
+| ai-config `PlatformId` | vercel `--agent` | 项目路径 `skillsDir` | 全局路径 `globalSkillsDir` | 环境变量覆盖                            |
+| ---------------------- | ---------------- | -------------------- | -------------------------- | --------------------------------------- |
+| `cursor`               | `cursor`         | `.agents/skills/`    | `~/.cursor/skills/`        | —                                       |
+| `codex`                | `codex`          | `.agents/skills/`    | `~/.codex/skills/`         | `CODEX_HOME`（默认 `~/.codex`）         |
+| `claude`               | `claude-code`    | `.claude/skills/`    | `~/.claude/skills/`        | `CLAUDE_CONFIG_DIR`（默认 `~/.claude`） |
+| `hermes`               | `hermes-agent`   | `.hermes/skills/`    | `~/.hermes/skills/`        | `HERMES_HOME`（默认 `~/.hermes`）       |
+
+路径均相对于 **项目根**（`skills add` 的 cwd）或 **用户主目录**（`-g` / `--global`）。
+
+## `npx skills add` 下发逻辑（摘要）
+
+与 ai-config 的「硬拷贝 + `.ai-config-deploy.json` marker」不同，vercel CLI 默认行为如下：
+
+1. **作用域**
+   - 无 `-g`：写入当前目录下的 `skillsDir`（项目级）。
+   - `-g` / `--global`：写入 `globalSkillsDir`（若该 agent 支持；`eve` 等仅项目级为 `N/A`）。
+
+2. **安装模式**（`add.ts`）
+   - 默认 **symlink**；`--copy` 强制拷贝。
+   - 所选 agent 的 `skillsDir` 全部相同时，无 symlink 意义，**默认 copy**。
+   - **Universal agents**（`skillsDir === '.agents/skills'`）：多 agent 共享同一项目目录，安装一次即可（`getUniversalAgents()`）。
+   - **Non-universal**：canonical 内容在 `.agents/skills` 时，向各 agent 专有目录 **symlink**（Windows 无 Developer Mode 时可能退化为 copy）。
+
+3. **与 ai-config 扫描的关系**
+   - 经 `npx skills` 装入、无 ai-config marker 的副本，在 GUI 中为 **`synced`**（内容一致、非本工具下发），点击可覆盖为 **`linked`**。
+   - 全局路径与上表一致时，ai-config 与 vercel CLI 可共存；**项目级**路径见下节差异。
+
+## ai-config 与 vercel CLI 的路径差异
+
+`platform.rs` 在 **项目作用域**（`deploy_base = 仓库根`）与 vercel 不完全一致：
+
+| 平台   | 作用域 | ai-config（当前）                          | vercel-labs/skills       |
+| ------ | ------ | ------------------------------------------ | ------------------------ |
+| Cursor | 全局   | `~/.cursor/skills/`                        | 同左                     |
+| Cursor | 项目   | `<repo>/.cursor/skills/`                   | `<repo>/.agents/skills/` |
+| Codex  | 全局   | `~/.codex/skills/`                         | `$CODEX_HOME/skills/`    |
+| Codex  | 项目   | `<repo>/.codex/skills/`                    | `<repo>/.agents/skills/` |
+| Claude | 全局   | `~/.claude/skills/`                        | 同左                     |
+| Claude | 项目   | `<repo>/.claude/skills/`                   | 同左                     |
+| Hermes | 全局   | `HERMES_SKILLS_DIR` 或 `~/.hermes/skills/` | `$HERMES_HOME/skills/`   |
+| Hermes | 项目   | **仍写全局** `~/.hermes/skills/`           | `<repo>/.hermes/skills/` |
+
+**说明**
+
+- Cursor 官方文档同时认可 `~/.cursor/skills` 与项目内 `.cursor/skills`；vercel 对 Cursor/Codex **项目级**统一用 `.agents/skills/`（与 Amp、OpenCode、Gemini CLI 等 universal 组一致）。
+- ai-config 项目级沿用各 IDE 自有目录（`.cursor`、`.codex`、`.claude`），与 vercel **全局**路径对齐；若需与 `npx skills` 项目安装互操作，后续可考虑增加 `.agents/skills` 扫描或双写下发（产品决策，非本文范围）。
+
+## 其它 agent（扩展用）
+
+vercel 在 `agents.ts` 中还定义了 70+ agent（OpenCode、Windsurf、Cline、Gemini CLI 等）。完整列表以 upstream `agents.ts` 为准；本仓仅快照 ai-config 已支持的 4 平台，见 [`manifests/vercel-skills-agents.snapshot.json`](../../manifests/vercel-skills-agents.snapshot.json)。
+
+## 本仓实现入口
+
+- 平台路径实现：[`crates/ai-config-core/src/platform.rs`](../../crates/ai-config-core/src/platform.rs)
+- 下发 / 收回 / 跨平台拷贝：[`crates/ai-config-core/src/asset_ops.rs`](../../crates/ai-config-core/src/asset_ops.rs)
+- 链接状态（`linked` / `synced`）：[`crates/ai-config-core/src/materialize.rs`](../../crates/ai-config-core/src/materialize.rs)、[`platform_scan.rs`](../../crates/ai-config-core/src/platform_scan.rs)

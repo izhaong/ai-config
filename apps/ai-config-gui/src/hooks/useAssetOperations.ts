@@ -1,8 +1,11 @@
 import { useMemoizedFn } from "ahooks";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  addSkillFromRemote,
   deployAsset,
+  deployAssetFromPlatform,
   importAsset,
   retractAsset,
   revealPath,
@@ -18,13 +21,14 @@ import type {
   Platform,
   PlatformAssetEntry,
 } from "../types";
-import { canRetract, hasSourceEntry, isSourcePlatform } from "../types";
+import { canRemoveFromPlatform, hasSourceEntry, isSourcePlatform } from "../types";
 import {
   resolveBatchEntryPlatformAction,
   resolveBatchPlatformToggleMode,
   resolveEntryPlatformToggleAction,
   type EntryPlatformToggleAction,
 } from "../utils/entryPlatformToggle";
+import { canUpdateEntry, deployPlatformsForUpdate } from "../utils/entryUpdate";
 
 type Browser = ReturnType<typeof useAssetBrowser>;
 type Drawer = ReturnType<typeof useAssetDrawer>;
@@ -81,9 +85,26 @@ export function useAssetOperations({
         return { action };
       }
 
-      // 删源只能经删除按钮（源视图 + 确认），禁止从平台 icon / 批量同步误入
+      // 删源 + 全平台收回：仅删除按钮 + 确认框
       if (action === "delete_source") {
         return { action: "skip" };
+      }
+
+      if (plat === "aiconfig" && isSourcePlatform(activePlatform)) {
+        if (action === "import") {
+          return { action: "skip" };
+        }
+      }
+
+      // MCP：每条 server 独立条目，retract 不会动源 / 其它 server
+      if (entry.kind === "mcp" && action === "retract") {
+        const message = await retractAsset(
+          entry.kind,
+          entry.name,
+          activeProject,
+          plat,
+        );
+        return { action, message };
       }
 
       if (action === "import") {
@@ -99,13 +120,24 @@ export function useAssetOperations({
         return { action, message };
       }
 
+      if (action === "platform_copy") {
+        const message = await deployAssetFromPlatform(
+          entry.kind,
+          entry.name,
+          activeProject,
+          activePlatform as DeployPlatform,
+          plat as DeployPlatform,
+        );
+        return { action: "deploy", message };
+      }
+
       const deployPlat = plat as DeployPlatform;
       if (action === "retract") {
         const message = await retractAsset(
           entry.kind,
           entry.name,
           activeProject,
-          deployPlat,
+          plat,
         );
         return { action, message };
       }
@@ -200,10 +232,106 @@ export function useAssetOperations({
     },
   );
 
+  const deployEntryToPlatforms = useMemoizedFn(
+    async (
+      entry: PlatformAssetEntry,
+      platforms: DeployPlatform[],
+    ): Promise<{ ok: number; failed: number }> => {
+      let ok = 0;
+      let failed = 0;
+      const ctx = toggleContext();
+      for (const plat of platforms) {
+        if (ctx.issueKey(plat, entry.kind)) {
+          continue;
+        }
+        try {
+          await deployAsset(entry.kind, entry.name, activeProject, plat);
+          ok += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      return { ok, failed };
+    },
+  );
+
+  const handleUpdateEntry = useMemoizedFn((entry: PlatformAssetEntry) => {
+    const platforms = deployPlatformsForUpdate(entry).filter(
+      (plat) => !toggleContext().issueKey(plat, entry.kind),
+    );
+    if (platforms.length === 0) {
+      showToast("err", t("toast.updateNothing"));
+      return;
+    }
+
+    void (async () => {
+      setBusy(true);
+      try {
+        const { ok, failed } = await deployEntryToPlatforms(entry, platforms);
+        await refreshView(false);
+        if (ok === 0 && failed > 0) {
+          showToast("err", t("toast.updateFailed", { count: failed }));
+        } else if (failed > 0) {
+          showToast("err", t("toast.updatePartial", { ok, failed }));
+        } else {
+          showToast("ok", t("toast.updatedCount", { count: ok }));
+        }
+      } finally {
+        setBusy(false);
+      }
+    })();
+  });
+
+  const batchUpdateEntries = useMemoizedFn(() => {
+    if (selectedEntries.length === 0) {
+      showToast("err", t("toast.selectRowsFirst"));
+      return;
+    }
+
+    const ctx = toggleContext();
+    const targets = selectedEntries.filter((entry) =>
+      canUpdateEntry(entry, ctx.issueKey),
+    );
+    if (targets.length === 0) {
+      showToast("err", t("toast.updateNothing"));
+      return;
+    }
+
+    void (async () => {
+      setBusy(true);
+      let ok = 0;
+      let failed = 0;
+      try {
+        for (const entry of targets) {
+          const platforms = deployPlatformsForUpdate(entry).filter(
+            (plat) => !ctx.issueKey(plat, entry.kind),
+          );
+          const result = await deployEntryToPlatforms(entry, platforms);
+          ok += result.ok;
+          failed += result.failed;
+        }
+        await refreshView(false);
+        if (ok === 0 && failed > 0) {
+          showToast("err", t("toast.updateFailed", { count: failed }));
+        } else if (failed > 0) {
+          showToast("err", t("toast.updatePartial", { ok, failed }));
+        } else {
+          showToast("ok", t("toast.updatedCount", { count: ok }));
+        }
+      } finally {
+        setBusy(false);
+      }
+    })();
+  });
+
   const reportBatchToggleResults = useMemoizedFn(
     (counts: Record<EntryPlatformToggleAction | "failed", number>) => {
       const ok =
-        counts.deploy + counts.retract + counts.import + counts.delete_source;
+        counts.deploy +
+        counts.retract +
+        counts.import +
+        counts.platform_copy +
+        counts.delete_source;
       const failed = counts.failed;
 
       if (ok === 0 && failed === 0) {
@@ -234,6 +362,7 @@ export function useAssetOperations({
         counts.deploy > 0,
         counts.retract > 0,
         counts.import > 0,
+        counts.platform_copy > 0,
         counts.delete_source > 0,
       ].filter(Boolean).length;
 
@@ -271,17 +400,12 @@ export function useAssetOperations({
       return;
     }
 
-    if (plat === "aiconfig" && isSourcePlatform(activePlatform)) {
-      return;
-    }
-
-    const batchMode = resolveBatchPlatformToggleMode(selectedEntries, plat);
-
-    // ai-config 批量 icon 仅支持「导入到源」；删源请用删除按钮
-    if (plat === "aiconfig" && batchMode === "retract_all") {
-      showToast("err", t("toast.batchAiconfigDeleteBlocked"));
-      return;
-    }
+    const batchMode = resolveBatchPlatformToggleMode(
+      selectedEntries,
+      plat,
+      activePlatform,
+      browsingSource,
+    );
 
     const deployPlat = plat !== "aiconfig" ? (plat as DeployPlatform) : null;
     if (
@@ -299,6 +423,7 @@ export function useAssetOperations({
       deploy: 0,
       retract: 0,
       import: 0,
+      platform_copy: 0,
       delete_source: 0,
       skip: 0,
       unsupported: 0,
@@ -313,7 +438,11 @@ export function useAssetOperations({
           batchMode,
           toggleContext(),
         );
-        if (planned === "skip" || planned === "unsupported" || planned === "delete_source") {
+        if (
+          planned === "skip" ||
+          planned === "unsupported" ||
+          planned === "delete_source"
+        ) {
           counts.skip += 1;
           continue;
         }
@@ -345,7 +474,7 @@ export function useAssetOperations({
         let ok = 0;
         for (const entry of selectedEntries) {
           try {
-            if (canRetract(entry.states[plat])) {
+            if (canRemoveFromPlatform(entry.states[plat])) {
               await retractAsset(entry.kind, entry.name, activeProject, plat);
               ok += 1;
             }
@@ -400,7 +529,7 @@ export function useAssetOperations({
       } else if (!isSourcePlatform(activePlatform)) {
         const plat = activePlatform as DeployPlatform;
         try {
-          if (canRetract(entry.states[plat])) {
+          if (canRemoveFromPlatform(entry.states[plat])) {
             await retractAsset(entry.kind, entry.name, activeProject, plat);
             await refreshView(false);
             showToast("ok", t("toast.retractedCount", { count: 1 }));
@@ -450,11 +579,74 @@ export function useAssetOperations({
     }
   });
 
+  const [addSkillOpen, setAddSkillOpen] = useState(false);
+  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+
+  const openAddSkill = useMemoizedFn(() => {
+    if (activeKind !== "skill") return;
+    setAddSkillOpen(true);
+  });
+
+  const closeAddSkill = useMemoizedFn(() => {
+    setAddSkillOpen(false);
+  });
+
+  const submitAddSkill = useMemoizedFn(
+    async (source: string, skillName?: string) => {
+      setBusy(true);
+      try {
+        const msg = await addSkillFromRemote(
+          source,
+          skillName,
+          activeProject,
+          activePlatform,
+        );
+        showToast("ok", msg);
+        setAddSkillOpen(false);
+        await refreshView(true);
+      } catch (e) {
+        showToast("err", t("toast.addSkillFailed", { error: e }));
+      } finally {
+        setBusy(false);
+      }
+    },
+  );
+
+  const openAddMarketplace = useMemoizedFn(() => {
+    if (activeKind !== "skill") return;
+    setMarketplaceOpen(true);
+  });
+
+  const closeAddMarketplace = useMemoizedFn(() => {
+    setMarketplaceOpen(false);
+  });
+
+  const handleMarketplaceImported = useMemoizedFn(async (message: string) => {
+    showToast("ok", message);
+    setMarketplaceOpen(false);
+    await refreshView(true);
+  });
+
+  const handleMarketplaceError = useMemoizedFn((message: string) => {
+    showToast("err", message);
+  });
+
   return {
     handlePlatformToggle,
+    handleUpdateEntry,
+    batchUpdateEntries,
     batchSyncToPlatform,
     requestBatchDelete,
     requestDeleteEntry,
     openBrowseFolder,
+    addSkillOpen,
+    openAddSkill,
+    closeAddSkill,
+    submitAddSkill,
+    marketplaceOpen,
+    openAddMarketplace,
+    closeAddMarketplace,
+    handleMarketplaceImported,
+    handleMarketplaceError,
   };
 }

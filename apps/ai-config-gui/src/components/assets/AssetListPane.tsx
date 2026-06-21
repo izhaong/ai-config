@@ -27,6 +27,7 @@ interface AssetListPaneProps {
   onToggleSelect: (key: string, checked: boolean) => void;
   onOpenAsset: (entry: PlatformAssetEntry) => void;
   onPlatformToggle: (entry: PlatformAssetEntry, plat: Platform) => void;
+  onUpdateEntry: (entry: PlatformAssetEntry) => void;
   onDeleteEntry: (entry: PlatformAssetEntry) => void;
   onCloseDrawer: () => void;
   onDraftChange: (value: string) => void;
@@ -56,6 +57,7 @@ export function AssetListPane({
   onToggleSelect,
   onOpenAsset,
   onPlatformToggle,
+  onUpdateEntry,
   onDeleteEntry,
   onCloseDrawer,
   onDraftChange,
@@ -92,12 +94,14 @@ export function AssetListPane({
                 key={key}
                 entry={entry}
                 loading={loading || busy}
+                activePlatform={activePlatform}
                 checked={selectedKeys.has(key)}
                 onCheckedChange={(checked) => onToggleSelect(key, checked)}
                 selected={drawerName === entry.name}
                 onOpen={canOpen ? () => onOpenAsset(entry) : undefined}
                 issueReasonFor={(plat) => issueReasonFor(entry, plat)}
                 onPlatformToggle={(plat) => onPlatformToggle(entry, plat)}
+                onUpdate={() => onUpdateEntry(entry)}
                 onDelete={() => onDeleteEntry(entry)}
               />
             );
