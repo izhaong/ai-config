@@ -44,6 +44,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Configure git for tests
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
