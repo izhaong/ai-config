@@ -649,7 +649,7 @@ fn split_yaml_block_scalar_prefix(s: &str) -> Option<(bool, &str)> {
     None
 }
 
-fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, folded: bool) -> (String, usize) {
+fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, _folded: bool) -> (String, usize) {
     let mut parts = Vec::new();
     let mut i = start;
     while i < lines.len() {
@@ -668,11 +668,7 @@ fn collect_yaml_block_scalar_lines(lines: &[&str], start: usize, folded: bool) -
         }
         i += 1;
     }
-    let joined = if folded {
-        parts.join(" ")
-    } else {
-        parts.join("\n")
-    };
+    let joined = parts.join(" ");
     (joined.chars().take(200).collect(), i)
 }
 
