@@ -146,8 +146,7 @@ impl AiConfigMcpServer {
     ) -> Result<Json<OkMessage>, McpError> {
         let kind = parse_kind(&params.kind).map_err(Self::err_msg)?;
         let root = self.root_for(params.root);
-        let msg =
-            agent_api::save(&root, kind, &params.name, &params.content).map_err(Self::err)?;
+        let msg = agent_api::save(&root, kind, &params.name, &params.content).map_err(Self::err)?;
         Ok(Json(OkMessage {
             ok: true,
             message: msg,
@@ -162,8 +161,7 @@ impl AiConfigMcpServer {
         let kind = parse_kind(&params.kind).map_err(Self::err_msg)?;
         let platform = parse_platform(&params.platform).map_err(Self::err_msg)?;
         let root = self.root_for(params.root);
-        let msg =
-            agent_api::deploy(&root, kind, &params.name, platform).map_err(Self::err)?;
+        let msg = agent_api::deploy(&root, kind, &params.name, platform).map_err(Self::err)?;
         Ok(Json(OkMessage {
             ok: true,
             message: msg,
@@ -178,8 +176,7 @@ impl AiConfigMcpServer {
         let kind = parse_kind(&params.kind).map_err(Self::err_msg)?;
         let platform = parse_platform(&params.platform).map_err(Self::err_msg)?;
         let root = self.root_for(params.root);
-        let msg =
-            agent_api::retract(&root, kind, &params.name, platform).map_err(Self::err)?;
+        let msg = agent_api::retract(&root, kind, &params.name, platform).map_err(Self::err)?;
         Ok(Json(OkMessage {
             ok: true,
             message: msg,

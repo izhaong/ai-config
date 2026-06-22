@@ -1,4 +1,7 @@
-import type { TFunction } from "i18next";
+type TranslateUpdaterError = (
+  key: string,
+  opts?: { error?: string },
+) => string;
 
 const MANIFEST_UNAVAILABLE_PATTERNS = [
   "valid release JSON",
@@ -8,7 +11,10 @@ const MANIFEST_UNAVAILABLE_PATTERNS = [
   "network",
 ] as const;
 
-export function formatUpdaterCheckError(err: unknown, t: TFunction): string {
+export function formatUpdaterCheckError(
+  err: unknown,
+  t: TranslateUpdaterError,
+): string {
   const message = String(err);
   const manifestMissing = MANIFEST_UNAVAILABLE_PATTERNS.some((pattern) =>
     message.toLowerCase().includes(pattern.toLowerCase()),

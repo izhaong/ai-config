@@ -435,10 +435,7 @@ mod tests {
             .unwrap()
             .expect("stored");
         assert_eq!(stored["command"].as_str(), Some("ai-config"));
-        assert_eq!(
-            stored["args"].as_array().map(|a| a.len()),
-            Some(1)
-        );
+        assert_eq!(stored["args"].as_array().map(|a| a.len()), Some(1));
     }
 
     #[test]

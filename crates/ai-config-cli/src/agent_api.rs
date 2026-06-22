@@ -1,7 +1,7 @@
 //! Agent / MCP 可调用的 JSON API（薄封装 core + lifecycle 报告）。
 
-use schemars::JsonSchema;
 use camino::{Utf8Path, Utf8PathBuf};
+use schemars::JsonSchema;
 
 use ai_config_core::asset_ops::{self, ScopeRoots};
 use ai_config_core::doctor;
@@ -98,7 +98,9 @@ pub fn save(
     name: &str,
     content: &str,
 ) -> Result<String, CoreError> {
-    with_scope(root, |scope| asset_ops::save_content(&scope, kind, name, content))
+    with_scope(root, |scope| {
+        asset_ops::save_content(&scope, kind, name, content)
+    })
 }
 
 pub fn deploy(
@@ -107,7 +109,9 @@ pub fn deploy(
     name: &str,
     platform: PlatformId,
 ) -> Result<String, CoreError> {
-    with_scope(root, |scope| asset_ops::deploy(&scope, kind, name, platform))
+    with_scope(root, |scope| {
+        asset_ops::deploy(&scope, kind, name, platform)
+    })
 }
 
 pub fn retract(
@@ -116,7 +120,9 @@ pub fn retract(
     name: &str,
     platform: PlatformId,
 ) -> Result<String, CoreError> {
-    with_scope(root, |scope| asset_ops::retract(&scope, kind, name, platform))
+    with_scope(root, |scope| {
+        asset_ops::retract(&scope, kind, name, platform)
+    })
 }
 
 pub fn scan_summary(root: &Utf8Path) -> Result<EnvSummary, CoreError> {
