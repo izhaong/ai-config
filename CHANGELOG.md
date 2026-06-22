@@ -6,9 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-22
+
 ### Added
 
-- **GUI 自动更新**：启动时从 GitHub Releases 检测新版本并弹窗提示；设置菜单可手动「检查更新」；安装后自动重启。
+- **GUI 自动更新**：启动时从 GitHub Releases 检测新版本并弹窗提示；设置菜单可手动「检查更新」；安装后自动重启；CI 签名并发布 `latest.json`。
 - **GUI 主题**：设置菜单支持深色 / 浅色 / 跟随系统，偏好持久化至 `localStorage`。
 - **GUI 注册项目**：项目名可选（默认取目录名）；路径输入框支持系统文件夹选择器。
 - **MCP 外部控制**：`ai-config serve` 启动 stdio MCP 服务器（list/show/save/deploy/retract/doctor/status/sync/env），供 Cursor / Claude Code 等 Agent 原生操作资产。
@@ -19,10 +21,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **GUI 样式体系**：迁移至 Tailwind v4 + shadcn/ui；弹窗/抽屉/Toast 使用 `motion` 动画；接入 React Compiler。
 - **GUI 列表布局**：顶栏与列表行共用滚动容器与三列网格，操作列右缘对齐；切换资产/平台时列表缓存减少重渲染。
+- **GUI 本地打包**：`pnpm tauri:build` 自动加载 `~/.tauri/ai-config.key` 签名 updater 产物。
 
 ### Fixed
 
 - **MCP `serve` 启动崩溃**：工具返回 `serde_json::Value` 时 `outputSchema` 不符合 MCP 规范；改为具名类型 + `JsonSchema` 派生。
+- **GUI 检查更新**：远程无 `latest.json` 时提示更新清单尚未发布，而非笼统网络错误。
 
 ## [0.3.0] - 2026-06-21
 
@@ -90,6 +94,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CI：`cargo fmt`、clippy 未使用参数、daemon/Windows 交叉编译。
 - GUI Agent/Rule 描述解析与 agent 读取路径。
 
+[0.3.1]: https://github.com/izhaong/ai-config/releases/tag/v0.3.1
 [0.3.0]: https://github.com/izhaong/ai-config/releases/tag/v0.3.0
 [0.2.0]: https://github.com/izhaong/ai-config/releases/tag/v0.2.0
 

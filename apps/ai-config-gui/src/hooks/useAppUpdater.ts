@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { ToastKind } from "./useToast";
+import { formatUpdaterCheckError } from "../utils/updaterError";
 
 interface UseAppUpdaterOptions {
   showToast: (kind: ToastKind, text: string) => void;
@@ -35,10 +36,7 @@ export function useAppUpdater({ showToast }: UseAppUpdaterOptions) {
       }
     } catch (err) {
       if (manual) {
-        showToast(
-          "err",
-          t("updater.toast.checkFailed", { error: String(err) }),
-        );
+        showToast("err", formatUpdaterCheckError(err, t));
       }
     } finally {
       checkingRef.current = false;

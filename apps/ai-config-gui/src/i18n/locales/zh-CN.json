@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "ai-config",
-    "version": "v0.2.0",
+    "version": "v0.3.1",
     "daemonStopped": "守护进程已停止"
   },
   "language": {
@@ -31,6 +31,7 @@
     "downloading": "下载中 {{percent}}%",
     "toast": {
       "alreadyLatest": "当前已是最新版本",
+      "manifestUnavailable": "远程尚未发布更新清单（latest.json）。请等待含自动更新支持的版本发布，或联系维护者配置 GitHub Release。",
       "checkFailed": "检查更新失败: {{error}}",
       "installFailed": "安装更新失败: {{error}}"
     }

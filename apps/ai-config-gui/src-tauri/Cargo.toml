@@ -1,6 +1,6 @@
 [package]
 name = "ai-config-gui-bin"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Tauri 2 binary entry — calls into ai_config_gui_lib::run"
 

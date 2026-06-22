@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "ai-config",
-    "version": "v0.2.0",
+    "version": "v0.3.1",
     "daemonStopped": "daemon stopped"
   },
   "language": {
@@ -31,6 +31,7 @@
     "downloading": "Downloading {{percent}}%",
     "toast": {
       "alreadyLatest": "You are on the latest version",
+      "manifestUnavailable": "No updater manifest (latest.json) on the release yet. Wait for a release built with signing enabled, or ask a maintainer to upload it.",
       "checkFailed": "Update check failed: {{error}}",
       "installFailed": "Update install failed: {{error}}"
     }
