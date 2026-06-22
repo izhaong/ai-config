@@ -3,6 +3,7 @@
 use std::fs;
 
 use camino::{Utf8Path, Utf8PathBuf};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::asset_scope::{self, locate_source};
@@ -23,7 +24,7 @@ pub struct ScopeRoots<'a> {
 }
 
 /// 资产文件详情（GUI 抽屉 / API）。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AssetFileDetail {
     pub name: String,
     pub description: String,

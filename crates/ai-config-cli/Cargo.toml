@@ -17,12 +17,14 @@ clap.workspace = true
 clap_complete = "4.5"
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 camino.workspace = true
+rmcp = { version = "1.7.0", features = ["server", "transport-io", "macros", "schemars"] }
 
 [dev-dependencies]
 tempfile.workspace = true

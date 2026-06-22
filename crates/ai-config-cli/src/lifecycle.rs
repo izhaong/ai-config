@@ -20,6 +20,7 @@
 use std::process::ExitCode;
 
 use camino::Utf8Path;
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use ai_config_core::error::{exit_code, CoreError};
@@ -80,7 +81,7 @@ fn platform_label(p: PlatformId) -> &'static str {
 // ── 共享:执行 SyncAction ──────────────────────────────────────────
 
 /// 一条动作的执行结果。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 struct Outcome {
     label: String,
     platform: String,
@@ -508,7 +509,7 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
 
 // ── 3. sync ─────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct SyncReport {
     ok: bool,
     synced: usize,
@@ -564,19 +565,19 @@ pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
 
 // ── 4. status ───────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct StatusReport {
     projects: Vec<ProjectStatus>,
     summary: StatusSummary,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct ProjectStatus {
     project: String,
     assets: Vec<AssetStatus>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct AssetStatus {
     kind: String,
     name: String,
@@ -584,14 +585,14 @@ struct AssetStatus {
     platforms: Vec<PlatformStatus>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct PlatformStatus {
     platform: String,
     state: String,
     dest: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 struct StatusSummary {
     total_assets: usize,
     linked: usize,
@@ -763,13 +764,13 @@ fn describe_for(
 
 // ── 5. list ─────────────────────────────────────────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct ListReport {
     pub count: usize,
     pub assets: Vec<AssetEntry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct AssetEntry {
     pub kind: String,
     pub name: String,

@@ -133,6 +133,7 @@
     "openFolder": "打开目录",
     "openFolderTitle": "在系统文件管理器中打开当前浏览路径",
     "addSkillTitle": "从远程仓库添加 Skill（npx skills add）",
+    "addMcpTitle": "添加 MCP server（JSON）",
     "addMarketplaceTitle": "从 Claude Marketplace 浏览并导入 Skill"
   },
   "empty": {
@@ -187,6 +188,12 @@
     "skillNameLabel": "Skill 名称（可选）",
     "skillNamePlaceholder": "留空则安装仓库内全部或唯一 skill",
     "skillNameHint": "仓库含多个 skill 时需指定名称（对应 --skill）",
+    "submit": "添加"
+  },
+  "addMcp": {
+    "title": "添加 MCP server",
+    "hint": "粘贴一条 server 的 JSON（一个 key = server 名称）",
+    "jsonLabel": "MCP server JSON",
     "submit": "添加"
   },
   "marketplace": {
@@ -268,7 +275,8 @@
     "doctorFailed": "健康检查加载失败: {{error}}",
     "importSuccess": "{{message}}",
     "importFailed": "导入失败: {{error}}",
-    "addSkillFailed": "添加 Skill 失败: {{error}}"
+    "addSkillFailed": "添加 Skill 失败: {{error}}",
+    "addMcpFailed": "添加 MCP 失败: {{error}}"
   },
   "prompt": {
     "projectName": "项目名(在 store 中唯一):",

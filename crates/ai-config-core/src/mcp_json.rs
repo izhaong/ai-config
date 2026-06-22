@@ -422,6 +422,26 @@ mod tests {
     }
 
     #[test]
+    fn upsert_gui_style_ai_config_server() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        ensure_mcp_json(&root).unwrap();
+        let cfg = serde_json::json!({
+            "command": "ai-config",
+            "args": ["serve"]
+        });
+        upsert_server_in_document(&root, "ai-config", cfg.clone()).unwrap();
+        let stored = get_server_config(&root, "ai-config")
+            .unwrap()
+            .expect("stored");
+        assert_eq!(stored["command"].as_str(), Some("ai-config"));
+        assert_eq!(
+            stored["args"].as_array().map(|a| a.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
     fn per_server_platform_upsert_and_sync_state() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();

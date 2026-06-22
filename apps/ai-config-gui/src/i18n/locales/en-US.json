@@ -133,6 +133,7 @@
     "openFolder": "Open",
     "openFolderTitle": "Reveal current browse path in the file manager",
     "addSkillTitle": "Add skill from remote (npx skills add)",
+    "addMcpTitle": "Add MCP server (JSON)",
     "addMarketplaceTitle": "Browse Claude Marketplace and import skills"
   },
   "empty": {
@@ -187,6 +188,12 @@
     "skillNameLabel": "Skill name (optional)",
     "skillNamePlaceholder": "Leave empty for single or all skills",
     "skillNameHint": "Required when the repo has multiple skills (--skill)",
+    "submit": "Add"
+  },
+  "addMcp": {
+    "title": "Add MCP server",
+    "hint": "Paste one server JSON object (key = server name)",
+    "jsonLabel": "MCP server JSON",
     "submit": "Add"
   },
   "marketplace": {

@@ -1,6 +1,7 @@
 //! `ai-config doctor` 诊断逻辑（GUI / CLI 共用）。
 
 use camino::{Utf8Path, Utf8PathBuf};
+use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::CoreError;
@@ -15,7 +16,7 @@ use crate::sync;
 use crate::template::McpSyncState;
 
 /// Doctor 结构化报告（`--json` / GUI）。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DoctorReport {
     pub broken: usize,
     pub wrong_source: usize,
@@ -26,13 +27,13 @@ pub struct DoctorReport {
     pub exit_code: u8,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct MissingSecret {
     pub server: String,
     pub key: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PlatformCapabilityIssue {
     pub platform: String,
     pub kind: String,
