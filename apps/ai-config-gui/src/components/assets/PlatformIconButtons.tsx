@@ -4,6 +4,7 @@ import { platformUiLabel } from "../../i18n/labels";
 import { PLATFORM_FAVICON, PLATFORM_NAME } from "../../platformIcons";
 import type { DeployPlatform, LinkState, Platform } from "../../types";
 import { ALL_PLATFORMS, isPlatformActive } from "../../types";
+import { PlatButton } from "./PlatButton";
 
 interface PlatformIconButtonsProps {
   loading: boolean;
@@ -33,7 +34,7 @@ export function PlatformIconButtons({
   const isBatch = variant === "batch";
 
   return (
-    <div className="platform-actions">
+    <div className="platform-actions ml-auto flex shrink-0 flex-nowrap items-center gap-[5px]">
       {ALL_PLATFORMS.map((p) => {
         const isDeploy = p !== "aiconfig";
         const issueReason = isDeploy ? issueReasonFor?.(p) : undefined;
@@ -83,47 +84,41 @@ export function PlatformIconButtons({
                 state: uiLabel,
               })
             : isBatch
-            ? batchNoSelection
-              ? t("toolbar.batchSyncNeedSelection")
-              : p === "aiconfig"
-                ? browsingSource
-                  ? t("toolbar.batchSyncSourceDisabled")
-                  : t("toolbar.batchImportSourceState", {
+              ? batchNoSelection
+                ? t("toolbar.batchSyncNeedSelection")
+                : p === "aiconfig"
+                  ? browsingSource
+                    ? t("toolbar.batchSyncSourceDisabled")
+                    : t("toolbar.batchImportSourceState", {
+                        state: uiLabel,
+                        hint: batchActionHint,
+                      })
+                  : t("toolbar.batchSyncPlatformState", {
+                      platform: PLATFORM_NAME[p],
                       state: uiLabel,
                       hint: batchActionHint,
                     })
-                : t("toolbar.batchSyncPlatformState", {
-                    platform: PLATFORM_NAME[p],
-                    state: uiLabel,
-                    hint: batchActionHint,
-                  })
-            : p === "aiconfig"
-              ? `${PLATFORM_NAME[p]} · ${uiLabel} · ${
-                  active
-                    ? t("platform.clickRemove")
-                    : t("platform.clickImportSource")
-                }`
-              : `${PLATFORM_NAME[p]} · ${uiLabel} · ${
-                  active
-                    ? t("platform.clickRemove")
-                    : t("platform.clickDeploy")
-                }`;
+              : p === "aiconfig"
+                ? `${PLATFORM_NAME[p]} · ${uiLabel} · ${
+                    active
+                      ? t("platform.clickRemove")
+                      : t("platform.clickImportSource")
+                  }`
+                : `${PLATFORM_NAME[p]} · ${uiLabel} · ${
+                    active
+                      ? t("platform.clickRemove")
+                      : t("platform.clickDeploy")
+                  }`;
 
-        const className = [
-          "plat-btn",
-          partial ? "partial" : active ? "active" : "inactive",
-          isBatch ? "plat-btn-batch" : "",
-          platUnsupported ? "unsupported" : "",
-          isBrowseCurrent ? "browse-current" : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
+        const platState = partial ? "partial" : active ? "active" : "inactive";
 
         return (
-          <button
+          <PlatButton
             key={p}
-            type="button"
-            className={className}
+            state={platState}
+            batch={isBatch}
+            unsupported={platUnsupported}
+            browseCurrent={isBrowseCurrent}
             disabled={btnDisabled}
             title={title}
             aria-pressed={ariaPressed}
@@ -133,7 +128,7 @@ export function PlatformIconButtons({
             }}
           >
             <img src={PLATFORM_FAVICON[p]} alt={PLATFORM_NAME[p]} draggable={false} />
-          </button>
+          </PlatButton>
         );
       })}
     </div>

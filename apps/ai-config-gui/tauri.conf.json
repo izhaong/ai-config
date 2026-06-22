@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -36,5 +37,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY1NTNEMEYwNzFGMEQ4MzEKUldReDJQQng4TkJUOVNRWkp3ZGJXczBZNEdBazJuVVNRN0pCZUs0YkhCSGhwdkxKc1J4WGdaQW4K",
+      "endpoints": [
+        "https://github.com/izhaong/ai-config/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -8,9 +8,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **GUI 自动更新**：启动时从 GitHub Releases 检测新版本并弹窗提示；设置菜单可手动「检查更新」；安装后自动重启。
+- **GUI 主题**：设置菜单支持深色 / 浅色 / 跟随系统，偏好持久化至 `localStorage`。
+- **GUI 注册项目**：项目名可选（默认取目录名）；路径输入框支持系统文件夹选择器。
 - **MCP 外部控制**：`ai-config serve` 启动 stdio MCP 服务器（list/show/save/deploy/retract/doctor/status/sync/env），供 Cursor / Claude Code 等 Agent 原生操作资产。
 - **Agent Skill**：`.cursor/skills/ai-config-agent/SKILL.md` — 教 Agent 何时用 MCP 或 CLI `--json`。
 - **GUI 添加 MCP**：顶栏「+」打开 `AddMcpModal`，粘贴 JSON 写入 `~/.ai-config/mcp.json` 并可选 deploy。
+
+### Changed
+
+- **GUI 样式体系**：迁移至 Tailwind v4 + shadcn/ui；弹窗/抽屉/Toast 使用 `motion` 动画；接入 React Compiler。
+- **GUI 列表布局**：顶栏与列表行共用滚动容器与三列网格，操作列右缘对齐；切换资产/平台时列表缓存减少重渲染。
 
 ### Fixed
 

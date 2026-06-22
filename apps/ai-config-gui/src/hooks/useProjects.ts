@@ -11,6 +11,7 @@ import {
 import type { ConfirmRequest } from "./useConfirm";
 import type { ToastKind } from "./useToast";
 import type { ProjectItem } from "../types";
+import { defaultProjectNameFromPath } from "../utils/defaultProjectNameFromPath";
 
 interface UseProjectsOptions {
   showToast: (kind: ToastKind, text: string) => void;
@@ -46,9 +47,16 @@ export function useProjects({
 
   const submitRegisterProject = useMemoizedFn(
     async (name: string, rootPath: string) => {
+      const trimmedPath = rootPath.trim();
+      const resolvedName =
+        name.trim() || defaultProjectNameFromPath(trimmedPath);
+      if (!trimmedPath || !resolvedName) {
+        showToast("err", t("toast.registerProjectInvalid"));
+        return;
+      }
       setRegisterProjectBusy(true);
       try {
-        const project = await addProject(name, rootPath);
+        const project = await addProject(resolvedName, trimmedPath);
         mutateProjects((prev) => [...(prev ?? []), project]);
         setRegisterProjectOpen(false);
         showToast("ok", t("toast.projectRegistered", { name: project.name }));

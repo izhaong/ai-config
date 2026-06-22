@@ -1,5 +1,7 @@
+import { Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { Button } from "@/components/ui/button";
 import { useSidebarLayout } from "../../hooks/useSidebarLayout";
 import { assetKindLabel } from "../../i18n/labels";
 import { PLATFORM_FAVICON, PLATFORM_NAME } from "../../platformIcons";
@@ -48,7 +50,20 @@ export function AppSidebar({
           className="sidebar-section sidebar-projects"
           style={projectsH !== undefined ? { height: projectsH, flexShrink: 0 } : undefined}
         >
-          <h2>{t("nav.projects")}</h2>
+          <div className="sidebar-section-header">
+            <h2>{t("nav.projects")}</h2>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon-xs"
+              className="sidebar-header-extra"
+              onClick={onRegisterProject}
+              title={t("nav.registerProjectTitle")}
+              aria-label={t("nav.registerProjectTitle")}
+            >
+              <Plus size={14} aria-hidden />
+            </Button>
+          </div>
           <ul className="project-list">
             <li>
               <button
@@ -84,16 +99,6 @@ export function AppSidebar({
                 </button>
               </li>
             ))}
-            <li>
-              <button
-                type="button"
-                className="add"
-                onClick={onRegisterProject}
-                title={t("nav.registerProjectTitle")}
-              >
-                {t("nav.registerProject")}
-              </button>
-            </li>
           </ul>
         </section>
 

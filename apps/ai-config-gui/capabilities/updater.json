@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "updater",
+  "description": "Application auto-update from GitHub Releases",
+  "windows": ["main"],
+  "permissions": ["updater:default", "process:allow-restart"]
+}

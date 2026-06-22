@@ -1,6 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { Button } from "@/components/ui/button";
 import type { DoctorSummary } from "../../types";
 import { SettingsMenu } from "./SettingsMenu";
 
@@ -24,6 +25,7 @@ interface AppStatusbarProps {
     onGitPush: () => void;
     gitBusy: boolean;
     hasRemote: boolean;
+    onCheckUpdate?: () => void;
   };
 }
 
@@ -72,9 +74,11 @@ export function AppStatusbar({
 
       <div className="statusbar-right">
         {onRefresh ? (
-          <button
+          <Button
             type="button"
-            className="statusbar-icon-btn"
+            variant="outline"
+            size="sm"
+            className="statusbar-refresh-btn h-7 gap-1.5 border-[var(--accent)]/35 bg-[var(--bg-elev)] px-2.5 text-[var(--fg)] shadow-none hover:border-[var(--accent)] hover:bg-[rgba(94,155,255,0.1)] hover:text-[var(--accent)] disabled:opacity-40"
             disabled={loading || busy}
             title={
               loading ? t("toolbar.refreshing") : t("toolbar.refreshTitle")
@@ -82,8 +86,15 @@ export function AppStatusbar({
             aria-label={t("toolbar.refresh")}
             onClick={onRefresh}
           >
-            <RefreshCw size={14} className={loading ? "spin" : undefined} />
-          </button>
+            <RefreshCw
+              size={14}
+              className={loading || busy ? "spin" : undefined}
+              aria-hidden
+            />
+            <span className="statusbar-refresh-label">
+              {loading || busy ? t("toolbar.refreshing") : t("toolbar.refresh")}
+            </span>
+          </Button>
         ) : null}
         <SettingsMenu
           assetRoot={gitSettings.assetRoot}
@@ -98,6 +109,7 @@ export function AppStatusbar({
           gitBusy={gitSettings.gitBusy}
           gitStatusLabel={gitStatusLabel}
           hasRemote={gitSettings.hasRemote}
+          onCheckUpdate={gitSettings.onCheckUpdate}
         />
       </div>
     </footer>

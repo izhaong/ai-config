@@ -1,10 +1,15 @@
 import { useTranslation } from "react-i18next";
 
+import {
+  AnimatedOverlay,
+  AnimatedSlidePanel,
+} from "@/components/ui/animated";
 import type { AssetDetail, AssetKind } from "../../types";
 import { assetKindLabel } from "../../i18n/labels";
 import { sanitizeListDescription } from "../../utils/sanitizeListDescription";
 
 interface AssetDrawerProps {
+  open: boolean;
   kind: AssetKind;
   name: string;
   detail: AssetDetail | null;
@@ -22,6 +27,7 @@ interface AssetDrawerProps {
 }
 
 export function AssetDrawer({
+  open,
   kind,
   name,
   detail,
@@ -42,13 +48,10 @@ export function AssetDrawer({
   const titleId = "asset-drawer-title";
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <aside
+    <AnimatedOverlay open={open} className="drawer-backdrop" onClick={onClose}>
+      <AnimatedSlidePanel
         className="skill-drawer"
-        role="dialog"
-        aria-modal="true"
         aria-labelledby={titleId}
-        onClick={(e) => e.stopPropagation()}
       >
         <header className="skill-drawer-header">
           <div>
@@ -108,7 +111,7 @@ export function AssetDrawer({
             </>
           )}
         </footer>
-      </aside>
-    </div>
+      </AnimatedSlidePanel>
+    </AnimatedOverlay>
   );
 }

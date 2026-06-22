@@ -1,6 +1,12 @@
 import { useTranslation } from "react-i18next";
 
+import {
+  AnimatedOverlay,
+  AnimatedScaleDialog,
+} from "@/components/ui/animated";
+
 interface ConfirmModalProps {
+  open: boolean;
   title: string;
   message: string;
   confirmLabel?: string;
@@ -10,6 +16,7 @@ interface ConfirmModalProps {
 }
 
 export function ConfirmModal({
+  open,
   title,
   message,
   confirmLabel,
@@ -21,13 +28,8 @@ export function ConfirmModal({
   const confirm = confirmLabel ?? t("confirm.defaultConfirm");
 
   return (
-    <div className="confirm-backdrop" onClick={onCancel}>
-      <div
-        className="confirm-dialog"
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <AnimatedOverlay open={open} className="confirm-backdrop" onClick={onCancel}>
+      <AnimatedScaleDialog className="confirm-dialog">
         <h4>{title}</h4>
         <p>{message}</p>
         <div className="confirm-actions">
@@ -43,7 +45,7 @@ export function ConfirmModal({
             {busy ? t("confirm.processing") : confirm}
           </button>
         </div>
-      </div>
-    </div>
+      </AnimatedScaleDialog>
+    </AnimatedOverlay>
   );
 }

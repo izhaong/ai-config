@@ -18,6 +18,14 @@ import type {
 } from "../types";
 import { isSourcePlatform } from "../types";
 
+function listViewKey(project: string, platform: Platform, kind: AssetKind) {
+  return `${project}\0${platform}\0${kind}`;
+}
+
+function pathsViewKey(project: string, kind: AssetKind) {
+  return `${project}\0${kind}`;
+}
+
 interface UseAssetBrowserOptions {
   showToast: (kind: ToastKind, text: string) => void;
   doctor: DoctorSummary | null;
@@ -59,25 +67,48 @@ export function useAssetBrowser({
       issueMap.get(`${plat}:${entry.kind}`),
   );
 
-  const [platformKindPaths, setPlatformKindPaths] = useState<
-    PlatformKindPath[]
-  >([]);
+  const listCacheRef = useRef(new Map<string, PlatformAssetList>());
+  const pathsCacheRef = useRef(new Map<string, PlatformKindPath[]>());
+
+  const listKey = listViewKey(activeProject, activePlatform, activeKind);
+  const pathsKey = pathsViewKey(activeProject, activeKind);
+
+  const [platformKindPaths, setPlatformKindPaths] = useState<PlatformKindPath[]>(
+    () => pathsCacheRef.current.get(pathsKey) ?? [],
+  );
+
+  const [platformList, setPlatformList] = useState<PlatformAssetList | null>(
+    () => listCacheRef.current.get(listKey) ?? null,
+  );
 
   useRequest(() => fetchPlatformKindPaths(activeProject, activeKind), {
-    refreshDeps: [activeProject, activeKind],
-    onSuccess: (paths) => setPlatformKindPaths(paths),
-    onError: () => setPlatformKindPaths([]),
+    refreshDeps: [pathsKey],
+    loadingDelay: 200,
+    onSuccess: (paths) => {
+      pathsCacheRef.current.set(pathsKey, paths);
+      setPlatformKindPaths(paths);
+    },
+    onError: () => {
+      const cached = pathsCacheRef.current.get(pathsKey);
+      setPlatformKindPaths(cached ?? []);
+    },
   });
 
   const {
-    data: platformList,
     loading: listLoading,
     refreshAsync: refreshListAsync,
   } = useRequest(
     () => fetchPlatformList(activeProject, activePlatform, activeKind),
     {
-      refreshDeps: [activeProject, activePlatform, activeKind],
+      refreshDeps: [listKey],
+      loadingDelay: 200,
+      onSuccess: (data) => {
+        listCacheRef.current.set(listKey, data);
+        setPlatformList(data);
+      },
       onError: (e) => {
+        const cached = listCacheRef.current.get(listKey);
+        setPlatformList(cached ?? null);
         showToastLatest.current(
           "err",
           tLatest.current("toast.platformListFailed", { error: e }),
@@ -86,7 +117,18 @@ export function useAssetBrowser({
     },
   );
 
-  const loading = listLoading || manualLoading;
+  useEffect(() => {
+    const cached = listCacheRef.current.get(listKey);
+    if (cached) {
+      setPlatformList(cached);
+    }
+    const cachedPaths = pathsCacheRef.current.get(pathsKey);
+    if (cachedPaths) {
+      setPlatformKindPaths(cachedPaths);
+    }
+  }, [listKey, pathsKey]);
+
+  const loading = (listLoading && platformList === null) || manualLoading;
 
   const refresh = useMemoizedFn(async () => {
     try {
@@ -209,7 +251,7 @@ export function useAssetBrowser({
     setActivePlatform,
     activeKind,
     setActiveKind,
-    platformList: platformList ?? null,
+    platformList,
     platformKindPaths,
     loading,
     selectedKeys,

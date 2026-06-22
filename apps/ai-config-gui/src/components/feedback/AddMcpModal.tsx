@@ -2,6 +2,10 @@ import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  AnimatedOverlay,
+  AnimatedScaleDialog,
+} from "@/components/ui/animated";
+import {
   MCP_SERVER_INPUT_PLACEHOLDER,
   parseMcpServerInput,
 } from "../../utils/parseMcpServerInput";
@@ -36,13 +40,10 @@ export function AddMcpModal({
   };
 
   return (
-    <div className="confirm-backdrop" onClick={busy ? undefined : onCancel}>
-      <div
+    <AnimatedOverlay open className="confirm-backdrop" onClick={busy ? undefined : onCancel}>
+      <AnimatedScaleDialog
         className="confirm-dialog add-mcp-dialog"
-        role="dialog"
-        aria-modal="true"
         aria-labelledby="add-mcp-title"
-        onClick={(e) => e.stopPropagation()}
       >
         <h4 id="add-mcp-title">{t("addMcp.title")}</h4>
         <p className="form-hint">{t("addMcp.hint")}</p>
@@ -73,7 +74,7 @@ export function AddMcpModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </AnimatedScaleDialog>
+    </AnimatedOverlay>
   );
 }

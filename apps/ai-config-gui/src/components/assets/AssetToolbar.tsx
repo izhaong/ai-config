@@ -2,11 +2,20 @@ import { FolderOpen } from "lucide-react";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { assetKindLabel } from "../../i18n/labels";
 import { PLATFORM_NAME } from "../../platformIcons";
 import type { AssetKind, DeployPlatform, Platform, PlatformAssetEntry } from "../../types";
 import { aggregateLinkStateForUi } from "../../utils/aggregatePlatformState";
 import { canUpdateEntry } from "../../utils/entryUpdate";
+import { rowSyncLeadSlot } from "../../utils/rowSyncLeadSlot";
+import {
+  ListColActions,
+  ListColCheck,
+  ListColMain,
+  ListRowShell,
+} from "./ListRowShell";
 import { RowSyncActions } from "./RowSyncActions";
 
 interface AssetToolbarProps {
@@ -64,6 +73,7 @@ export function AssetToolbar({
     () => (plat: Platform) => aggregateLinkStateForUi(selectedEntries, plat),
     [selectedEntries],
   );
+  const leadSlot = rowSyncLeadSlot(activeKind, browsingSource);
 
   const batchDeleteDisabled =
     loading || busy || selectedCount === 0 || visibleCount === 0;
@@ -77,24 +87,29 @@ export function AssetToolbar({
       canUpdateEntry(entry, (plat) => !!issueReasonForKind(plat)),
     );
 
+  const selectAllChecked = allVisibleSelected && visibleCount > 0;
+
   return (
     <header className="list-header">
-      <div className="list-row-shell list-row-shell-header">
-        <label className="list-col-check" title={t("toolbar.selectAllTitle")}>
-          <input
-            type="checkbox"
-            checked={allVisibleSelected && visibleCount > 0}
-            onChange={onToggleSelectAll}
+      <ListRowShell variant="header" className="list-row-shell-header">
+        <ListColCheck title={t("toolbar.selectAllTitle")}>
+          <Checkbox
+            checked={selectAllChecked}
+            onCheckedChange={() => onToggleSelectAll()}
             disabled={visibleCount === 0 || loading}
+            aria-label={t("toolbar.selectAllTitle")}
           />
-        </label>
+        </ListColCheck>
 
-        <div className="list-col-main list-header-main">
-          <div className="list-header-line list-header-line-primary">
-            <h3 className="list-header-title" title={toolbarTitle}>
+        <ListColMain className="list-header-main flex min-w-0 flex-col gap-px">
+          <div className="list-header-line list-header-line-primary flex min-w-0 items-center gap-1.5">
+            <h3
+              className="list-header-title m-0 min-w-0 flex-1 truncate text-[13px] font-semibold leading-snug"
+              title={toolbarTitle}
+            >
               {toolbarTitle}
             </h3>
-            <span className="list-header-meta">
+            <span className="list-header-meta shrink-0 text-[11px] text-[var(--fg-dim)]">
               {t("toolbar.items", { count: visibleCount })}
               {selectedCount > 0
                 ? t("toolbar.selected", { count: selectedCount })
@@ -102,30 +117,36 @@ export function AssetToolbar({
               {loading || busy ? t("toolbar.processing") : ""}
             </span>
           </div>
-          <div className="list-header-line list-header-line-sub">
-            <button
+          <div className="list-header-line list-header-line-sub flex min-w-0 items-center gap-1.5">
+            <Button
               type="button"
-              className="toolbar-icon-btn toolbar-icon-btn-sm"
+              variant="ghost"
+              size="icon-xs"
               disabled={!browsePath || loading || busy}
               title={t("toolbar.openFolderTitle")}
               aria-label={t("toolbar.openFolder")}
               onClick={onOpenFolder}
+              className="toolbar-icon-btn toolbar-icon-btn-sm size-6 shrink-0 rounded border border-[var(--border)] bg-[var(--bg-elev)] p-0 text-[var(--fg-dim)] hover:bg-[var(--bg-elev-2)]"
             >
               <FolderOpen size={12} />
-            </button>
+            </Button>
             {browsePath ? (
-              <code className="list-header-path" title={browsePath}>
+              <code
+                className="list-header-path min-w-0 flex-1 truncate font-[family-name:var(--font)] text-[11px] text-[var(--fg-dim)]"
+                title={browsePath}
+              >
                 {browsePath}
               </code>
             ) : (
-              <span className="list-header-path list-header-path-empty" />
+              <span className="list-header-path-empty min-h-[1em] flex-1" />
             )}
           </div>
-        </div>
+        </ListColMain>
 
-        <div className="list-col-actions">
+        <ListColActions>
           <RowSyncActions
             variant="batch"
+            leadSlot={leadSlot}
             loading={loading || busy}
             activePlatform={activePlatform}
             browsingSource={browsingSource}
@@ -134,9 +155,9 @@ export function AssetToolbar({
             linkStateFor={batchLinkStateFor}
             onPlatformClick={onBatchSyncPlatform}
             onAdd={
-              activeKind === "skill"
+              leadSlot === "skill-menu"
                 ? onAddSkill
-                : activeKind === "mcp" && browsingSource
+                : leadSlot === "mcp-add"
                   ? onAddMcp
                   : undefined
             }
@@ -146,7 +167,9 @@ export function AssetToolbar({
                 ? t("toolbar.addMcpTitle")
                 : t("toolbar.addSkillTitle")
             }
-            onAddMarketplace={activeKind === "skill" ? onAddMarketplace : undefined}
+            onAddMarketplace={
+              leadSlot === "skill-menu" ? onAddMarketplace : undefined
+            }
             addMarketplaceTitle={t("toolbar.addMarketplaceTitle")}
             onUpdate={onBatchUpdate}
             updateDisabled={batchUpdateDisabled}
@@ -155,8 +178,8 @@ export function AssetToolbar({
             deleteDisabled={batchDeleteDisabled}
             deleteTitle={t("toolbar.batchDeleteTitle")}
           />
-        </div>
-      </div>
+        </ListColActions>
+      </ListRowShell>
     </header>
   );
 }
