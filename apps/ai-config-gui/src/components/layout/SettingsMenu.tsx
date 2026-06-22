@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 
 interface SettingsMenuProps {
   assetRoot?: string;
@@ -18,6 +19,7 @@ interface SettingsMenuProps {
   gitBusy?: boolean;
   gitStatusLabel?: string;
   hasRemote?: boolean;
+  onCheckUpdate?: () => void;
 }
 
 export function SettingsMenu({
@@ -33,6 +35,7 @@ export function SettingsMenu({
   gitBusy = false,
   gitStatusLabel,
   hasRemote = false,
+  onCheckUpdate,
 }: SettingsMenuProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -127,6 +130,28 @@ export function SettingsMenu({
                 {t("git.settings.push")}
               </button>
             </div>
+          </div>
+          <div className="settings-menu-divider" />
+          <div className="settings-menu-section">
+            <span className="settings-menu-label">{t("updater.settingsTitle")}</span>
+            <div className="settings-menu-actions">
+              <button
+                type="button"
+                className="settings-menu-btn"
+                disabled={gitBusy}
+                onClick={() => {
+                  onCheckUpdate?.();
+                  setOpen(false);
+                }}
+              >
+                {t("updater.checkNow")}
+              </button>
+            </div>
+          </div>
+          <div className="settings-menu-divider" />
+          <div className="settings-menu-section">
+            <span className="settings-menu-label">{t("theme.switch")}</span>
+            <ThemeSwitcher inline />
           </div>
           <div className="settings-menu-divider" />
           <div className="settings-menu-section">

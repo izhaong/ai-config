@@ -5,6 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <title>ai-config</title>
+    <script>
+      (function () {
+        var key = "ai-config.theme";
+        var stored = null;
+        try {
+          stored = localStorage.getItem(key);
+        } catch (e) {}
+        var mode =
+          stored === "light" || stored === "dark" || stored === "system"
+            ? stored
+            : "dark";
+        var prefersDark = window.matchMedia(
+          "(prefers-color-scheme: dark)",
+        ).matches;
+        var resolved =
+          mode === "dark"
+            ? "dark"
+            : mode === "light"
+              ? "light"
+              : prefersDark
+                ? "dark"
+                : "light";
+        var root = document.documentElement;
+        root.dataset.theme = resolved;
+        root.style.colorScheme = resolved;
+        if (resolved === "dark") root.classList.add("dark");
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

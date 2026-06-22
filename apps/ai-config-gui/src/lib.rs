@@ -919,6 +919,17 @@ async fn cmd_projects_add(
     if !path.is_dir() {
         return Err(format!("`{root_path}` 不是已存在的目录"));
     }
+    let resolved_name = {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            path.file_name()
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "无法从路径推断项目名，请填写项目名".to_string())?
+        } else {
+            trimmed.to_string()
+        }
+    };
     let (repo_root, asset_root) = paths::resolve_project_roots(&path);
     let repo_for_store = repo_root.clone();
     let asset_for_layout = asset_root.clone();
@@ -927,7 +938,7 @@ async fn cmd_projects_add(
             .map_err(|e| format!("初始化项目 .ai-config 目录失败: {e}"))?;
         store
             .projects()
-            .add(&name, &repo_for_store)
+            .add(&resolved_name, &repo_for_store)
             .map_err(|e| format!("projects.add 失败: {e}"))
     })
     .await
@@ -1319,7 +1330,10 @@ async fn cmd_git_push(state: State<'_, AppState>) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // 启动期 trace,前端 console 可看到 daemon 启动信息
             let state: State<'_, AppState> = app.state();

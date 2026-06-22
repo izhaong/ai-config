@@ -152,6 +152,19 @@ export function revealPath(path: string): Promise<void> {
   return invoke("cmd_reveal_path", { path });
 }
 
+export async function pickProjectDirectory(
+  title?: string,
+): Promise<string | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title,
+  });
+  if (selected === null) return null;
+  return typeof selected === "string" ? selected : (selected[0] ?? null);
+}
+
 export function addProject(
   name: string,
   rootPath: string,

@@ -3,6 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
+  AnimatedOverlay,
+  AnimatedScaleDialog,
+} from "@/components/ui/animated";
+import {
   addSkillsBatch,
   fetchMarketplaceSkills,
   formatMarketplaceCount,
@@ -206,13 +210,10 @@ export function MarketplaceSkillModal({
   const hasMore = nextApiOffset < total && !loading;
 
   return (
-    <div className="confirm-backdrop" onClick={busy ? undefined : onCancel}>
-      <div
+    <AnimatedOverlay open className="confirm-backdrop" onClick={busy ? undefined : onCancel}>
+      <AnimatedScaleDialog
         className="confirm-dialog marketplace-dialog"
-        role="dialog"
-        aria-modal="true"
         aria-labelledby="marketplace-skill-title"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="marketplace-header">
           <div>
@@ -392,7 +393,7 @@ export function MarketplaceSkillModal({
             {busy ? t("confirm.processing") : t("marketplace.submit")}
           </button>
         </div>
-      </div>
-    </div>
+      </AnimatedScaleDialog>
+    </AnimatedOverlay>
   );
 }

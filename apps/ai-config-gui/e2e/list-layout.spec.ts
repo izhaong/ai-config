@@ -6,8 +6,10 @@
 import { expect, test } from "@playwright/test";
 
 const PLATFORM_BTN = `<button type="button" class="plat-btn inactive"><img width="16" height="16" alt="" /></button>`;
+const UPDATE_BTN = `<button type="button" class="plat-btn row-update-btn" aria-label="update"></button>`;
 const DELETE_BTN = `<button type="button" class="plat-btn row-delete-btn" aria-label="delete"></button>`;
-const ROW_ACTIONS = `<div class="row-sync-actions"><div class="platform-actions">${PLATFORM_BTN.repeat(5)}</div>${DELETE_BTN}</div>`;
+const LEAD_SPACER = `<span class="plat-btn plat-btn-spacer" aria-hidden></span>`;
+const ROW_ACTIONS = `<div class="row-sync-actions">${LEAD_SPACER}<div class="platform-actions">${PLATFORM_BTN.repeat(5)}</div>${UPDATE_BTN}${DELETE_BTN}</div>`;
 
 test.describe("列表顶栏与行对齐", () => {
   test.beforeEach(async ({ page }) => {
@@ -20,9 +22,15 @@ test.describe("列表顶栏与行对齐", () => {
       if (document.querySelector(".asset-row")) {
         return;
       }
-      const pane = document.querySelector(".content-pane");
+      let pane = document.querySelector(".content-pane-body");
       if (!pane) {
-        return;
+        const scroll = document.querySelector(".content-pane-scroll");
+        if (!scroll) {
+          return;
+        }
+        pane = document.createElement("div");
+        pane.className = "content-pane-body";
+        scroll.appendChild(pane);
       }
       pane.querySelector(".empty")?.remove();
       const list = document.createElement("div");

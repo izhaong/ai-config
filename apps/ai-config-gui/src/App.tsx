@@ -6,6 +6,7 @@ import { useMemoizedFn } from "ahooks";
 import { useEffect, useRef, useState } from "react";
 
 import { ConfirmModal } from "./components/feedback/ConfirmModal";
+import { UpdateModal } from "./components/feedback/UpdateModal";
 import { AddSkillModal } from "./components/feedback/AddSkillModal";
 import { AddMcpModal } from "./components/feedback/AddMcpModal";
 import { MarketplaceSkillModal } from "./components/feedback/MarketplaceSkillModal";
@@ -15,6 +16,7 @@ import { AssetToolbar } from "./components/assets/AssetToolbar";
 import { Toast } from "./components/feedback/Toast";
 import { AppSidebar } from "./components/layout/AppSidebar";
 import { AppStatusbar } from "./components/layout/AppStatusbar";
+import { useAppUpdater } from "./hooks/useAppUpdater";
 import { useAssetBrowser } from "./hooks/useAssetBrowser";
 import { useAssetDrawer } from "./hooks/useAssetDrawer";
 import { useAssetOperations } from "./hooks/useAssetOperations";
@@ -24,6 +26,7 @@ import { useProjects } from "./hooks/useProjects";
 import { useToast } from "./hooks/useToast";
 import { PLATFORM_NAME } from "./platformIcons";
 import type { PlatformAssetList } from "./types";
+import { rowSyncLeadSlot } from "./utils/rowSyncLeadSlot";
 
 export function App() {
   const { toast, showToast, dismissToast } = useToast();
@@ -55,6 +58,8 @@ export function App() {
   });
 
   const gitSync = useGitSync({ showToast });
+
+  const appUpdater = useAppUpdater({ showToast });
 
   const browser = useAssetBrowser({
     showToast,
@@ -98,6 +103,8 @@ export function App() {
     drawer.setDrawerDraft(drawer.drawerDetail?.content ?? "");
   });
 
+  const leadSlot = rowSyncLeadSlot(browser.activeKind, browser.browsingSource);
+
   return (
     <div className="app">
       <div className="main">
@@ -116,60 +123,66 @@ export function App() {
         />
 
         <main className="content">
-          <AssetToolbar
-            activeKind={browser.activeKind}
-            activePlatform={browser.activePlatform}
-            activeProject={browser.activeProject}
-            browsingSource={browser.browsingSource}
-            allVisibleSelected={browser.allVisibleSelected}
-            visibleCount={browser.visible.length}
-            selectedCount={browser.selectedEntries.length}
-            selectedEntries={browser.selectedEntries}
-            browsePath={browser.browsePath}
-            loading={browser.loading}
-            busy={busy}
-            issueReasonForKind={(plat) =>
-              browser.issueMap.get(`${plat}:${browser.activeKind}`)
-            }
-            onToggleSelectAll={browser.toggleSelectAll}
-            onBatchSyncPlatform={(plat) => void ops.batchSyncToPlatform(plat)}
-            onBatchUpdate={() => ops.batchUpdateEntries()}
-            onBatchDelete={ops.requestBatchDelete}
-            onOpenFolder={() => void ops.openBrowseFolder()}
-            onAddSkill={() => ops.openAddSkill()}
-            onAddMcp={() => ops.openAddMcp()}
-            onAddMarketplace={() => ops.openAddMarketplace()}
-          />
+          <div className="content-pane">
+            <div
+              className={`content-pane-scroll${drawer.drawerName ? " is-drawer-open" : ""}`}
+            >
+              <AssetToolbar
+                activeKind={browser.activeKind}
+                activePlatform={browser.activePlatform}
+                activeProject={browser.activeProject}
+                browsingSource={browser.browsingSource}
+                allVisibleSelected={browser.allVisibleSelected}
+                visibleCount={browser.visible.length}
+                selectedCount={browser.selectedEntries.length}
+                selectedEntries={browser.selectedEntries}
+                browsePath={browser.browsePath}
+                loading={browser.loading}
+                busy={busy}
+                issueReasonForKind={(plat) =>
+                  browser.issueMap.get(`${plat}:${browser.activeKind}`)
+                }
+                onToggleSelectAll={browser.toggleSelectAll}
+                onBatchSyncPlatform={(plat) => void ops.batchSyncToPlatform(plat)}
+                onBatchUpdate={() => ops.batchUpdateEntries()}
+                onBatchDelete={ops.requestBatchDelete}
+                onOpenFolder={() => void ops.openBrowseFolder()}
+                onAddSkill={() => ops.openAddSkill()}
+                onAddMcp={() => ops.openAddMcp()}
+                onAddMarketplace={() => ops.openAddMarketplace()}
+              />
 
-          <AssetListPane
-            platformList={browser.platformList}
-            visible={browser.visible}
-            activeKind={browser.activeKind}
-            activePlatform={browser.activePlatform}
-            platformKindUnsupported={browser.platformKindUnsupported}
-            loading={browser.loading}
-            busy={busy}
-            selectedKeys={browser.selectedKeys}
-            drawerName={drawer.drawerName}
-            drawerDetail={drawer.drawerDetail}
-            drawerLoading={drawer.drawerLoading}
-            drawerEditing={drawer.drawerEditing}
-            drawerDraft={drawer.drawerDraft}
-            drawerReadOnly={drawer.drawerReadOnly}
-            canOpenEntry={browser.canOpenEntry}
-            issueReasonFor={browser.issueReasonFor}
-            onToggleSelect={browser.toggleSelect}
-            onOpenAsset={(entry) => void drawer.openAsset(entry)}
-            onPlatformToggle={ops.handlePlatformToggle}
-            onUpdateEntry={ops.handleUpdateEntry}
-            onDeleteEntry={ops.requestDeleteEntry}
-            onCloseDrawer={drawer.closeDrawer}
-            onDraftChange={drawer.setDrawerDraft}
-            onEdit={() => drawer.setDrawerEditing(true)}
-            onCancelEdit={handleDrawerCancelEdit}
-            onSave={() => void drawer.saveAsset()}
-            onDelete={drawer.deleteAsset}
-          />
+              <AssetListPane
+                platformList={browser.platformList}
+                visible={browser.visible}
+                activeKind={browser.activeKind}
+                activePlatform={browser.activePlatform}
+                leadSlot={leadSlot}
+                platformKindUnsupported={browser.platformKindUnsupported}
+                loading={browser.loading}
+                busy={busy}
+                selectedKeys={browser.selectedKeys}
+                drawerName={drawer.drawerName}
+                drawerDetail={drawer.drawerDetail}
+                drawerLoading={drawer.drawerLoading}
+                drawerEditing={drawer.drawerEditing}
+                drawerDraft={drawer.drawerDraft}
+                drawerReadOnly={drawer.drawerReadOnly}
+                issueReasonFor={browser.issueReasonFor}
+                onToggleSelect={browser.toggleSelect}
+                onOpenAsset={(entry) => void drawer.openAsset(entry)}
+                onPlatformToggle={ops.handlePlatformToggle}
+                onUpdateEntry={ops.handleUpdateEntry}
+                onDeleteEntry={ops.requestDeleteEntry}
+                onCloseDrawer={drawer.closeDrawer}
+                onDraftChange={drawer.setDrawerDraft}
+                onEdit={() => drawer.setDrawerEditing(true)}
+                onCancelEdit={handleDrawerCancelEdit}
+                onSave={() => void drawer.saveAsset()}
+                onDelete={drawer.deleteAsset}
+              />
+            </div>
+          </div>
         </main>
       </div>
 
@@ -193,23 +206,34 @@ export function App() {
           onGitPush: () => void gitSync.push(),
           gitBusy: gitSync.busy,
           hasRemote: gitSync.hasRemote,
+          onCheckUpdate: () => void appUpdater.checkForUpdate(true),
         }}
       />
 
       <Toast toast={toast} onDismiss={dismissToast} />
 
-      {confirm ? (
-        <ConfirmModal
-          title={confirm.title}
-          message={confirm.message}
-          confirmLabel={confirm.confirmLabel}
+      <UpdateModal
+          open={appUpdater.modalOpen && !!appUpdater.update}
+          currentVersion={appUpdater.update?.currentVersion ?? ""}
+          newVersion={appUpdater.update?.version ?? ""}
+          notes={appUpdater.update?.body ?? undefined}
+          installing={appUpdater.installing}
+          progress={appUpdater.progress}
+          onInstall={() => void appUpdater.installUpdate()}
+          onLater={appUpdater.dismissModal}
+        />
+
+      <ConfirmModal
+          open={!!confirm}
+          title={confirm?.title ?? ""}
+          message={confirm?.message ?? ""}
+          confirmLabel={confirm?.confirmLabel}
           busy={busy}
           onCancel={() => {
             if (!busy) dismissConfirm();
           }}
-          onConfirm={() => void confirm.onConfirm()}
+          onConfirm={() => void confirm?.onConfirm()}
         />
-      ) : null}
 
       {projects.registerProjectOpen ? (
         <RegisterProjectModal

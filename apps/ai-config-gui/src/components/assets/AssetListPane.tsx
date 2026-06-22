@@ -5,6 +5,7 @@ import { AssetRow } from "./AssetRow";
 import { assetKindLabel } from "../../i18n/labels";
 import { PLATFORM_NAME } from "../../platformIcons";
 import { entryKey } from "../../utils/entryKey";
+import type { RowSyncLeadSlot } from "../../utils/rowSyncLeadSlot";
 import type { AssetDetail, AssetKind, DeployPlatform, Platform, PlatformAssetEntry } from "../../types";
 
 interface AssetListPaneProps {
@@ -12,6 +13,7 @@ interface AssetListPaneProps {
   visible: PlatformAssetEntry[];
   activeKind: AssetKind;
   activePlatform: Platform;
+  leadSlot: RowSyncLeadSlot;
   platformKindUnsupported: boolean;
   loading: boolean;
   busy: boolean;
@@ -22,8 +24,6 @@ interface AssetListPaneProps {
   drawerEditing: boolean;
   drawerDraft: string;
   drawerReadOnly: boolean;
-  canOpenEntry: (entry: PlatformAssetEntry) => boolean;
-  issueReasonFor: (entry: PlatformAssetEntry, plat: DeployPlatform) => string | undefined;
   onToggleSelect: (key: string, checked: boolean) => void;
   onOpenAsset: (entry: PlatformAssetEntry) => void;
   onPlatformToggle: (entry: PlatformAssetEntry, plat: Platform) => void;
@@ -35,6 +35,7 @@ interface AssetListPaneProps {
   onCancelEdit: () => void;
   onSave: () => void;
   onDelete: () => void;
+  issueReasonFor: (entry: PlatformAssetEntry, plat: DeployPlatform) => string | undefined;
 }
 
 export function AssetListPane({
@@ -42,6 +43,7 @@ export function AssetListPane({
   visible,
   activeKind,
   activePlatform,
+  leadSlot,
   platformKindUnsupported,
   loading,
   busy,
@@ -52,8 +54,6 @@ export function AssetListPane({
   drawerEditing,
   drawerDraft,
   drawerReadOnly,
-  canOpenEntry,
-  issueReasonFor,
   onToggleSelect,
   onOpenAsset,
   onPlatformToggle,
@@ -65,13 +65,16 @@ export function AssetListPane({
   onCancelEdit,
   onSave,
   onDelete,
+  issueReasonFor,
 }: AssetListPaneProps) {
   const { t } = useTranslation();
   const kindLabel = assetKindLabel(t, activeKind);
+  const rowLoading = loading || busy;
+  const showInitialLoading = platformList === null && loading;
 
   return (
-    <div className="content-pane">
-      {platformList === null ? (
+    <div className="content-pane-body">
+      {showInitialLoading ? (
         <div className="empty">{t("empty.loading")}</div>
       ) : visible.length === 0 ? (
         <div className="empty">
@@ -88,44 +91,44 @@ export function AssetListPane({
         <div className="asset-list">
           {visible.map((entry) => {
             const key = entryKey(entry);
-            const canOpen = canOpenEntry(entry);
             return (
               <AssetRow
                 key={key}
+                rowKey={key}
                 entry={entry}
-                loading={loading || busy}
+                loading={rowLoading}
                 activePlatform={activePlatform}
+                leadSlot={leadSlot}
                 checked={selectedKeys.has(key)}
-                onCheckedChange={(checked) => onToggleSelect(key, checked)}
+                onCheckedChange={onToggleSelect}
                 selected={drawerName === entry.name}
-                onOpen={canOpen ? () => onOpenAsset(entry) : undefined}
-                issueReasonFor={(plat) => issueReasonFor(entry, plat)}
-                onPlatformToggle={(plat) => onPlatformToggle(entry, plat)}
-                onUpdate={() => onUpdateEntry(entry)}
-                onDelete={() => onDeleteEntry(entry)}
+                onOpenAsset={onOpenAsset}
+                issueReasonFor={issueReasonFor}
+                onPlatformToggle={onPlatformToggle}
+                onUpdateEntry={onUpdateEntry}
+                onDeleteEntry={onDeleteEntry}
               />
             );
           })}
         </div>
       )}
 
-      {drawerName ? (
-        <AssetDrawer
-          kind={activeKind}
-          name={drawerName}
-          detail={drawerDetail}
-          loading={drawerLoading || busy}
-          editing={drawerEditing}
-          draft={drawerDraft}
-          readOnly={drawerReadOnly}
-          onClose={onCloseDrawer}
-          onDraftChange={onDraftChange}
-          onEdit={onEdit}
-          onCancelEdit={onCancelEdit}
-          onSave={onSave}
-          onDelete={onDelete}
-        />
-      ) : null}
+      <AssetDrawer
+        open={!!drawerName}
+        kind={activeKind}
+        name={drawerName ?? ""}
+        detail={drawerDetail}
+        loading={drawerLoading || busy}
+        editing={drawerEditing}
+        draft={drawerDraft}
+        readOnly={drawerReadOnly}
+        onClose={onCloseDrawer}
+        onDraftChange={onDraftChange}
+        onEdit={onEdit}
+        onCancelEdit={onCancelEdit}
+        onSave={onSave}
+        onDelete={onDelete}
+      />
     </div>
   );
 }

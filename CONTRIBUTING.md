@@ -64,6 +64,17 @@ Release checklist:
 
 5. GitHub Actions **Release** workflow validates the tag, builds CLI + Tauri GUI artifacts, and publishes [GitHub Releases](https://github.com/izhaong/ai-config/releases) with CHANGELOG notes.
 
+### GUI auto-update signing
+
+Desktop builds use [Tauri updater](https://v2.tauri.app/plugin/updater/). The **public key** is in `apps/ai-config-gui/tauri.conf.json`; maintainers must add repository secrets before release:
+
+| Secret                               | Value                                                                                                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Contents of `~/.tauri/ai-config.key` (generate: `cd apps/ai-config-gui && CI=true npm run tauri signer generate -- -w ~/.tauri/ai-config.key -p ""`) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Empty string if the key has no password                                                                                                              |
+
+`tauri-action` signs update bundles and uploads `latest.json` to the GitHub Release. Installed apps check `https://github.com/izhaong/ai-config/releases/latest/download/latest.json` on startup.
+
 To rebuild an existing tag manually: Actions → **Release** → **Run workflow** → enter `vX.Y.Z`.
 
 ## Dual remotes (optional)

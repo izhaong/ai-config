@@ -9,8 +9,31 @@
     "zh": "中文",
     "en": "English"
   },
+  "theme": {
+    "switch": "外观主题",
+    "mode": {
+      "dark": "深色",
+      "light": "浅色",
+      "system": "跟随系统"
+    }
+  },
   "settings": {
     "title": "设置"
+  },
+  "updater": {
+    "settingsTitle": "应用更新",
+    "checkNow": "检查更新",
+    "title": "发现新版本",
+    "message": "当前版本 {{current}}，最新版本 {{latest}}。是否立即下载并安装？",
+    "later": "稍后",
+    "installNow": "立即更新",
+    "installing": "正在安装…",
+    "downloading": "下载中 {{percent}}%",
+    "toast": {
+      "alreadyLatest": "当前已是最新版本",
+      "checkFailed": "检查更新失败: {{error}}",
+      "installFailed": "安装更新失败: {{error}}"
+    }
   },
   "git": {
     "settings": {
@@ -134,7 +157,8 @@
     "openFolderTitle": "在系统文件管理器中打开当前浏览路径",
     "addSkillTitle": "从远程仓库添加 Skill（npx skills add）",
     "addMcpTitle": "添加 MCP server（JSON）",
-    "addMarketplaceTitle": "从 Claude Marketplace 浏览并导入 Skill"
+    "addMarketplaceTitle": "从 Claude Marketplace 浏览并导入 Skill",
+    "addMenuTitle": "添加 Skill"
   },
   "empty": {
     "loading": "加载中…",
@@ -175,9 +199,15 @@
   },
   "registerProject": {
     "title": "注册项目",
-    "nameLabel": "项目名（在 store 中唯一）",
-    "rootLabel": "根目录绝对路径",
-    "rootHint": "填写仓库根目录；将自动创建 <仓库>/.ai-config/（结构与 ~/.ai-config 相同：skills、rules、agents、mcp.json）",
+    "nameLabel": "项目名（可选）",
+    "namePlaceholder": "留空则使用目录名",
+    "nameHint": "在工具内显示的名称，须全局唯一",
+    "nameDerivedHint": "未填写时将使用：{{name}}",
+    "rootLabel": "项目根目录",
+    "rootPlaceholder": "/path/to/repo",
+    "rootHint": "仓库根目录；将自动创建 <仓库>/.ai-config/（结构与 ~/.ai-config 相同：skills、rules、agents、mcp.json）",
+    "pickFolder": "选择文件夹",
+    "pickFolderTitle": "在文件管理器中选择项目根目录",
     "submit": "注册"
   },
   "addSkill": {
@@ -269,6 +299,7 @@
     "openFolderFailed": "打开文件夹失败: {{error}}",
     "projectRegistered": "项目 `{{name}}` 已注册",
     "registerProjectFailed": "注册项目失败: {{error}}",
+    "registerProjectInvalid": "请填写有效的项目路径",
     "projectRemoved": "项目 `{{name}}` 已移除",
     "removeProjectFailed": "移除项目失败: {{error}}",
     "platformListFailed": "平台列表加载失败: {{error}}",

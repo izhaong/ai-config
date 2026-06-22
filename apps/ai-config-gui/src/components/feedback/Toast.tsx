@@ -1,3 +1,6 @@
+import { AnimatePresence, motion } from "motion/react";
+
+import { useMotionPresets } from "@/hooks/useMotionPresets";
 import type { ToastState } from "../../hooks/useToast";
 
 interface ToastProps {
@@ -6,11 +9,23 @@ interface ToastProps {
 }
 
 export function Toast({ toast, onDismiss }: ToastProps) {
-  if (!toast) return null;
+  const { toast: toastMotion } = useMotionPresets();
 
   return (
-    <div className={`toast ${toast.kind}`} onClick={onDismiss}>
-      {toast.text}
-    </div>
+    <AnimatePresence mode="wait">
+      {toast ? (
+        <motion.div
+          key={toast.text}
+          className={`toast ${toast.kind}`}
+          onClick={onDismiss}
+          initial={toastMotion.initial}
+          animate={toastMotion.animate}
+          exit={toastMotion.exit}
+          transition={toastMotion.transition}
+        >
+          {toast.text}
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   );
 }

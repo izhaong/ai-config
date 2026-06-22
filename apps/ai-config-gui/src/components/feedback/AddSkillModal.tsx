@@ -1,6 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
+import {
+  AnimatedOverlay,
+  AnimatedScaleDialog,
+} from "@/components/ui/animated";
+
 interface AddSkillModalProps {
   busy?: boolean;
   platformLabel: string;
@@ -28,13 +33,10 @@ export function AddSkillModal({
   };
 
   return (
-    <div className="confirm-backdrop" onClick={busy ? undefined : onCancel}>
-      <div
+    <AnimatedOverlay open className="confirm-backdrop" onClick={busy ? undefined : onCancel}>
+      <AnimatedScaleDialog
         className="confirm-dialog"
-        role="dialog"
-        aria-modal="true"
         aria-labelledby="add-skill-title"
-        onClick={(e) => e.stopPropagation()}
       >
         <h4 id="add-skill-title">{t("addSkill.title")}</h4>
         <p className="form-hint add-skill-target">
@@ -75,7 +77,7 @@ export function AddSkillModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </AnimatedScaleDialog>
+    </AnimatedOverlay>
   );
 }

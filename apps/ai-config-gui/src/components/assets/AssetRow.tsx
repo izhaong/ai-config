@@ -1,89 +1,137 @@
+import { memo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 import type { DeployPlatform, Platform, PlatformAssetEntry } from "../../types";
+import type { RowSyncLeadSlot } from "../../utils/rowSyncLeadSlot";
+import { canOpenEntry } from "../../utils/canOpenEntry";
 import { canUpdateEntry } from "../../utils/entryUpdate";
-import { RowSyncActions } from "./RowSyncActions";
 import { sanitizeListDescription } from "../../utils/sanitizeListDescription";
+import {
+  ListColActions,
+  ListColCheck,
+  ListColMain,
+  ListRowShell,
+} from "./ListRowShell";
+import { RowSyncActions } from "./RowSyncActions";
 
 interface AssetRowProps {
   entry: PlatformAssetEntry;
   loading: boolean;
   activePlatform: Platform;
-  issueReasonFor?: (plat: DeployPlatform) => string | undefined;
+  leadSlot?: RowSyncLeadSlot;
+  issueReasonFor?: (entry: PlatformAssetEntry, plat: DeployPlatform) => string | undefined;
   selected?: boolean;
   checked?: boolean;
-  onCheckedChange?: (checked: boolean) => void;
-  onOpen?: () => void;
-  onPlatformToggle: (plat: Platform) => void;
-  onUpdate: () => void;
-  onDelete: () => void;
+  onCheckedChange?: (key: string, checked: boolean) => void;
+  onOpenAsset?: (entry: PlatformAssetEntry) => void;
+  onPlatformToggle: (entry: PlatformAssetEntry, plat: Platform) => void;
+  onUpdateEntry: (entry: PlatformAssetEntry) => void;
+  onDeleteEntry: (entry: PlatformAssetEntry) => void;
+  rowKey: string;
 }
 
-export function AssetRow({
+function AssetRowInner({
   entry,
   loading,
   activePlatform,
+  leadSlot = "none",
   issueReasonFor,
   selected,
   checked = false,
   onCheckedChange,
-  onOpen,
+  onOpenAsset,
   onPlatformToggle,
-  onUpdate,
-  onDelete,
+  onUpdateEntry,
+  onDeleteEntry,
+  rowKey,
 }: AssetRowProps) {
   const { t } = useTranslation();
+  const canOpen = !!onOpenAsset && canOpenEntry(entry, activePlatform);
+
+  const handleOpen = useCallback(() => {
+    onOpenAsset?.(entry);
+  }, [entry, onOpenAsset]);
+
+  const handlePlatformToggle = useCallback(
+    (plat: Platform) => onPlatformToggle(entry, plat),
+    [entry, onPlatformToggle],
+  );
+
+  const handleUpdate = useCallback(
+    () => onUpdateEntry(entry),
+    [entry, onUpdateEntry],
+  );
+
+  const handleDelete = useCallback(
+    () => onDeleteEntry(entry),
+    [entry, onDeleteEntry],
+  );
+
+  const issueForRow = useCallback(
+    (plat: DeployPlatform) => issueReasonFor?.(entry, plat),
+    [entry, issueReasonFor],
+  );
 
   return (
-    <div className={`asset-row list-row-shell${selected ? " selected" : ""}${checked ? " checked" : ""}`}>
+    <ListRowShell
+      className={cn(
+        "asset-row",
+        selected && "selected",
+        checked && "checked",
+      )}
+    >
       {onCheckedChange ? (
-        <label className="list-col-check" onClick={(e) => e.stopPropagation()}>
-          <input
-            type="checkbox"
+        <ListColCheck onClick={(e) => e.stopPropagation()}>
+          <Checkbox
             checked={checked}
-            onChange={(e) => onCheckedChange(e.target.checked)}
+            onCheckedChange={(value) => onCheckedChange(rowKey, value === true)}
           />
-        </label>
+        </ListColCheck>
       ) : null}
-      <div
-        className={`list-col-main asset-row-main${onOpen ? " clickable" : ""}`}
-        onClick={onOpen}
+      <ListColMain
+        className={cn("asset-row-main", canOpen && "clickable")}
+        onClick={canOpen ? handleOpen : undefined}
         onKeyDown={
-          onOpen
+          canOpen
             ? (e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  onOpen();
+                  handleOpen();
                 }
               }
             : undefined
         }
-        role={onOpen ? "button" : undefined}
-        tabIndex={onOpen ? 0 : undefined}
+        role={canOpen ? "button" : undefined}
+        tabIndex={canOpen ? 0 : undefined}
       >
         <div className="name">{entry.name}</div>
         <div className="desc">
           {sanitizeListDescription(entry.description) ||
             t("drawer.noDescription")}
         </div>
-      </div>
+      </ListColMain>
 
-      <div className="list-col-actions">
+      <ListColActions>
         <RowSyncActions
+          leadSlot={leadSlot}
           loading={loading}
           activePlatform={activePlatform}
-          issueReasonFor={issueReasonFor}
+          issueReasonFor={issueForRow}
           linkStateFor={(plat) => entry.states[plat]}
-          onPlatformClick={onPlatformToggle}
-          onUpdate={onUpdate}
+          onPlatformClick={handlePlatformToggle}
+          onUpdate={handleUpdate}
           updateDisabled={
-            !canUpdateEntry(entry, (plat) => !!issueReasonFor?.(plat))
+            !canUpdateEntry(entry, (plat) => !!issueReasonFor?.(entry, plat))
           }
           updateTitle={t("toolbar.rowUpdateTitle", { name: entry.name })}
-          onDelete={onDelete}
+          onDelete={handleDelete}
           deleteTitle={t("toolbar.rowDeleteTitle", { name: entry.name })}
         />
-      </div>
-    </div>
+      </ListColActions>
+    </ListRowShell>
   );
 }
+
+export const AssetRow = memo(AssetRowInner);
