@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
+  # 国内 rustup 镜像，避免 static.rust-lang.org 大文件下载 TLS 中断
+  RUSTUP_DIST_SERVER: https://mirrors.ustc.edu.cn/rust-static
+  RUSTUP_UPDATE_ROOT: https://mirrors.ustc.edu.cn/rust-static/rustup
 
 jobs:
   test:
