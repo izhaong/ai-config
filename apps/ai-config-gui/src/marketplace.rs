@@ -50,7 +50,6 @@ pub fn list_skills(
         _ => "installs",
     };
     let limit = limit.clamp(1, 100);
-    let offset = offset;
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(45))

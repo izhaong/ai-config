@@ -1,0 +1,83 @@
+---
+description: Git Flow + Spec Kit — Agent 自动开工；用户无需确认分支或记命令
+alwaysApply: true
+---
+
+# Git Flow + Spec Kit（Agent 自治）
+
+与 [spec-kit-gate.mdc](./spec-kit-gate.mdc)、[00-ai-config-core.mdc](./00-ai-config-core.mdc) 同时生效；冲突时 **本规则优先**（分支与规格流程）。
+
+## 用户侧零负担
+
+- 用户用自然语言下发任务即可；**不要求**用户切分支、记 `feat/*` 命名或跑 git 命令。
+- Agent **禁止**在 `main`/`develop` 上收到非平凡任务后停下来问「要不要建分支」——应**自动开工**并在回复中一句话说明已切到哪条分支。
+- 仅当任务语义极度模糊、无法推断 spec 范围时，才向用户提一个具体问题。
+
+## Agent 自动开工（任何业务改动前）
+
+编辑 `crates/`、`apps/`、业务相关 `docs/product/` 或准备功能向 commit **之前**，Agent **必须**执行 `git branch --show-current` 并：
+
+### 在 `main` 或 `develop` 上
+
+| 任务类型                   | Agent 行为                                                              |
+| -------------------------- | ----------------------------------------------------------------------- |
+| 非平凡功能/修复            | **自动**创建并切换到 feature 分支，然后走 spec 链路（见 spec-kit-gate） |
+| 单行热修、chore、版本 bump | 可在当前分支做，范围限于用户描述                                        |
+
+**首选一键开工**（非平凡、当前在 develop/main）：
+
+```bash
+git checkout develop && git pull --ff-only origin develop 2>/dev/null || true
+.specify/scripts/bash/create-new-feature.sh --json --short-name '<slug>' '<任务摘要>'
+```
+
+脚本会创建 `NNN-<slug>` 分支与 `specs/NNN-<slug>/`（分支名 = specs 目录名，**无需** `SPECIFY_FEATURE`）。
+
+若仓库约定必须用 `feat/*`（例如已有远程策略），则：
+
+```bash
+git checkout -b feat/<issue>-<short-name>
+# 仍须创建 specs/NNN-<short-name>/（编号取 specs 最大 +1）
+export SPECIFY_FEATURE=NNN-<short-name>
+```
+
+**Agent 自行选择**上述两种方式之一；**不向用户解释**选型，只在结果里写最终分支名。
+
+### 已在 feature 分支上
+
+继续任务；按 spec-kit-gate 解析 `FEATURE_DIR` 并实现。
+
+## Git Flow 参考
+
+| 分支                              | 用途     |
+| --------------------------------- | -------- |
+| `develop`                         | 集成线   |
+| `main`                            | 发布线   |
+| `NNN-<name>` / `feat/*` / `fix/*` | 功能开发 |
+
+- 合并经 PR → `develop`；Agent 未要求时不 `commit` / `push`
+- Commit：中文 Conventional Commits（`feat(core): …`）
+
+## Spec Kit（贴合 Cursor Plan/Todo）
+
+非平凡改动时 Agent **自行**完成 `spec.md` → `plan.md`（含 `## Todos`）→ 按 Todos 实现 → verify：
+
+1. `plan.md` 的 Todos = Cursor Plan 的执行清单（**不单独建 `tasks.md`**）
+2. 会话 Todo 与 `plan.md ## Todos` 保持同步
+3. `export SPECIFY_FEATURE` 仅 Agent 自用（见 spec-kit-gate）
+
+权威：`.specify/memory/constitution.md` · 模板：`.specify/templates/`
+
+## Agent 禁止
+
+- 在 `main`/`develop` 上实现非平凡功能或批量改业务代码
+- 非平凡改动跳过 `specs/` 直接写码
+- 未跑验证将任务标为 completed
+- 把 spec-kit / git 流程推给用户执行
+- 用户未要求时主动 `commit` / `push`
+
+## 例外
+
+- 单文件 typo、一行 bugfix、纯 fmt/lint
+- 用户明确 **spike** 且接受不入 `specs/`
+- 用户明确授权在 `main`/`develop` 上仅文档/chore/紧急热修

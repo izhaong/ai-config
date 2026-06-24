@@ -34,6 +34,7 @@ interface AssetToolbarProps {
   onToggleSelectAll: () => void;
   onBatchSyncPlatform: (plat: Platform) => void;
   onBatchUpdate: () => void;
+  onBatchCopyToProject?: () => void;
   onBatchDelete: () => void;
   onOpenFolder: () => void;
   onAddSkill?: () => void;
@@ -57,6 +58,7 @@ export function AssetToolbar({
   onToggleSelectAll,
   onBatchSyncPlatform,
   onBatchUpdate,
+  onBatchCopyToProject,
   onBatchDelete,
   onOpenFolder,
   onAddSkill,
@@ -86,6 +88,12 @@ export function AssetToolbar({
     !selectedEntries.some((entry) =>
       canUpdateEntry(entry, (plat) => !!issueReasonForKind(plat)),
     );
+
+  const batchCopyToProjectDisabled =
+    loading ||
+    busy ||
+    selectedCount === 0 ||
+    visibleCount === 0;
 
   const selectAllChecked = allVisibleSelected && visibleCount > 0;
 
@@ -174,6 +182,9 @@ export function AssetToolbar({
             onUpdate={onBatchUpdate}
             updateDisabled={batchUpdateDisabled}
             updateTitle={t("toolbar.batchUpdateTitle")}
+            onCopyToProject={onBatchCopyToProject}
+            copyToProjectDisabled={batchCopyToProjectDisabled}
+            copyToProjectTitle={t("toolbar.copyToProjectTitle")}
             onDelete={onBatchDelete}
             deleteDisabled={batchDeleteDisabled}
             deleteTitle={t("toolbar.batchDeleteTitle")}

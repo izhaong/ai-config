@@ -5,7 +5,9 @@
 import { useMemoizedFn } from "ahooks";
 import { useEffect, useRef, useState } from "react";
 
+import { CopyToProjectModal } from "./components/feedback/CopyToProjectModal";
 import { ConfirmModal } from "./components/feedback/ConfirmModal";
+import { SyncConflictModal } from "./components/feedback/SyncConflictModal";
 import { UpdateModal } from "./components/feedback/UpdateModal";
 import { AddSkillModal } from "./components/feedback/AddSkillModal";
 import { AddMcpModal } from "./components/feedback/AddMcpModal";
@@ -92,6 +94,7 @@ export function App() {
   const ops = useAssetOperations({
     browser,
     drawer,
+    projects: projects.projects,
     showToast,
     requestConfirm,
     dismissConfirm,
@@ -145,6 +148,7 @@ export function App() {
                 onToggleSelectAll={browser.toggleSelectAll}
                 onBatchSyncPlatform={(plat) => void ops.batchSyncToPlatform(plat)}
                 onBatchUpdate={() => ops.batchUpdateEntries()}
+                onBatchCopyToProject={() => ops.openCopyToProject()}
                 onBatchDelete={ops.requestBatchDelete}
                 onOpenFolder={() => void ops.openBrowseFolder()}
                 onAddSkill={() => ops.openAddSkill()}
@@ -235,6 +239,20 @@ export function App() {
           onConfirm={() => void confirm?.onConfirm()}
         />
 
+      <SyncConflictModal
+        key={
+          ops.syncConflict
+            ? `${ops.syncConflict.entry.name}:${ops.syncConflict.targetPlatform}`
+            : "closed"
+        }
+        open={!!ops.syncConflict}
+        report={ops.syncConflict?.report ?? null}
+        defaultSource={ops.syncConflict?.defaultSource ?? "aiconfig"}
+        busy={busy}
+        onCancel={ops.dismissSyncConflict}
+        onConfirm={(source) => void ops.confirmSyncConflict(source)}
+      />
+
       {projects.registerProjectOpen ? (
         <RegisterProjectModal
           busy={projects.registerProjectBusy}
@@ -246,6 +264,19 @@ export function App() {
           onSubmit={(name, rootPath) =>
             void projects.submitRegisterProject(name, rootPath)
           }
+        />
+      ) : null}
+
+      {ops.copyToProjectOpen ? (
+        <CopyToProjectModal
+          key={`${browser.activeProject}:${browser.selectedEntries.map((e) => e.name).join(",")}`}
+          busy={busy}
+          activeProject={browser.activeProject}
+          projects={projects.projects}
+          selectedCount={browser.selectedEntries.length}
+          selectedNames={browser.selectedEntries.map((e) => e.name)}
+          onCancel={ops.closeCopyToProject}
+          onSubmit={(toProject) => void ops.submitCopyToProject(toProject)}
         />
       ) : null}
 

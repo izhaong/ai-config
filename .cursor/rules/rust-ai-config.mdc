@@ -51,7 +51,11 @@ alwaysApply: false
 
 ## 测试
 
+- **新功能 / 新 public API**：与实现同步补测试（同一改动内）；未补不得标完成。
 - 改 core 逻辑须补或更新测试；路径类用 tempdir。
+- 覆盖：**主路径 + 至少一条边界**（缺源、跨平台、收回、项目作用域等按领域选）。
+- GUI 只经 core 的能力：优先 `ai-config-core` 单测，避免在 Tauri 层重复测业务。
+- CLI 集成：行为变更时更新 `crates/ai-config-cli/tests/` 或 lifecycle 单测。
 - 提交前：`cargo test -p ai-config-core -p ai-config-cli`（最小集）；跨 crate 改动跑 `cargo test --workspace`。
 
 ## 禁止

@@ -9,8 +9,8 @@
 #
 # OPTIONS:
 #   --json              Output in JSON format
-#   --require-tasks     Require tasks.md to exist (for implementation phase)
-#   --include-tasks     Include tasks.md in AVAILABLE_DOCS list
+#   --require-tasks     Require plan.md ## Todos (implementation checklist)
+#   --include-tasks     [deprecated] Alias; includes plan.md in doc list when Todos exist
 #   --paths-only        Only output path variables (no validation)
 #   --help, -h          Show help message
 #
@@ -49,8 +49,8 @@ Consolidated prerequisite checking for Spec-Driven Development workflow.
 
 OPTIONS:
   --json              Output in JSON format
-  --require-tasks     Require tasks.md to exist (for implementation phase)
-  --include-tasks     Include tasks.md in AVAILABLE_DOCS list
+  --require-tasks     Require plan.md ## Todos section (for implementation phase)
+  --include-tasks     [deprecated] No-op for tasks.md; kept for script compatibility
   --paths-only        Only output path variables (no prerequisite validation)
   --help, -h          Show this help message
 
@@ -58,8 +58,8 @@ EXAMPLES:
   # Check task prerequisites (plan.md required)
   ./check-prerequisites.sh --json
   
-  # Check implementation prerequisites (plan.md + tasks.md required)
-  ./check-prerequisites.sh --json --require-tasks --include-tasks
+  # Check implementation prerequisites (plan.md with ## Todos)
+  ./check-prerequisites.sh --json --require-tasks
   
   # Get feature paths only (no validation)
   ./check-prerequisites.sh --paths-only
@@ -125,10 +125,10 @@ if [[ ! -f "$IMPL_PLAN" ]]; then
     exit 1
 fi
 
-# Check for tasks.md if required
-if $REQUIRE_TASKS && [[ ! -f "$TASKS" ]]; then
-    echo "ERROR: tasks.md not found in $FEATURE_DIR" >&2
-    echo "Run /speckit.tasks first to create the task list." >&2
+# Check for plan.md ## Todos when required
+if $REQUIRE_TASKS && ! plan_has_todos "$IMPL_PLAN"; then
+    echo "ERROR: plan.md missing ## Todos section in $FEATURE_DIR" >&2
+    echo "Add executable checklist under '## Todos' in plan.md (see .specify/templates/plan-template.md)." >&2
     exit 1
 fi
 
@@ -145,11 +145,7 @@ if [[ -d "$CONTRACTS_DIR" ]] && [[ -n "$(ls -A "$CONTRACTS_DIR" 2>/dev/null)" ]]
 fi
 
 [[ -f "$QUICKSTART" ]] && docs+=("quickstart.md")
-
-# Include tasks.md if requested and it exists
-if $INCLUDE_TASKS && [[ -f "$TASKS" ]]; then
-    docs+=("tasks.md")
-fi
+[[ -f "$IMPL_PLAN" ]] && plan_has_todos "$IMPL_PLAN" && docs+=("plan.md#todos")
 
 # Output results
 if $JSON_MODE; then
@@ -183,8 +179,9 @@ else
     check_file "$DATA_MODEL" "data-model.md"
     check_dir "$CONTRACTS_DIR" "contracts/"
     check_file "$QUICKSTART" "quickstart.md"
-    
-    if $INCLUDE_TASKS; then
-        check_file "$TASKS" "tasks.md"
+    if plan_has_todos "$IMPL_PLAN"; then
+        echo "  ✓ plan.md (## Todos)"
+    else
+        echo "  ✗ plan.md (## Todos)"
     fi
 fi

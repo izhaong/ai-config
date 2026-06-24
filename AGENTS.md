@@ -41,15 +41,14 @@
 
 Commands 索引：`.cursor/COMMANDS.md`（`/speckit.*`、`/ai-config-verify`、`/ai-config-sync`）
 
-## Spec Kit
+## Spec Kit（用户零负担）
 
-非平凡功能：**spec → plan → tasks → implement**（宪法：`.specify/memory/constitution.md`）。
+用户用自然语言下发任务即可。Agent **自动**完成：分支 → `specs/<feature>/`（`spec.md` → `plan.md` 含 Todos）→ 按 Todos 实现 → 验证。
 
-若分支为 `feat/*`（Git Flow）而非 `001-name`，运行 spec 脚本前：
-
-```bash
-export SPECIFY_FEATURE=001-your-feature   # 对应 specs/ 子目录名
-```
+- 宪法：`.specify/memory/constitution.md`
+- 门禁与自动解析：`.cursor/rules/spec-kit-gate.mdc`、`gitflow-spec-kit.mdc`
+- 交付编排：skill `ai-config-delivery`（内化 `/speckit.*`，**不要求用户输入这些命令**）
+- `SPECIFY_FEATURE`、切分支、写 spec：均由 Agent 在会话内自行处理
 
 ## 快速构建
 

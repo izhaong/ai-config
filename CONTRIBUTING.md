@@ -15,6 +15,16 @@ Thank you for improving ai-config. This project uses **Git Flow** with **`develo
 
 4. Open a Pull Request **into `develop`**.
 
+## Spec Kit（非平凡功能）
+
+本仓已接入 [Spec Kit](https://github.com/github/spec-kit)，**贴合 Cursor Plan/Todo**：
+
+- `specs/<编号>-<名>/spec.md` — 需求与验收
+- `specs/<编号>-<名>/plan.md` — 技术方案 + `## Todos`（执行清单）
+- 宪法：`.specify/memory/constitution.md`；门禁：`.cursor/rules/spec-kit-gate.mdc`
+
+贡献者只需用自然语言描述需求；Agent/维护者负责落盘 spec/plan。PR 请链到对应 `specs/` 目录。
+
 ## Commit messages
 
 Use [Conventional Commits](https://www.conventionalcommits.org/) with a **Chinese summary**:
