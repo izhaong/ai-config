@@ -73,6 +73,31 @@ pub fn list_server_names(asset_root: &Utf8Path) -> Result<Vec<String>, CoreError
     Ok(names)
 }
 
+/// 从平台下发文件（`mcp.json` 或 Hermes `config.yaml`）读取单条 server 配置。
+pub fn get_server_config_from_deploy_file(
+    deploy_path: &Utf8Path,
+    server_name: &str,
+) -> Result<Value, CoreError> {
+    if deploy_path.file_name() == Some("config.yaml") {
+        return hermes_config::get_mcp_server_config(deploy_path, server_name);
+    }
+    let Some(doc) = read_mcp_json(deploy_path)? else {
+        return Err(CoreError::AssetNotFound {
+            kind: crate::model::AssetKind::Mcp,
+            name: server_name.into(),
+            hint: format!("平台 MCP 文件不存在: {deploy_path}"),
+        });
+    };
+    doc.get("mcpServers")
+        .and_then(|v| v.get(server_name))
+        .cloned()
+        .ok_or_else(|| CoreError::AssetNotFound {
+            kind: crate::model::AssetKind::Mcp,
+            name: server_name.into(),
+            hint: format!("mcp.json 中无 server `{server_name}`"),
+        })
+}
+
 /// 将 `mcp/servers/*.json` 与 `mcp/cursor.mcp.template.json` 合并进 `mcp.json`,并删除旧 `mcp/` 目录。
 pub fn migrate_legacy_mcp_layout(asset_root: &Utf8Path) -> Result<(), CoreError> {
     let path = ensure_mcp_json(asset_root)?;
@@ -597,5 +622,35 @@ mod tests {
                 .unwrap_or(false),
             "materialize 后平台文件应为独立副本"
         );
+    }
+
+    #[test]
+    fn get_server_config_from_deploy_file_reads_mcp_json() {
+        let tmp = TempDir::new().unwrap();
+        let path = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+            .unwrap()
+            .join("mcp.json");
+        crate::paths::ensure_parent_dir(&path).unwrap();
+        fs::write(
+            &path,
+            r#"{"mcpServers":{"Chrome DevTools MCP":{"command":"npx","args":["chrome-devtools-mcp"]}}}"#,
+        )
+        .unwrap();
+
+        let cfg = get_server_config_from_deploy_file(&path, "Chrome DevTools MCP").unwrap();
+        assert_eq!(cfg["command"].as_str(), Some("npx"));
+    }
+
+    #[test]
+    fn get_server_config_from_deploy_file_errors_when_server_missing() {
+        let tmp = TempDir::new().unwrap();
+        let path = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+            .unwrap()
+            .join("mcp.json");
+        crate::paths::ensure_parent_dir(&path).unwrap();
+        fs::write(&path, r#"{"mcpServers":{}}"#).unwrap();
+
+        let err = get_server_config_from_deploy_file(&path, "missing").unwrap_err();
+        assert!(err.to_string().contains("missing"));
     }
 }

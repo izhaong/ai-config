@@ -24,6 +24,24 @@ export interface PlatformKindPath {
   supported: boolean;
 }
 
+/** 某平台上同名资产的可读内容（冲突对比用） */
+export interface PlatformAssetVariant {
+  platform: Platform;
+  platform_label: string;
+  content: string;
+  content_summary: string;
+  differs_from_baseline: boolean;
+}
+
+/** 跨平台同步冲突：目标已有同名但不同内容的副本 */
+export interface SyncConflictReport {
+  kind: AssetKind;
+  name: string;
+  baseline_platform: Platform;
+  target_platform: Platform;
+  variants: PlatformAssetVariant[];
+}
+
 export interface ProjectItem {
   id: number;
   name: string;

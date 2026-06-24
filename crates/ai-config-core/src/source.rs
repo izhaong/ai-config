@@ -49,10 +49,19 @@ fn is_excluded_name(name: &str) -> bool {
     if name.starts_with('.') {
         return true;
     }
+    // README/README.* 仅用于说明文档，不应被识别为资产（rules/commands/agents 常见）
+    if is_readme_name(name) {
+        return true;
+    }
     matches!(
         name,
         "Thumbs.db" | "Desktop.ini" | "node_modules" | "target" | "dist" | "build"
     )
+}
+
+fn is_readme_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    stem.eq_ignore_ascii_case("README")
 }
 
 /// 文件名后缀是否在备份 / 临时文件白名单里。
@@ -62,6 +71,7 @@ fn is_backup_name(name: &str) -> bool {
         || name.ends_with(".swp")
         || name.ends_with("~")
         || name.ends_with(".tmp")
+        || name.ends_with(".ai-config-deploy.json")
 }
 
 /// 综合判断"这个 entry 是不是该进清单"。
@@ -348,6 +358,10 @@ mod tests {
         assert!(is_excluded(".DS_Store"));
         assert!(is_excluded(".git"));
         assert!(is_excluded(".hidden-rule.mdc"));
+        // README
+        assert!(is_excluded("README"));
+        assert!(is_excluded("README.md"));
+        assert!(is_excluded("readme.mdc"));
         // 备份
         assert!(is_excluded("foo.bak"));
         assert!(is_excluded("foo.mdc.orig"));
@@ -407,6 +421,8 @@ mod tests {
 
         touch(&root.join("rules").join("alibaba-java.mdc"));
         touch(&root.join("rules").join("notes.md"));
+        // README 不应计入
+        touch(&root.join("rules").join("README.md"));
         // 其它扩展名不计入
         touch(&root.join("rules").join("random.txt"));
         // 备份不计
@@ -451,6 +467,15 @@ mod tests {
         // 单文件形态
         touch(&root.join("agents").join("data-explorer.md"));
         touch(&root.join("agents").join("hermes-bot.yaml"));
+        // deploy marker（文件型下发的旁路标记）不应被识别为 agent
+        touch(
+            &root
+                .join("agents")
+                .join("backend-java-dev.md.ai-config-deploy.json"),
+        );
+        // README 不应计入（无论目录还是文件）
+        mkdir(&root.join("agents").join("README"));
+        touch(&root.join("agents").join("README.md"));
         // 其它扩展名不计
         touch(&root.join("agents").join("notes.txt"));
         // 隐藏不计
@@ -458,6 +483,19 @@ mod tests {
 
         let r = scan_agents(root).expect("scan ok");
         assert_eq!(r.len(), 3, "expected 3 agents, got {:?}", r);
+    }
+
+    #[test]
+    fn scan_commands_ignores_readme() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(tmp.path()).unwrap();
+
+        touch(&root.join("commands").join("hello.md"));
+        touch(&root.join("commands").join("README.md"));
+
+        let r = scan_commands(root).expect("scan ok");
+        assert_eq!(r.len(), 1);
+        assert!(r[0].as_str().ends_with("hello.md"));
     }
 
     // ── scan_project_root:不存在的根 → InvalidPath ──

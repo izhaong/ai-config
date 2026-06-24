@@ -47,13 +47,13 @@ describe("canOpenEntry", () => {
     expect(canOpenEntry(e, "aiconfig")).toBe(true);
   });
 
-  it("does not open mcp from deploy platform only", () => {
+  it("opens mcp from deploy platform when platform_path exists", () => {
     const e = entry({
       kind: "mcp",
       platform_path: "/home/.cursor/mcp.json",
-      states: ALL_STATES({ cursor: "linked" }),
+      states: ALL_STATES({ cursor: "synced" }),
     });
-    expect(canOpenEntry(e, "cursor")).toBe(false);
+    expect(canOpenEntry(e, "cursor")).toBe(true);
   });
 
   it("does not open without platform_path", () => {
@@ -76,5 +76,23 @@ describe("shouldLoadFromSource", () => {
   it("previews from platform path when only deploy linked", () => {
     const e = entry({ states: ALL_STATES({ cursor: "linked" }) });
     expect(shouldLoadFromSource(e, "cursor")).toBe(false);
+  });
+
+  it("mcp without source previews from platform on deploy view", () => {
+    const e = entry({
+      kind: "mcp",
+      platform_path: "/home/.cursor/mcp.json",
+      states: ALL_STATES({ cursor: "synced" }),
+    });
+    expect(shouldLoadFromSource(e, "cursor")).toBe(false);
+  });
+
+  it("mcp with aiconfig linked loads from source on deploy view", () => {
+    const e = entry({
+      kind: "mcp",
+      platform_path: "/home/.ai-config/mcp.json",
+      states: ALL_STATES({ aiconfig: "linked", cursor: "linked" }),
+    });
+    expect(shouldLoadFromSource(e, "cursor")).toBe(true);
   });
 });

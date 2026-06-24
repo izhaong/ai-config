@@ -41,4 +41,12 @@ describe("aggregatePlatformState", () => {
     const rows = [entry({ cursor: "linked" }), entry({ cursor: "unlinked" })];
     expect(aggregatePlatformState(rows, "cursor")).toBe("partial");
   });
+
+  it("counts synced as active for batch aggregation", () => {
+    const rows = [
+      { ...entry({ cursor: "synced" }), kind: "mcp" as const },
+      { ...entry({ cursor: "synced" }), kind: "mcp" as const },
+    ];
+    expect(aggregatePlatformState(rows, "cursor")).toBe("all");
+  });
 });

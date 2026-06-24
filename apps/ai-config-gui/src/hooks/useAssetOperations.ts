@@ -4,12 +4,15 @@ import { useTranslation } from "react-i18next";
 
 import {
   addSkillFromRemote,
+  applySyncChoice,
   deployAsset,
   deployAssetFromPlatform,
+  detectSyncConflict,
   importAsset,
   retractAsset,
   revealPath,
   saveAsset,
+  transferAssets,
 } from "../api/tauriAssets";
 import { PLATFORM_NAME } from "../platformIcons";
 import type { ConfirmRequest } from "./useConfirm";
@@ -21,6 +24,8 @@ import type {
   DeployPlatform,
   Platform,
   PlatformAssetEntry,
+  ProjectItem,
+  SyncConflictReport,
 } from "../types";
 import {
   canRemoveFromPlatform,
@@ -38,9 +43,24 @@ import { canUpdateEntry, deployPlatformsForUpdate } from "../utils/entryUpdate";
 type Browser = ReturnType<typeof useAssetBrowser>;
 type Drawer = ReturnType<typeof useAssetDrawer>;
 
+const SYNC_CHECK_ACTIONS = new Set<EntryPlatformToggleAction>([
+  "deploy",
+  "import",
+  "platform_copy",
+]);
+
+interface PendingSyncConflict {
+  entry: PlatformAssetEntry;
+  targetPlatform: Platform;
+  planned: EntryPlatformToggleAction;
+  report: SyncConflictReport;
+  defaultSource: Platform;
+}
+
 interface UseAssetOperationsOptions {
   browser: Browser;
   drawer: Drawer;
+  projects: ProjectItem[];
   showToast: (kind: ToastKind, text: string) => void;
   requestConfirm: (req: ConfirmRequest) => void;
   dismissConfirm: () => void;
@@ -50,6 +70,7 @@ interface UseAssetOperationsOptions {
 export function useAssetOperations({
   browser,
   drawer,
+  projects,
   showToast,
   requestConfirm,
   dismissConfirm,
@@ -72,6 +93,12 @@ export function useAssetOperations({
   const { runDeleteEntries } = drawer;
   const kindLabel = t(`assetKind.${activeKind}`);
   const irreversibleHint = t("confirm.irreversible");
+  const [syncConflict, setSyncConflict] = useState<PendingSyncConflict | null>(
+    null,
+  );
+
+  const baselinePlatform = (): Platform =>
+    browsingSource ? "aiconfig" : activePlatform;
 
   const toggleContext = useMemoizedFn(() => ({
     activePlatform,
@@ -208,6 +235,58 @@ export function useAssetOperations({
     },
   );
 
+  const executePlatformToggle = useMemoizedFn(
+    async (
+      entry: PlatformAssetEntry,
+      plat: Platform,
+      planned: EntryPlatformToggleAction,
+    ) => {
+      setBusy(true);
+      try {
+        const result = await runPlatformAction(entry, plat, planned);
+        if (result.action === "skip" || result.action === "unsupported") {
+          return;
+        }
+        await refreshView(false);
+        showToggleSuccessToast(result.action, result.message);
+      } catch (e) {
+        showToggleErrorToast(planned, e);
+      } finally {
+        setBusy(false);
+      }
+    },
+  );
+
+  const dismissSyncConflict = useMemoizedFn(() => {
+    setSyncConflict(null);
+  });
+
+  const confirmSyncConflict = useMemoizedFn(
+    async (sourcePlatform: Platform) => {
+      if (!syncConflict) {
+        return;
+      }
+      const { entry, targetPlatform, planned } = syncConflict;
+      setBusy(true);
+      try {
+        const message = await applySyncChoice(
+          entry.kind,
+          entry.name,
+          activeProject,
+          sourcePlatform,
+          targetPlatform,
+        );
+        setSyncConflict(null);
+        await refreshView(false);
+        showToggleSuccessToast(planned, message);
+      } catch (e) {
+        showToggleErrorToast(planned, e);
+      } finally {
+        setBusy(false);
+      }
+    },
+  );
+
   const handlePlatformToggle = useMemoizedFn(
     (entry: PlatformAssetEntry, plat: Platform) => {
       const planned = resolveEntryPlatformToggleAction(
@@ -220,19 +299,31 @@ export function useAssetOperations({
       }
 
       void (async () => {
-        setBusy(true);
-        try {
-          const result = await runPlatformAction(entry, plat, planned);
-          if (result.action === "skip" || result.action === "unsupported") {
+        if (SYNC_CHECK_ACTIONS.has(planned)) {
+          try {
+            const report = await detectSyncConflict(
+              entry.kind,
+              entry.name,
+              activeProject,
+              baselinePlatform(),
+              plat,
+            );
+            if (report) {
+              setSyncConflict({
+                entry,
+                targetPlatform: plat,
+                planned,
+                report,
+                defaultSource: baselinePlatform(),
+              });
+              return;
+            }
+          } catch (e) {
+            showToast("err", t("syncConflict.detectFailed", { error: e }));
             return;
           }
-          await refreshView(false);
-          showToggleSuccessToast(result.action, result.message);
-        } catch (e) {
-          showToggleErrorToast(planned, e);
-        } finally {
-          setBusy(false);
         }
+        await executePlatformToggle(entry, plat, planned);
       })();
     },
   );
@@ -587,6 +678,62 @@ export function useAssetOperations({
   const [addSkillOpen, setAddSkillOpen] = useState(false);
   const [addMcpOpen, setAddMcpOpen] = useState(false);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
+  const [copyToProjectOpen, setCopyToProjectOpen] = useState(false);
+
+  const openCopyToProject = useMemoizedFn(() => {
+    if (selectedEntries.length === 0) {
+      showToast("err", t("toast.selectRowsFirst"));
+      return;
+    }
+    const hasCopyTarget =
+      activeProject !== "user-global" || projects.length > 0;
+    if (!hasCopyTarget) {
+      showToast("err", t("toast.copyToProjectNoTargets"));
+      return;
+    }
+    setCopyToProjectOpen(true);
+  });
+
+  const closeCopyToProject = useMemoizedFn(() => {
+    setCopyToProjectOpen(false);
+  });
+
+  const submitCopyToProject = useMemoizedFn(async (toProject: string) => {
+    if (toProject === activeProject) {
+      showToast("err", t("toast.copyToProjectSameTarget"));
+      return;
+    }
+    setBusy(true);
+    try {
+      // 非源视图时，先把当前平台上的选中项导入到当前项目源，再执行跨项目复制。
+      if (!browsingSource && !isSourcePlatform(activePlatform)) {
+        for (const entry of selectedEntries) {
+          if (!hasSourceEntry(entry)) {
+            await importAsset(
+              entry.kind,
+              entry.name,
+              activeProject,
+              activePlatform,
+            );
+          }
+        }
+      }
+
+      const items = selectedEntries.map((entry) => ({
+        kind: entry.kind,
+        name: entry.name,
+      }));
+      const msg = await transferAssets(activeProject, toProject, items);
+      showToast("ok", msg);
+      setCopyToProjectOpen(false);
+      clearSelection();
+      await refreshView(false);
+    } catch (e) {
+      showToast("err", t("toast.copyToProjectFailed", { error: e }));
+    } finally {
+      setBusy(false);
+    }
+  });
 
   const openAddSkill = useMemoizedFn(() => {
     if (activeKind !== "skill") return;
@@ -664,12 +811,19 @@ export function useAssetOperations({
 
   return {
     handlePlatformToggle,
+    syncConflict,
+    dismissSyncConflict,
+    confirmSyncConflict,
     handleUpdateEntry,
     batchUpdateEntries,
     batchSyncToPlatform,
     requestBatchDelete,
     requestDeleteEntry,
     openBrowseFolder,
+    copyToProjectOpen,
+    openCopyToProject,
+    closeCopyToProject,
+    submitCopyToProject,
     addSkillOpen,
     openAddSkill,
     closeAddSkill,

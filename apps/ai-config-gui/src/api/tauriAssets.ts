@@ -9,6 +9,7 @@ import type {
   PlatformAssetList,
   PlatformKindPath,
   ProjectItem,
+  SyncConflictReport,
 } from "../types";
 
 export function fetchDoctor(): Promise<DoctorSummary> {
@@ -152,6 +153,38 @@ export function revealPath(path: string): Promise<void> {
   return invoke("cmd_reveal_path", { path });
 }
 
+export function detectSyncConflict(
+  kind: AssetKind,
+  name: string,
+  project: string,
+  baselinePlatform: Platform,
+  targetPlatform: Platform,
+): Promise<SyncConflictReport | null> {
+  return invoke<SyncConflictReport | null>("cmd_detect_sync_conflict", {
+    kind,
+    name,
+    project,
+    baselinePlatform,
+    targetPlatform,
+  });
+}
+
+export function applySyncChoice(
+  kind: AssetKind,
+  name: string,
+  project: string,
+  sourcePlatform: Platform,
+  targetPlatform: Platform,
+): Promise<string> {
+  return invoke<string>("cmd_apply_sync_choice", {
+    kind,
+    name,
+    project,
+    sourcePlatform,
+    targetPlatform,
+  });
+}
+
 export async function pickProjectDirectory(
   title?: string,
 ): Promise<string | null> {
@@ -174,4 +207,21 @@ export function addProject(
 
 export function removeProject(name: string): Promise<void> {
   return invoke("cmd_projects_remove", { name });
+}
+
+export interface AssetTransferItem {
+  kind: AssetKind;
+  name: string;
+}
+
+export function transferAssets(
+  fromProject: string,
+  toProject: string,
+  items: AssetTransferItem[],
+): Promise<string> {
+  return invoke<string>("cmd_assets_transfer", {
+    fromProject,
+    toProject,
+    items: items.map((item) => ({ kind: item.kind, name: item.name })),
+  });
 }

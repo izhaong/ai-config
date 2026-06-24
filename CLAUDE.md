@@ -8,10 +8,12 @@
 2. `.cursor/rules/00-ai-config-core.mdc`
 3. `.specify/memory/constitution.md`
 
-## 快捷
+## 工作方式
 
-- Rust：`/ai-config-verify` 或 agent `rust-ai-config-dev`
+用户**直接说任务**。Agent 自动：切分支 → `spec.md` → `plan.md`（含 Todos）→ 实现 → 验证。
+
+- Rust：agent `rust-ai-config-dev`
 - GUI：agent `gui-ai-config-dev`
-- 新功能：`/speckit.specify`
+- 非平凡交付：skill `ai-config-delivery`（内化 Spec Kit，勿让用户跑 `/speckit.*`）
 
-Commands 与 Skills 位于 `.cursor/commands/`、`.cursor/skills/`。
+Commands 与 Skills 位于 `.cursor/commands/`、`.cursor/skills/`（供 Agent 参考，非用户必用）。

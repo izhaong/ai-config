@@ -159,7 +159,8 @@
     "addSkillTitle": "Add skill from remote (npx skills add)",
     "addMcpTitle": "Add MCP server (JSON)",
     "addMarketplaceTitle": "Browse Claude Marketplace and import skills",
-    "addMenuTitle": "Add skill"
+    "addMenuTitle": "Add skill",
+    "copyToProjectTitle": "Copy selected assets to another project"
   },
   "empty": {
     "loading": "Loading…",
@@ -197,6 +198,24 @@
     "irreversible": "This cannot be undone. Please confirm before deleting.",
     "removeProject": "Remove project",
     "removeProjectMessage": "Remove project `{{name}}` from this tool?"
+  },
+  "syncConflict": {
+    "title": "Sync conflict: {{name}}",
+    "message": "Using the current browse platform ({{baseline}}) as baseline. {{target}} already has the same name with different content. Choose which version to keep and overwrite with:",
+    "baseline": "Baseline",
+    "differs": "Different",
+    "confirm": "Overwrite {{target}} with selection",
+    "detectFailed": "Conflict check failed: {{error}}"
+  },
+  "copyToProject": {
+    "title": "Copy to project",
+    "summary": "Copy {{count}} asset(s) into the target project's .ai-config source",
+    "preview": "Selected: {{names}}",
+    "previewMore": "Selected: {{names}} and {{rest}} more",
+    "targetLabel": "Target project",
+    "hint": "Creates independent copies; fails if the target already has the same name.",
+    "submit": "Copy",
+    "noTargets": "No other projects available. Register another project in the sidebar first."
   },
   "registerProject": {
     "title": "Register project",
@@ -301,6 +320,9 @@
     "projectRegistered": "Project `{{name}}` registered",
     "registerProjectFailed": "Failed to register project: {{error}}",
     "registerProjectInvalid": "Enter a valid project path",
+    "copyToProjectFailed": "Copy to project failed: {{error}}",
+    "copyToProjectNoTargets": "No target project available. Register another project first.",
+    "copyToProjectSameTarget": "Target project cannot be the same as the current project",
     "projectRemoved": "Project `{{name}}` removed",
     "removeProjectFailed": "Failed to remove project: {{error}}",
     "platformListFailed": "Failed to load platform list: {{error}}",

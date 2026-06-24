@@ -49,9 +49,7 @@ pub fn deploy_from_platform(
     ensure_platform_supports(scope, from_plat, kind)?;
     ensure_platform_supports(scope, to_plat, kind)?;
     if kind == AssetKind::Mcp {
-        return Err(CoreError::InvalidPath(
-            "MCP 请使用导入到源后再下发，或单独编辑 mcp.json".into(),
-        ));
+        return deploy_mcp_from_platform(scope, name, from_plat, to_plat);
     }
 
     let from_adapter =
@@ -363,6 +361,18 @@ pub fn read_platform_preview(
     platform_path: &Utf8Path,
     fallback_name: &str,
 ) -> Result<AssetFileDetail, CoreError> {
+    if kind == AssetKind::Mcp {
+        let config = mcp_json::get_server_config_from_deploy_file(platform_path, fallback_name)?;
+        let content = serde_json::to_string_pretty(&config).map_err(|e| CoreError::Io(e.into()))?;
+        return Ok(AssetFileDetail {
+            name: fallback_name.to_string(),
+            description: mcp_json::server_transport_summary(&config),
+            content,
+            source_path: platform_path.to_string(),
+            parent_path: platform_path.to_string(),
+        });
+    }
+
     let read_path = platform_read_path(kind, platform_path)?;
     let content = fs::read_to_string(&read_path).map_err(CoreError::Io)?;
     let (fm_name, description) = parse_skill_meta(&content);
@@ -495,6 +505,26 @@ fn deploy_materialized(
     Ok(format!("{kind:?} `{name}` → {plat:?} OK ({dest})"))
 }
 
+fn deploy_mcp_from_platform(
+    scope: &ScopeRoots<'_>,
+    name: &str,
+    from_plat: PlatformId,
+    to_plat: PlatformId,
+) -> Result<String, CoreError> {
+    let from_adapter =
+        platform::for_scope_with_asset(from_plat, scope.deploy_base, scope.asset_root)?;
+    let to_adapter = platform::for_scope_with_asset(to_plat, scope.deploy_base, scope.asset_root)?;
+    let config =
+        crate::platform_scan::read_platform_mcp_server_config(from_adapter.as_ref(), name)?;
+    let dest = to_adapter.mcp_deploy_path();
+    mcp_json::upsert_server_on_platform(to_plat, &dest, name, &config, None)?;
+    Ok(format!(
+        "mcp `{name}`: {} → {} OK ({dest})",
+        platform::platform_label(from_plat),
+        platform::platform_label(to_plat),
+    ))
+}
+
 fn deploy_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
     let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
     let doc_root = mcp_asset_root(&mcp_path)?;
@@ -510,9 +540,24 @@ fn deploy_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<St
 }
 
 fn retract_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
-    let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
+    let source_mcp = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root).ok();
+    let in_source = source_mcp.as_ref().is_some_and(|mcp_path| {
+        mcp_asset_root(mcp_path)
+            .ok()
+            .and_then(|root| mcp_json::get_server_config(root, name).ok().flatten())
+            .is_some()
+    });
     let dest = platform::for_scope(plat, scope.deploy_base)?.mcp_deploy_path();
-    mcp_json::remove_server_on_platform(plat, &dest, name, Some(&mcp_path))?;
+    mcp_json::remove_server_on_platform(
+        plat,
+        &dest,
+        name,
+        if in_source {
+            source_mcp.as_deref()
+        } else {
+            None
+        },
+    )?;
     Ok(format!("mcp `{name}` ← {plat:?} 已移除 ({dest})"))
 }
 
@@ -584,9 +629,7 @@ fn platform_read_path(kind: AssetKind, platform_path: &Utf8Path) -> Result<Utf8P
             }
         }
         AssetKind::Agent => Ok(agent_read_path(platform_path)),
-        AssetKind::Mcp => Err(CoreError::InvalidPath(
-            "MCP 详情须从 ai-config 源查看".into(),
-        )),
+        AssetKind::Mcp => Ok(platform_path.to_path_buf()),
     }
 }
 
@@ -891,6 +934,155 @@ mod deploy_from_platform_tests {
             !hermes_skill.exists(),
             "应能删除无 ai-config 源的外部 Hermes skill"
         );
+    }
+
+    #[test]
+    fn deploy_mcp_from_cursor_to_codex() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let cursor_mcp = home.join(".cursor/mcp.json");
+        crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
+        fs::write(
+            &cursor_mcp,
+            r#"{"mcpServers":{"svc":{"command":"uvx","args":["demo"]}}}"#,
+        )
+        .unwrap();
+
+        let asset_root = home.join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        deploy_from_platform(
+            &scope,
+            AssetKind::Mcp,
+            "svc",
+            PlatformId::Cursor,
+            PlatformId::Codex,
+        )
+        .unwrap();
+
+        let codex_mcp = home.join(".codex/mcp.json");
+        assert!(codex_mcp.is_file());
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&codex_mcp).unwrap()).unwrap();
+        assert_eq!(doc["mcpServers"]["svc"]["command"], "uvx");
+    }
+
+    #[test]
+    fn read_platform_preview_mcp_returns_server_json() {
+        let tmp = TempDir::new().unwrap();
+        let mcp_path = Utf8Path::from_path(tmp.path()).unwrap().join("mcp.json");
+        crate::paths::ensure_parent_dir(&mcp_path).unwrap();
+        fs::write(
+            &mcp_path,
+            r#"{"mcpServers":{"demo":{"command":"uvx","args":["pkg"]}}}"#,
+        )
+        .unwrap();
+
+        let detail = read_platform_preview(AssetKind::Mcp, &mcp_path, "demo").unwrap();
+        assert_eq!(detail.name, "demo");
+        assert!(detail.content.contains("\"command\": \"uvx\""));
+        assert_eq!(detail.source_path, mcp_path.to_string());
+    }
+
+    #[test]
+    fn retract_mcp_platform_only_without_source_entry() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let cursor_mcp = home.join(".cursor/mcp.json");
+        crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
+        fs::write(
+            &cursor_mcp,
+            r#"{"mcpServers":{"only-cursor":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+
+        let asset_root = home.join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        retract(&scope, AssetKind::Mcp, "only-cursor", PlatformId::Cursor).unwrap();
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&cursor_mcp).unwrap()).unwrap();
+        assert!(doc["mcpServers"].get("only-cursor").is_none());
+        let source_doc = mcp_json::load_mcp_document(&asset_root).unwrap().unwrap();
+        assert!(source_doc["mcpServers"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn retract_aiconfig_mcp_removes_server_from_source_document() {
+        let tmp = TempDir::new().unwrap();
+        let asset_root = Utf8Path::from_path(tmp.path()).unwrap().join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+        mcp_json::upsert_server_in_document(
+            &asset_root,
+            "ai-config",
+            serde_json::json!({ "command": "ai-config", "args": ["serve"] }),
+        )
+        .unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: &asset_root,
+        };
+        retract(&scope, AssetKind::Mcp, "ai-config", PlatformId::AiConfig).unwrap();
+        assert!(mcp_json::get_server_config(&asset_root, "ai-config")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn deploy_mcp_from_platform_preserves_source_platform_entry() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let cursor_mcp = home.join(".cursor/mcp.json");
+        crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
+        fs::write(
+            &cursor_mcp,
+            r#"{"mcpServers":{"svc":{"command":"uvx","args":["a"]}}}"#,
+        )
+        .unwrap();
+
+        let asset_root = home.join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        deploy_from_platform(
+            &scope,
+            AssetKind::Mcp,
+            "svc",
+            PlatformId::Cursor,
+            PlatformId::Claude,
+        )
+        .unwrap();
+
+        let cursor_doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&cursor_mcp).unwrap()).unwrap();
+        assert_eq!(cursor_doc["mcpServers"]["svc"]["command"], "uvx");
+        let claude_mcp = home.join(".claude/mcp.json");
+        let claude_doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&claude_mcp).unwrap()).unwrap();
+        assert_eq!(claude_doc["mcpServers"]["svc"]["args"][0], "a");
     }
 }
 

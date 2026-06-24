@@ -5,7 +5,6 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::CoreError;
-use crate::link::{self, LinkHealth};
 use crate::materialize;
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId};
@@ -283,6 +282,8 @@ fn describe_link_state(
             return match mcp_json::mcp_json_file_sync_state(src, &dest, platform) {
                 McpSyncState::Linked => "linked".to_string(),
                 McpSyncState::Unlinked => "missing".to_string(),
+                // 平台自有 mcp.json 与源不一致：各平台独立，不计入异常
+                McpSyncState::WrongValue if dest.exists() => "synced".to_string(),
                 McpSyncState::WrongValue => "wrong_source".to_string(),
                 McpSyncState::Broken => "broken".to_string(),
             };
@@ -294,18 +295,15 @@ fn describe_link_state(
     match materialize::check(&dest, &expected_src) {
         materialize::DeployHealth::Linked { .. } => "linked".to_string(),
         materialize::DeployHealth::Broken => "broken".to_string(),
-        materialize::DeployHealth::Unlinked => match link::check(&dest, &expected_src) {
-            LinkHealth::Linked { .. } => "linked".to_string(),
-            LinkHealth::Broken { .. } => "broken".to_string(),
-            LinkHealth::WrongSource { .. } => "wrong_source".to_string(),
-            LinkHealth::WrongType { .. } => "wrong_type".to_string(),
-        },
+        // 实体硬拷贝 / 外部安装：未纳管 ≠ wrong_type / wrong_source
+        materialize::DeployHealth::Unlinked => "synced".to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn compute_report_empty_root_ok() {
@@ -314,5 +312,54 @@ mod tests {
         crate::paths::ensure_user_asset_layout(&root).unwrap();
         let r = compute_report(&root).unwrap();
         assert_eq!(r.exit_code, 0);
+    }
+
+    #[test]
+    fn independent_platform_copy_not_counted_as_wrong_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let _guard = crate::test_env::EnvGuard::set("HOME", home.to_str().unwrap());
+        let root = Utf8PathBuf::from_path_buf(home.join(".ai-config")).unwrap();
+        crate::paths::ensure_user_asset_layout(&root).unwrap();
+
+        let skill_name = "ext-skill";
+        fs::create_dir_all(root.join("skills").join(skill_name)).unwrap();
+        fs::write(
+            root.join("skills").join(skill_name).join("SKILL.md"),
+            "# source\n",
+        )
+        .unwrap();
+
+        let hermes_skill =
+            Utf8PathBuf::from_path_buf(home.join(".hermes/skills").join(skill_name)).unwrap();
+        fs::create_dir_all(&hermes_skill).unwrap();
+        fs::write(hermes_skill.join("SKILL.md"), "# hermes copy\n").unwrap();
+
+        let r = compute_report(&root).unwrap();
+        assert_eq!(r.wrong_type, 0, "独立硬拷贝不应计为 wrong_type");
+        assert_eq!(r.wrong_source, 0);
+    }
+
+    #[test]
+    fn divergent_mcp_json_on_platform_not_wrong_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let _guard = crate::test_env::EnvGuard::set("HOME", home.to_str().unwrap());
+        let root = Utf8PathBuf::from_path_buf(home.join(".ai-config")).unwrap();
+        crate::paths::ensure_user_asset_layout(&root).unwrap();
+        mcp_json::ensure_mcp_json(&root).unwrap();
+        mcp_json::upsert_server_in_document(
+            &root,
+            "src-only",
+            serde_json::json!({"command": "echo"}),
+        )
+        .unwrap();
+
+        let codex_mcp = Utf8PathBuf::from_path_buf(home.join(".codex/mcp.json")).unwrap();
+        fs::create_dir_all(codex_mcp.parent().unwrap()).unwrap();
+        fs::write(&codex_mcp, r#"{"mcpServers":{"other":{"command":"node"}}}"#).unwrap();
+
+        let r = compute_report(&root).unwrap();
+        assert_eq!(r.wrong_source, 0, "平台自有 mcp.json 差异不计入异常");
     }
 }

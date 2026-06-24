@@ -55,6 +55,20 @@ src/
 - 新能力：core 实现 → CLI（可选）→ `#[tauri::command]` 暴露。
 - 不在前端拼平台路径；路径由后端返回。
 
+## 测试（新功能必做）
+
+**与实现同一 PR / 同一轮改动同步提交测试**；未补测试不得标完成。
+
+| 改动类型                     | 测试落点                                      | 最低覆盖                              |
+| ---------------------------- | --------------------------------------------- | ------------------------------------- |
+| `src/utils/*` 纯函数         | 同名 `*.test.ts`（Vitest）                    | 主路径 + 1 条边界/错误                |
+| `hooks/*` 业务副作用         | `hooks/*.test.ts`，mock `api/tauriAssets`     | 成功路径 + 关键 skip/失败             |
+| 组件交互（icon/按钮态）      | `components/**/*.test.tsx`                    | 可点/不可点、disabled、回调是否触发   |
+| 新 Tauri command / core 行为 | `ai-config-core` 模块内 `#[test]` 或 `tests/` | 与 CLI/GUI 共用 core 时 **只测 core** |
+
+- 回归已有用例：改行为时 **更新** 原测试，勿只删断言。
+- 参考近期 MCP 项目级同步：`entryPlatformToggle`、`canOpenEntry`、`PlatformIconButtons`、`platform_scan`、`asset_ops`、`mcp_json`。
+
 ## 验证
 
 - `npm run test && npm run build`（tsc + vite）

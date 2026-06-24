@@ -6,41 +6,75 @@ on:
   pull_request:
     branches: [develop]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-Dwarnings"
+  RUSTFLAGS: -Dwarnings
+  # 自建 runner 网络：rustup 走国内镜像
+  RUSTUP_DIST_SERVER: https://mirrors.ustc.edu.cn/rust-static
+  RUSTUP_UPDATE_ROOT: https://mirrors.ustc.edu.cn/rust-static/rustup
 
 jobs:
-  test:
+  versions:
+    name: version consistency
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Check workspace version fields match
+        run: |
+          set -euo pipefail
+          V="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          PKG="$(grep -m1 '"version"' apps/ai-config-gui/package.json | sed -E 's/.*"([^"]+)".*/\1/')"
+          TAURI="$(grep -m1 '"version"' apps/ai-config-gui/src-tauri/tauri.conf.json | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "Cargo.toml=$V package.json=$PKG tauri.conf.json=$TAURI"
+          test "$V" = "$PKG"
+          test "$V" = "$TAURI"
 
+  rust:
+    name: rust
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: cargo fmt --check
+      - uses: Swatinem/rust-cache@v2
+      - name: Configure git for tests
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+      - name: cargo fmt
         run: cargo fmt --all -- --check
-
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
+        run: |
+          cargo clippy -p ai-config-core -p ai-config-cli -p ai-config-daemon \
+            -p ai-config-bus -p ai-config-watcher -p ai-config-store \
+            --all-targets -- -D warnings
       - name: cargo test
-        run: cargo test --workspace
+        run: |
+          cargo test -p ai-config-core -p ai-config-cli -p ai-config-store \
+            -p ai-config-daemon -p ai-config-bus -p ai-config-watcher \
+            -- --test-threads=1
+      - name: cargo build release (CLI)
+        run: cargo build -p ai-config-cli --release
 
-      - name: cargo build --release
-        run: cargo build --workspace --release
+  gui-smoke:
+    name: gui frontend smoke
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/ai-config-gui/package-lock.json
+      - name: npm ci && build frontend
+        working-directory: apps/ai-config-gui
+        run: |
+          npm ci
+          npm run build

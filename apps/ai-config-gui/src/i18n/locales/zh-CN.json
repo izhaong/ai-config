@@ -159,7 +159,8 @@
     "addSkillTitle": "从远程仓库添加 Skill（npx skills add）",
     "addMcpTitle": "添加 MCP server（JSON）",
     "addMarketplaceTitle": "从 Claude Marketplace 浏览并导入 Skill",
-    "addMenuTitle": "添加 Skill"
+    "addMenuTitle": "添加 Skill",
+    "copyToProjectTitle": "复制所选资产到其他项目"
   },
   "empty": {
     "loading": "加载中…",
@@ -197,6 +198,24 @@
     "irreversible": "此操作不可撤销，请确认后再删除。",
     "removeProject": "移除项目",
     "removeProjectMessage": "确认从本工具中移除项目 `{{name}}`?"
+  },
+  "syncConflict": {
+    "title": "同步冲突：{{name}}",
+    "message": "以当前浏览平台（{{baseline}}）为基准，目标平台 {{target}} 已有同名但内容不同的副本。请选择要保留并覆盖的版本：",
+    "baseline": "当前基准",
+    "differs": "内容不同",
+    "confirm": "用所选版本覆盖 {{target}}",
+    "detectFailed": "冲突检测失败: {{error}}"
+  },
+  "copyToProject": {
+    "title": "复制到其他项目",
+    "summary": "将 {{count}} 项资产复制到目标项目的 .ai-config 源目录",
+    "preview": "所选：{{names}}",
+    "previewMore": "所选：{{names}} 等另 {{rest}} 项",
+    "targetLabel": "目标项目",
+    "hint": "复制为实体副本；目标已有同名资产时将失败。",
+    "submit": "复制",
+    "noTargets": "没有可用的目标项目。请先在侧栏注册其它项目。"
   },
   "registerProject": {
     "title": "注册项目",
@@ -301,6 +320,9 @@
     "projectRegistered": "项目 `{{name}}` 已注册",
     "registerProjectFailed": "注册项目失败: {{error}}",
     "registerProjectInvalid": "请填写有效的项目路径",
+    "copyToProjectFailed": "复制到项目失败: {{error}}",
+    "copyToProjectNoTargets": "没有可复制的目标项目，请先注册其它项目",
+    "copyToProjectSameTarget": "目标项目不能与当前项目相同",
     "projectRemoved": "项目 `{{name}}` 已移除",
     "removeProjectFailed": "移除项目失败: {{error}}",
     "platformListFailed": "平台列表加载失败: {{error}}",
