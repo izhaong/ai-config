@@ -185,10 +185,14 @@ fn scan_platform_raw(
 }
 
 fn is_noise_entry_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name);
+    let is_readme = stem.eq_ignore_ascii_case("README");
     name.starts_with('.')
         || crate::link::is_legacy_bak_entry_name(name)
+        || name.ends_with(".ai-config-deploy.json")
         || name.ends_with(".orig")
         || name.ends_with('~')
+        || is_readme
 }
 
 fn scan_platform_skills(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, CoreError> {
@@ -293,7 +297,7 @@ fn scan_platform_agents(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, 
         .filter_map(Result::ok)
     {
         let name_os = entry.file_name().to_string_lossy();
-        if name_os.starts_with('.') {
+        if name_os.starts_with('.') || is_noise_entry_name(&name_os) {
             continue;
         }
         let path = Utf8PathBuf::from_path_buf(entry.into_path())
@@ -455,22 +459,59 @@ fn compute_entry_states(
     let src = find_source_path(kind, name, source_scan);
     let mut states = HashMap::new();
     for plat in platform::ui_platform_ids() {
-        let st = if plat == PlatformId::AiConfig {
+        let st = if plat == browse_plat {
+            browse_platform_link_state(
+                kind,
+                platform_path,
+                src.as_deref(),
+                deploy_base,
+                browse_plat,
+                name,
+            )
+        } else if plat == PlatformId::AiConfig {
+            // IDE 视图下，ai-config icon 仅反映源是否存在该资产（避免被平台副本元数据干扰）
             if src.as_ref().is_some_and(|s| s.exists()) {
                 LinkState::Linked
             } else {
                 LinkState::Unlinked
             }
-        } else if plat == browse_plat {
-            browse_platform_link_state(kind, platform_path, src.as_deref(), deploy_base, plat, name)
+        } else if browse_plat == PlatformId::AiConfig {
+            if kind == AssetKind::Mcp {
+                if let Some(src_path) = src.as_deref() {
+                    ide_mcp_link_state(plat, name, Some(src_path), deploy_base)
+                } else {
+                    platform_mirror_link_state(
+                        kind,
+                        name,
+                        platform_path,
+                        plat,
+                        deploy_base,
+                        asset_root,
+                    )
+                }
+            } else if let Some(src_path) = src.as_ref() {
+                ide_asset_link_state(plat, kind, name, src_path, deploy_base)
+            } else {
+                platform_mirror_link_state(
+                    kind,
+                    name,
+                    platform_path,
+                    plat,
+                    deploy_base,
+                    asset_root,
+                )
+            }
         } else if !platform::supports_at_scope(plat, kind, deploy_base) {
             LinkState::Unlinked
-        } else if kind == AssetKind::Mcp {
-            ide_mcp_link_state(plat, name, src.as_deref(), deploy_base)
-        } else if let Some(src_path) = src.as_ref() {
-            ide_asset_link_state(plat, kind, name, src_path, deploy_base)
         } else {
-            platform_mirror_link_state(kind, name, platform_path, plat, deploy_base, asset_root)
+            platform_mirror_link_state(
+                kind,
+                name,
+                platform_path,
+                plat,
+                deploy_base,
+                asset_root,
+            )
         };
         states.insert(plat, st);
     }
@@ -481,21 +522,34 @@ fn browse_platform_link_state(
     kind: AssetKind,
     platform_path: &Utf8Path,
     src: Option<&Utf8Path>,
-    deploy_base: &Utf8Path,
-    plat: PlatformId,
-    name: &str,
+    _deploy_base: &Utf8Path,
+    browse_plat: PlatformId,
+    _name: &str,
 ) -> LinkState {
-    if let Some(src_path) = src {
-        if kind == AssetKind::Mcp {
-            return ide_mcp_link_state(plat, name, Some(src_path), deploy_base);
+    // ai-config 源视图：列表行在源中存在即视为已链接
+    if browse_plat == PlatformId::AiConfig {
+        if let Some(src_path) = src {
+            if src_path.exists() {
+                return LinkState::Linked;
+            }
         }
-        return ide_asset_link_state(plat, kind, name, src_path, deploy_base);
+        if std::fs::symlink_metadata(platform_path.as_std_path()).is_err() {
+            return LinkState::Missing;
+        }
+        if kind == AssetKind::Mcp {
+            return LinkState::Synced;
+        }
+        if crate::materialize::is_managed_deploy(platform_path) {
+            return LinkState::Linked;
+        }
+        return LinkState::Synced;
     }
+    // IDE 平台视图：左侧选中平台即基准，存在即激活
     if std::fs::symlink_metadata(platform_path.as_std_path()).is_err() {
         return LinkState::Missing;
     }
     if kind == AssetKind::Mcp {
-        return LinkState::Unlinked;
+        return LinkState::Synced;
     }
     if crate::materialize::is_managed_deploy(platform_path) {
         LinkState::Linked
@@ -532,7 +586,26 @@ fn platform_mirror_link_state(
                 dest_adapter.agents_dir().join(format!("{name}.{ext}"))
             }
         }
-        AssetKind::Mcp => return LinkState::Unlinked,
+        AssetKind::Mcp => {
+            let Ok(expected) =
+                mcp_json::get_server_config_from_deploy_file(mirror_platform_path, name)
+            else {
+                return LinkState::Unlinked;
+            };
+            let dest_path = dest_adapter.mcp_deploy_path();
+            let sync = if dest_plat == PlatformId::Hermes {
+                crate::hermes_config::mcp_server_sync_state(&dest_path, name, &expected)
+            } else {
+                crate::template::mcp_server_sync_state(&dest_path, name, &expected)
+            };
+            return match sync {
+                crate::template::McpSyncState::Linked => LinkState::Synced,
+                crate::template::McpSyncState::Unlinked => LinkState::Missing,
+                crate::template::McpSyncState::WrongValue | crate::template::McpSyncState::Broken => {
+                    LinkState::Unlinked
+                }
+            };
+        }
     };
     if fs::symlink_metadata(dest.as_std_path()).is_err() {
         return LinkState::Missing;
@@ -915,60 +988,14 @@ pub fn copy_asset_to_asset_root(
     Ok(dest)
 }
 
-fn read_platform_mcp_server_config(
+pub fn read_platform_mcp_server_config(
     adapter: &dyn PlatformAdapter,
     name: &str,
 ) -> Result<serde_json::Value, CoreError> {
     if adapter.id() == PlatformId::Hermes {
-        let path = adapter.mcp_deploy_path();
-        let raw = fs::read_to_string(path.as_std_path()).map_err(CoreError::Io)?;
-        let doc: serde_yaml::Value =
-            serde_yaml::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-                template: path.to_string(),
-                reason: format!("解析 config.yaml: {e}"),
-                hint: "修复 Hermes config.yaml".into(),
-            })?;
-        let serde_yaml::Value::Mapping(map) = doc else {
-            return Err(CoreError::AssetNotFound {
-                kind: AssetKind::Mcp,
-                name: name.into(),
-                hint: "config.yaml 无根 mapping".into(),
-            });
-        };
-        let Some(serde_yaml::Value::Mapping(servers)) =
-            map.get(serde_yaml::Value::String("mcp_servers".into()))
-        else {
-            return Err(CoreError::AssetNotFound {
-                kind: AssetKind::Mcp,
-                name: name.into(),
-                hint: "config.yaml 无 mcp_servers".into(),
-            });
-        };
-        let Some(entry) = servers.get(serde_yaml::Value::String(name.into())) else {
-            return Err(CoreError::AssetNotFound {
-                kind: AssetKind::Mcp,
-                name: name.into(),
-                hint: format!("Hermes mcp_servers 中无 `{name}`"),
-            });
-        };
-        return serde_json::to_value(entry).map_err(CoreError::Json);
+        return crate::hermes_config::get_mcp_server_config(&adapter.mcp_deploy_path(), name);
     }
-    let path = adapter.mcp_deploy_path();
-    let Some(doc) = read_mcp_json(&path)? else {
-        return Err(CoreError::AssetNotFound {
-            kind: AssetKind::Mcp,
-            name: name.into(),
-            hint: format!("平台 mcp.json 不存在: {path}"),
-        });
-    };
-    doc.get("mcpServers")
-        .and_then(|v| v.get(name))
-        .cloned()
-        .ok_or_else(|| CoreError::AssetNotFound {
-            kind: AssetKind::Mcp,
-            name: name.into(),
-            hint: format!("mcp.json 中无 server `{name}`"),
-        })
+    mcp_json::get_server_config_from_deploy_file(&adapter.mcp_deploy_path(), name)
 }
 
 fn find_command_on_platform(commands_dir: &Utf8Path, name: &str) -> Result<Utf8PathBuf, CoreError> {
@@ -1126,6 +1153,49 @@ mod tests {
         let entries = scan_platform_skills(&FakeAdapter { skills }).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "linked-skill");
+    }
+
+    #[test]
+    fn scan_platform_agents_ignores_deploy_marker_files() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let agents = home.join(".cursor/agents");
+        touch(
+            &agents.join("backend-java-dev.md"),
+            "---\ndescription: backend java\n---\n# backend",
+        );
+        touch(
+            &agents.join("backend-java-dev.md.ai-config-deploy.json"),
+            "{\"version\":1,\"source\":\"/tmp/x\"}",
+        );
+
+        struct FakeAdapter {
+            agents: Utf8PathBuf,
+        }
+        impl PlatformAdapter for FakeAdapter {
+            fn id(&self) -> PlatformId {
+                PlatformId::Cursor
+            }
+            fn skills_dir(&self) -> Utf8PathBuf {
+                self.agents.parent().unwrap().join("skills")
+            }
+            fn rules_dir(&self) -> Utf8PathBuf {
+                self.agents.parent().unwrap().join("rules")
+            }
+            fn agents_dir(&self) -> Utf8PathBuf {
+                self.agents.clone()
+            }
+            fn commands_dir(&self) -> Utf8PathBuf {
+                self.agents.parent().unwrap().join("commands")
+            }
+            fn mcp_json_path(&self) -> Utf8PathBuf {
+                self.agents.parent().unwrap().join("mcp.json")
+            }
+        }
+
+        let entries = scan_platform_agents(&FakeAdapter { agents }).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "backend-java-dev");
     }
 
     #[test]
@@ -1296,5 +1366,262 @@ mod tests {
             Some(&LinkState::Unlinked)
         );
         assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Missing));
+    }
+
+    #[test]
+    fn aiconfig_linked_when_exists_in_source_on_ide_view() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let cursor_skill = home.join(".cursor/skills/demo");
+        fs::create_dir_all(&cursor_skill).unwrap();
+        fs::write(cursor_skill.join("SKILL.md"), "# Demo\n").unwrap();
+
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(asset_root.join("skills/demo")).unwrap();
+        fs::write(asset_root.join("skills/demo/SKILL.md"), "# Demo\n").unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let states = compute_entry_states(
+            PlatformId::Cursor,
+            AssetKind::Skill,
+            "demo",
+            &cursor_skill,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
+    }
+
+    #[test]
+    fn browse_cursor_mcp_without_source_shows_synced() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let cursor_mcp = home.join(".cursor/mcp.json");
+        crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
+        fs::write(
+            &cursor_mcp,
+            r#"{"mcpServers":{"demo":{"command":"npx","args":["-y","demo"]}}}"#,
+        )
+        .unwrap();
+
+        let asset_root = home.join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let states = compute_entry_states(
+            PlatformId::Cursor,
+            AssetKind::Mcp,
+            "demo",
+            &cursor_mcp,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(
+            states.get(&PlatformId::Cursor),
+            Some(&LinkState::Synced),
+            "仅存在于 Cursor 的 MCP 在 Cursor 视图应显示已同步"
+        );
+        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Unlinked));
+    }
+
+    #[test]
+    fn mirror_mcp_shows_synced_on_target_after_cross_platform_copy() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let cursor_mcp = home.join(".cursor/mcp.json");
+        crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
+        fs::write(
+            &cursor_mcp,
+            r#"{"mcpServers":{"Chrome DevTools MCP":{"command":"npx","args":["-y","chrome-devtools-mcp"]}}}"#,
+        )
+        .unwrap();
+
+        let asset_root = home.join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = crate::asset_ops::ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        crate::asset_ops::deploy_from_platform(
+            &scope,
+            AssetKind::Mcp,
+            "Chrome DevTools MCP",
+            PlatformId::Cursor,
+            PlatformId::Claude,
+        )
+        .unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let states = compute_entry_states(
+            PlatformId::Cursor,
+            AssetKind::Mcp,
+            "Chrome DevTools MCP",
+            &cursor_mcp,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(
+            states.get(&PlatformId::Claude),
+            Some(&LinkState::Synced),
+            "Cursor→Claude 拷贝后，在 Cursor 视图 Claude 图标应显示已同步"
+        );
+        assert_eq!(
+            states.get(&PlatformId::Codex),
+            Some(&LinkState::Missing),
+            "未拷贝的平台仍为 missing"
+        );
+    }
+
+    #[test]
+    fn mirror_mcp_missing_when_target_not_deployed() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let cursor_mcp = home.join(".cursor/mcp.json");
+        crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
+        fs::write(
+            &cursor_mcp,
+            r#"{"mcpServers":{"demo":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+
+        let asset_root = home.join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let states = compute_entry_states(
+            PlatformId::Cursor,
+            AssetKind::Mcp,
+            "demo",
+            &cursor_mcp,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(states.get(&PlatformId::Codex), Some(&LinkState::Missing));
+    }
+
+    #[test]
+    fn compute_entry_states_mcp_with_source_shows_linked_on_deployed_platform() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let asset_root = home.join(".ai-config");
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+        let cfg = serde_json::json!({ "command": "uvx", "args": ["demo"] });
+        mcp_json::upsert_server_in_document(&asset_root, "svc", cfg.clone()).unwrap();
+
+        let cursor_mcp = home.join(".cursor/mcp.json");
+        mcp_json::upsert_server_on_platform(PlatformId::Cursor, &cursor_mcp, "svc", &cfg, None)
+            .unwrap();
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let mcp_path = mcp_json::mcp_json_path(&asset_root);
+        let states = compute_entry_states(
+            PlatformId::AiConfig,
+            AssetKind::Mcp,
+            "svc",
+            &mcp_path,
+            home,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::Codex), Some(&LinkState::Unlinked));
+    }
+
+    #[test]
+    fn copy_skill_to_other_project_asset_root() {
+        let global = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let global_root = Utf8Path::from_path(global.path()).unwrap();
+        let project_root = Utf8Path::from_path(project.path()).unwrap();
+        touch(
+            &global_root
+                .join("skills")
+                .join("git-sync-github")
+                .join("SKILL.md"),
+            "---\ndescription: GitHub sync\n---\n# Git Sync",
+        );
+
+        let dest = copy_asset_to_asset_root(
+            AssetKind::Skill,
+            "git-sync-github",
+            global_root,
+            global_root,
+            project_root,
+            project_root,
+        )
+        .unwrap();
+
+        assert_eq!(
+            dest,
+            project_root.join("skills").join("git-sync-github")
+        );
+        assert!(dest.join("SKILL.md").is_file());
+        assert_eq!(
+            fs::read_to_string(dest.join("SKILL.md").as_std_path()).unwrap(),
+            "---\ndescription: GitHub sync\n---\n# Git Sync"
+        );
+    }
+
+    #[test]
+    fn copy_asset_rejects_same_project() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(tmp.path()).unwrap();
+        touch(&root.join("skills").join("x").join("SKILL.md"), "# x");
+
+        let err = copy_asset_to_asset_root(
+            AssetKind::Skill,
+            "x",
+            root,
+            root,
+            root,
+            root,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("相同"));
+    }
+
+    #[test]
+    fn copy_asset_rejects_existing_target_name() {
+        let global = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let global_root = Utf8Path::from_path(global.path()).unwrap();
+        let project_root = Utf8Path::from_path(project.path()).unwrap();
+        touch(
+            &global_root.join("skills").join("dup").join("SKILL.md"),
+            "# global",
+        );
+        touch(
+            &project_root.join("skills").join("dup").join("SKILL.md"),
+            "# project",
+        );
+
+        let err = copy_asset_to_asset_root(
+            AssetKind::Skill,
+            "dup",
+            global_root,
+            global_root,
+            project_root,
+            project_root,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("已存在"));
     }
 }

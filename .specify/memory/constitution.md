@@ -1,6 +1,6 @@
 # ai-config Constitution
 
-> Spec Kit 项目原则。非平凡改动须先 `specs/<编号-功能>/spec.md` → `plan.md` → `tasks.md`，再实现。
+> Spec Kit 项目原则。非平凡改动须先 `specs/<编号-功能>/spec.md` → `plan.md`（含 `## Todos`），再实现。
 
 ## 1. 产品边界
 
@@ -44,13 +44,14 @@
 
 代码行为或 CLI 子命令变化时，同一 PR 更新：`CHANGELOG.md`、`AGENTS.md`（路由变化时）、`docs/product/`（产品语义变化时）。
 
-## 7. Spec Kit 工作流
+## 7. Spec Kit 工作流（贴合 Cursor）
+
+用户自然语言下发任务。**Spec Kit 适配 Cursor Plan/Todo**，不另造平行流程：
 
 ```
-/speckit.specify → specs/N-feature/spec.md
-/speckit.plan    → plan.md
-/speckit.tasks   → tasks.md
-/speckit.implement → 按 tasks 实现 + §5 验证
+specs/N-feature/spec.md → plan.md（含 ## Todos）→ 按 Todos 实现 → §5 验证
 ```
+
+`plan.md` 的 Todos = Cursor Plan 的执行清单；**不维护 `tasks.md`**。
 
 **例外**（可跳过完整 spec 周期）：单行 typo、明显 bug 一行修复、纯格式化、用户明示 spike。

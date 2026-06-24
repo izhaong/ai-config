@@ -29,16 +29,20 @@ alwaysApply: true
 - 平台路径与 install 语义见 `crates/ai-config-core/src/platform.rs`。
 - 用户资产在 `~/.ai-config/`；本仓只维护工具与模板。
 
-## 开工前
+## 开工前（Agent 自治，用户无感）
 
-1. `git branch --show-current` — 不在 `develop`/`main` 上堆功能提交。
-2. 非平凡改动：确认 `specs/<feature>/` 或 Plan 已存在（见 `spec-kit-gate.mdc`）。
-3. 读 `docs/product/ARCHITECTURE.md` 相关章节再动边界类代码。
+用户用自然语言下发任务即可。Agent **自行**：
+
+1. `git branch --show-current`；在 `develop`/`main` 且任务非平凡 → 自动切 feature 分支（见 [gitflow-spec-kit.mdc](./gitflow-spec-kit.mdc)）
+2. 解析 `FEATURE_DIR`、补齐 `spec.md` 与含 `## Todos` 的 `plan.md` 后再写业务代码（见 [spec-kit-gate.mdc](./spec-kit-gate.mdc)）
+3. 边界类改动前读 `docs/product/ARCHITECTURE.md` 相关章节
+
+**禁止**要求用户跑 `/speckit.*`、`export SPECIFY_FEATURE` 或确认切分支。
 
 ## 验证（完成前必做）
 
-- Core/CLI：`cargo test -p ai-config-core -p ai-config-cli`
-- GUI：`cd apps/ai-config-gui && npm run build`
+- Core/CLI：`cargo test -p ai-config-core -p ai-config-cli`（**新功能须同步新增/更新对应用例**）
+- GUI：`cd apps/ai-config-gui && npm run test && npm run build`
 - 同步相关：`ai-config doctor`、`ai-config status`
 
 ## 文档
@@ -49,7 +53,8 @@ alwaysApply: true
 
 ## Git
 
-- 从 `develop` 拉 `feat/*` / `fix/*`；中文 Conventional Commits：`<type>(<scope>): <描述>`
+- 从 `develop` 拉 feature 分支：`NNN-<name>`（`create-new-feature.sh` 首选）或 `feat/*` / `fix/*`
+- 中文 Conventional Commits：`<type>(<scope>): <描述>`
 - 未要求时不主动 commit/push
 
 ## 敏感信息

@@ -1,5 +1,5 @@
 import { useMemoizedFn, useTimeout } from "ahooks";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Copy, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -32,6 +32,9 @@ interface RowSyncActionsProps {
   onUpdate?: () => void;
   updateDisabled?: boolean;
   updateTitle: string;
+  onCopyToProject?: () => void;
+  copyToProjectDisabled?: boolean;
+  copyToProjectTitle?: string;
   onDelete?: () => void;
   deleteDisabled?: boolean;
   deleteTitle: string;
@@ -57,6 +60,9 @@ export function RowSyncActions({
   onUpdate,
   updateDisabled = false,
   updateTitle,
+  onCopyToProject,
+  copyToProjectDisabled = false,
+  copyToProjectTitle,
   onDelete,
   deleteDisabled = false,
   deleteTitle,
@@ -81,6 +87,12 @@ export function RowSyncActions({
     e.stopPropagation();
     if (loading || updateDisabled || !onUpdate) return;
     onUpdate();
+  });
+
+  const handleCopyToProjectClick = useMemoizedFn((e: MouseEvent) => {
+    e.stopPropagation();
+    if (loading || copyToProjectDisabled || !onCopyToProject) return;
+    onCopyToProject();
   });
 
   const handleDeleteClick = useMemoizedFn((e: MouseEvent) => {
@@ -130,6 +142,17 @@ export function RowSyncActions({
   return (
     <div className="row-sync-actions flex w-full shrink-0 items-center justify-end gap-[5px]">
       {leadCell}
+      {variant === "batch" && onCopyToProject ? (
+        <RowIconButton
+          className="row-copy-btn hover:border-[rgba(120,200,140,0.45)] hover:bg-[rgba(120,200,140,0.1)] hover:text-[var(--ok)] disabled:opacity-[0.32]"
+          disabled={loading || copyToProjectDisabled}
+          title={copyToProjectTitle}
+          aria-label={copyToProjectTitle}
+          onClick={handleCopyToProjectClick}
+        >
+          <Copy size={14} aria-hidden />
+        </RowIconButton>
+      ) : null}
       <PlatformIconButtons
         loading={loading}
         disabled={disabled}

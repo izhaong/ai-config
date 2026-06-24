@@ -40,10 +40,9 @@ export function PlatformIconButtons({
         const issueReason = isDeploy ? issueReasonFor?.(p) : undefined;
         const platUnsupported = !!issueReason;
         const state = linkStateFor?.(p);
-        const synced = state === "synced";
         const active =
           state !== "mixed" && state !== undefined && isPlatformActive(state);
-        const partial = state === "mixed" || synced;
+        const partial = state === "mixed";
         const batchNoSelection = isBatch && selectedCount === 0;
         const isBrowseCurrent =
           activePlatform !== undefined && p === activePlatform;

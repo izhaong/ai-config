@@ -154,6 +154,43 @@ pub fn remove_mcp_server(config_path: &Utf8Path, server_name: &str) -> Result<()
     atomic_write_yaml(config_path, &root)
 }
 
+/// 从 Hermes `config.yaml` 读取单条 `mcp_servers` 配置。
+pub fn get_mcp_server_config(
+    config_path: &Utf8Path,
+    server_name: &str,
+) -> Result<Value, CoreError> {
+    let raw = std::fs::read_to_string(config_path.as_std_path()).map_err(CoreError::Io)?;
+    let doc: YamlValue = serde_yaml::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+        template: config_path.to_string(),
+        reason: format!("解析 config.yaml: {e}"),
+        hint: "修复 Hermes config.yaml".into(),
+    })?;
+    let YamlValue::Mapping(map) = doc else {
+        return Err(CoreError::AssetNotFound {
+            kind: crate::model::AssetKind::Mcp,
+            name: server_name.into(),
+            hint: "config.yaml 无根 mapping".into(),
+        });
+    };
+    let Some(YamlValue::Mapping(servers)) =
+        map.get(YamlValue::String("mcp_servers".into()))
+    else {
+        return Err(CoreError::AssetNotFound {
+            kind: crate::model::AssetKind::Mcp,
+            name: server_name.into(),
+            hint: "config.yaml 无 mcp_servers".into(),
+        });
+    };
+    let Some(entry) = servers.get(YamlValue::String(server_name.into())) else {
+        return Err(CoreError::AssetNotFound {
+            kind: crate::model::AssetKind::Mcp,
+            name: server_name.into(),
+            hint: format!("Hermes mcp_servers 中无 `{server_name}`"),
+        });
+    };
+    serde_json::to_value(entry).map_err(CoreError::Json)
+}
+
 /// 判定单条 server 是否已同步到 Hermes `config.yaml`。
 pub fn mcp_server_sync_state(
     config_path: &Utf8Path,
@@ -395,5 +432,22 @@ mod tests {
         let raw = fs::read_to_string(cfg_path.as_std_path()).unwrap();
         assert!(raw.contains("external_dirs:"));
         assert!(raw.contains("custom-skills"));
+    }
+
+    #[test]
+    fn get_mcp_server_config_reads_yaml_entry() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        fs::create_dir_all(home.join(".hermes")).unwrap();
+        let cfg_path = hermes_config_path_at(&home);
+        fs::write(
+            cfg_path.as_std_path(),
+            "mcp_servers:\n  svc-a:\n    command: uvx\n    args:\n      - demo\n",
+        )
+        .unwrap();
+
+        let cfg = get_mcp_server_config(&cfg_path, "svc-a").unwrap();
+        assert_eq!(cfg["command"].as_str(), Some("uvx"));
+        assert_eq!(cfg["args"][0].as_str(), Some("demo"));
     }
 }

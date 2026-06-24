@@ -1,6 +1,7 @@
 import type {
   AssetKind,
   DeployPlatform,
+  LinkState,
   Platform,
   PlatformAssetEntry,
 } from "../types";
@@ -8,9 +9,13 @@ import {
   canDeploy,
   canRetract,
   hasSourceEntry,
+  isPlatformActive,
   isSourcePlatform,
 } from "../types";
-import { aggregateManagedPlatformState } from "./aggregatePlatformState";
+import {
+  aggregateManagedPlatformState,
+  aggregatePlatformState,
+} from "./aggregatePlatformState";
 
 export type EntryPlatformToggleAction =
   | "deploy"
@@ -34,6 +39,29 @@ function isBrowsingDeployPlatform(ctx: EntryPlatformToggleContext): boolean {
   return !ctx.browsingSource && !isSourcePlatform(ctx.activePlatform);
 }
 
+/** MCP 与其它资产：已激活（linked / synced）均可点击收回 */
+function canRetractEntry(entry: PlatformAssetEntry, state: LinkState): boolean {
+  if (entry.kind === "mcp") {
+    return isPlatformActive(state);
+  }
+  return canRetract(state);
+}
+
+/** 平台视图下禁止点击「当前浏览平台」icon（仅展示状态） */
+function skipBrowseCurrentToggle(
+  ctx: EntryPlatformToggleContext,
+  plat: Platform,
+): boolean {
+  if (
+    ctx.browsingSource &&
+    ctx.activePlatform === "aiconfig" &&
+    plat === "aiconfig"
+  ) {
+    return true;
+  }
+  return isBrowsingDeployPlatform(ctx) && ctx.activePlatform === plat;
+}
+
 /** 批量：仅全部已激活 → 收回；部分/全未激活 → 全部下发 */
 export function resolveBatchPlatformToggleMode(
   entries: PlatformAssetEntry[],
@@ -54,9 +82,11 @@ export function resolveBatchPlatformToggleMode(
   if (browsingSource && activePlatform === "aiconfig" && plat === "aiconfig") {
     return "activate_all";
   }
-  return aggregateManagedPlatformState(entries, plat) === "all"
-    ? "retract_all"
-    : "activate_all";
+  const agg =
+    entries.length > 0 && entries.every((e) => e.kind === "mcp")
+      ? aggregatePlatformState(entries, plat)
+      : aggregateManagedPlatformState(entries, plat);
+  return agg === "all" ? "retract_all" : "activate_all";
 }
 
 /** 与单行平台 icon 点击一致：已激活 → 收回，未激活 → 下发/导入 */
@@ -68,12 +98,15 @@ export function resolveEntryPlatformToggleAction(
   if (plat === "aiconfig") {
     const state = entry.states.aiconfig;
 
-    // 源视图浏览 ai-config：与其它平台一致，点击当前平台 icon 不收回
-    if (ctx.browsingSource && ctx.activePlatform === "aiconfig" && canRetract(state)) {
+    if (
+      ctx.browsingSource &&
+      ctx.activePlatform === "aiconfig" &&
+      canRetractEntry(entry, state)
+    ) {
       return "skip";
     }
 
-    if (canRetract(state)) {
+    if (canRetractEntry(entry, state)) {
       return "retract";
     }
     if (canDeploy(state) && !isSourcePlatform(ctx.activePlatform)) {
@@ -87,13 +120,13 @@ export function resolveEntryPlatformToggleAction(
     return "unsupported";
   }
 
-  // 平台视图下点击当前浏览平台：仅展示存在，不收回来源安装（如 npx skills 装进 Claude）
-  if (isBrowsingDeployPlatform(ctx) && ctx.activePlatform === plat) {
+  // 当前浏览平台 icon 仅展示状态，不触发下发/收回
+  if (skipBrowseCurrentToggle(ctx, plat)) {
     return "skip";
   }
 
   const state = entry.states[deployPlat];
-  if (canRetract(state)) {
+  if (canRetractEntry(entry, state)) {
     return "retract";
   }
   if (!canDeploy(state)) {

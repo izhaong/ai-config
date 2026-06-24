@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **GUI 跨项目复制资产**：在 ai-config 源视图勾选资产后，顶栏「复制到项目」可将 skill/rule/agent/command/mcp 从全局或其它项目复制到目标项目 `.ai-config/`（实体副本；目标同名时拒绝）。
+
+### Changed
+
+- **Spec Kit 贴合 Cursor**：执行清单并入 `plan.md ## Todos`，不再维护 `tasks.md`；用户自然语言下发任务，Agent 自动分支与落盘 spec/plan。全局 `spec-kit-sdd-gate` 与仓内 rules 已对齐。
+
+### Fixed
+
+- **跨平台同步冲突**：以左侧当前浏览平台为对比基准；目标平台已有同名不同内容时弹出对比框，展示各平台差异并手动选择覆盖来源。
+- **平台 icon 对比基准**：浏览某 IDE 平台时，各平台 icon 状态均相对该平台内容计算（不再默认对照 `~/.ai-config`）。
+- **GUI 平台 icon**：`synced`（仅存在于某平台、未进 `~/.ai-config`）与 `linked` 一样显示为**激活**；未进则灰显。
+- **doctor**：各平台独立硬拷贝 / 自有 `mcp.json` 与源不一致时**不再**计为 `wrong_type` / `wrong_source`；图标状态即真相。
+- **GUI 项目级 MCP**：跨平台同步与状态展示修复；**其它平台 icon 可点击切换**，当前浏览平台 icon **仅展示状态**（`cursor-default`），MCP 收回请点其它平台 icon 或行内删除。
+
 ## [0.3.1] - 2026-06-22
 
 ### Added

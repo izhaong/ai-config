@@ -4,7 +4,7 @@ import type { ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
 const platButtonVariants = cva(
-  "plat-btn inline-flex size-7 min-h-7 min-w-7 shrink-0 items-center justify-center overflow-hidden rounded-md border-2 border-[var(--border)] bg-[var(--bg-elev-2)] p-0 transition-[border-color,opacity,box-shadow,filter] duration-100 [&_img]:pointer-events-none [&_img]:size-4 [&_img]:object-contain",
+  "plat-btn inline-flex size-7 min-h-7 min-w-7 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-md border-2 border-[var(--border)] bg-[var(--bg-elev-2)] p-0 transition-[border-color,opacity,box-shadow,filter] duration-100 [&_img]:pointer-events-none [&_img]:size-4 [&_img]:object-contain",
   {
     variants: {
       state: {
@@ -24,7 +24,7 @@ const platButtonVariants = cva(
         false: "",
       },
       browseCurrent: {
-        true: "cursor-default disabled:cursor-default disabled:opacity-100 disabled:[filter:none]",
+        true: "cursor-default hover:shadow-none disabled:cursor-default disabled:opacity-100 disabled:[filter:none]",
         false: "",
       },
     },
@@ -52,12 +52,20 @@ const platButtonVariants = cva(
       {
         browseCurrent: true,
         state: "inactive",
-        className: "disabled:opacity-[0.42] disabled:[filter:grayscale(0.75)]",
+        className:
+          "disabled:opacity-[0.42] disabled:[filter:grayscale(0.75)] hover:border-[var(--border)] hover:bg-[var(--bg-elev-2)] hover:opacity-[0.42] hover:[filter:grayscale(0.75)]",
       },
       {
         browseCurrent: true,
         state: "partial",
-        className: "disabled:opacity-[0.88]",
+        className:
+          "disabled:opacity-[0.88] hover:border-[var(--accent)] hover:bg-[rgba(94,155,255,0.08)] hover:opacity-[0.88]",
+      },
+      {
+        browseCurrent: true,
+        state: "active",
+        className:
+          "hover:border-[var(--ok)] hover:bg-[rgba(78,201,168,0.14)] hover:shadow-[0_0_0_1px_rgba(78,201,168,0.35)]",
       },
     ],
     defaultVariants: {

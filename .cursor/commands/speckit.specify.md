@@ -27,7 +27,7 @@ $ARGUMENTS
 ## 步骤
 
 1. **解析输入**：功能名、用户价值、是否影响 core/CLI/GUI/平台适配。
-2. **检查分支**：建议在 `feat/*` 或新建 `feat/<N>-<name>`（勿在 develop 直接改）。
+2. **检查分支**：Agent 自动切 feature 分支（见 gitflow-spec-kit）；勿在 develop 直接改。
 3. **确定 FEATURE_DIR**：
    - 若已有 `specs/*` 匹配主题则更新该目录
    - 否则新建 `specs/<三位编号>-<kebab-name>/`（编号取现有最大 +1 或用户指定）
@@ -37,7 +37,7 @@ $ARGUMENTS
    - 明确 **不涉及** 用户 `~/.ai-config/` 资产内容变更（除非工具行为本身）
    - 成功标准对齐 constitution §5 验证
 5. **不写实现代码**；仅产出/更新 spec。
-6. 提示用户下一步：`/speckit.plan`
+6. Agent 继续写 `plan.md`（含 `## Todos`），不要求用户输入 `/speckit.plan`。
 
 ## 质量检查
 

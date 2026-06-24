@@ -47,6 +47,7 @@ use ai_config_core::platform;
 use ai_config_core::platform_scan::{self, PlatformAssetEntry, PlatformAssetList};
 use ai_config_core::source;
 use ai_config_core::sync::{agent_link_src, asset_dest_for_at_base};
+use ai_config_core::sync_conflict::SyncConflictReport;
 use ai_config_core::template::McpSyncState;
 use ai_config_store::Store;
 use ai_config_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
@@ -615,6 +616,58 @@ async fn cmd_read_platform_asset(
     command_bridge::read_platform_preview(kind, path, name).await
 }
 
+/// 检测跨平台同步是否会覆盖不同内容（基准 = 左侧当前浏览平台）。
+#[tauri::command]
+async fn cmd_detect_sync_conflict(
+    state: State<'_, AppState>,
+    kind: String,
+    name: String,
+    project: Option<String>,
+    baseline_platform: String,
+    target_platform: String,
+) -> Result<Option<SyncConflictReport>, String> {
+    let kind = parse_kind(&kind)?;
+    let baseline = parse_plat(&baseline_platform)?;
+    let target = parse_plat(&target_platform)?;
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::detect_sync_conflict(
+        default_root,
+        asset_root,
+        deploy_base,
+        kind,
+        name,
+        baseline,
+        target,
+    )
+    .await
+}
+
+/// 按用户所选来源平台执行同步（覆盖目标平台）。
+#[tauri::command]
+async fn cmd_apply_sync_choice(
+    state: State<'_, AppState>,
+    kind: String,
+    name: String,
+    project: Option<String>,
+    source_platform: String,
+    target_platform: String,
+) -> Result<String, String> {
+    let kind = parse_kind(&kind)?;
+    let source = parse_plat(&source_platform)?;
+    let target = parse_plat(&target_platform)?;
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::apply_sync_choice(
+        default_root,
+        asset_root,
+        deploy_base,
+        kind,
+        name,
+        source,
+        target,
+    )
+    .await
+}
+
 /// 单条 MCP server 是否已与平台 `mcp.json` 中同名 key 一致。
 fn mcp_link_state(
     plat: PlatformId,
@@ -856,6 +909,7 @@ asset_retract_source_cmd!(cmd_command_retract_source, AssetKind::Command);
 asset_retract_cmd!(cmd_command_retract, AssetKind::Command);
 
 asset_deploy_cmd!(cmd_mcp_deploy, AssetKind::Mcp);
+asset_deploy_from_platform_cmd!(cmd_mcp_deploy_from_platform, AssetKind::Mcp);
 asset_get_cmd!(cmd_mcp_get, AssetKind::Mcp);
 asset_save_cmd!(cmd_mcp_save, AssetKind::Mcp);
 asset_delete_cmd!(cmd_mcp_delete, AssetKind::Mcp);
@@ -1396,6 +1450,7 @@ pub fn run() {
             cmd_mcp_delete,
             cmd_mcp_retract_source,
             cmd_mcp_deploy,
+            cmd_mcp_deploy_from_platform,
             cmd_mcp_retract,
             cmd_agent_get,
             cmd_agent_save,
@@ -1409,6 +1464,8 @@ pub fn run() {
             cmd_projects_remove,
             cmd_reveal_path,
             cmd_read_platform_asset,
+            cmd_detect_sync_conflict,
+            cmd_apply_sync_choice,
             cmd_assets_transfer,
             cmd_git_bootstrap,
             cmd_git_status,

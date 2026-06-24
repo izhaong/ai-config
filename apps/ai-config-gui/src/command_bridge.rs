@@ -178,3 +178,47 @@ pub async fn add_remote_skills_batch(
     })
     .await
 }
+
+pub async fn detect_sync_conflict(
+    default_root: Utf8PathBuf,
+    asset_root: Utf8PathBuf,
+    deploy_base: Utf8PathBuf,
+    kind: AssetKind,
+    name: String,
+    baseline_plat: PlatformId,
+    target_plat: PlatformId,
+) -> Result<Option<ai_config_core::sync_conflict::SyncConflictReport>, String> {
+    blocking(move || {
+        let scope = scope_roots(&default_root, &asset_root, &deploy_base);
+        ai_config_core::sync_conflict::detect_sync_conflict(
+            &scope,
+            kind,
+            &name,
+            baseline_plat,
+            target_plat,
+        )
+    })
+    .await
+}
+
+pub async fn apply_sync_choice(
+    default_root: Utf8PathBuf,
+    asset_root: Utf8PathBuf,
+    deploy_base: Utf8PathBuf,
+    kind: AssetKind,
+    name: String,
+    source_plat: PlatformId,
+    target_plat: PlatformId,
+) -> Result<String, String> {
+    blocking(move || {
+        let scope = scope_roots(&default_root, &asset_root, &deploy_base);
+        ai_config_core::sync_conflict::apply_sync_choice(
+            &scope,
+            kind,
+            &name,
+            source_plat,
+            target_plat,
+        )
+    })
+    .await
+}

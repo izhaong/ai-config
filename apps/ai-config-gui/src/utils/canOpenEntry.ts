@@ -15,14 +15,9 @@ export function shouldLoadFromSource(
 /** 是否可在抽屉中打开资产 */
 export function canOpenEntry(
   entry: PlatformAssetEntry,
-  activePlatform: Platform,
+  _activePlatform: Platform,
 ): boolean {
   const path = entry.platform_path?.trim() ?? "";
   if (!path) return false;
-
-  if (entry.kind === "mcp") {
-    return hasSourceEntry(entry) || isSourcePlatform(activePlatform);
-  }
-
   return true;
 }

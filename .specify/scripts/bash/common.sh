@@ -170,7 +170,7 @@ get_feature_paths() {
     printf 'FEATURE_DIR=%q\n' "$feature_dir"
     printf 'FEATURE_SPEC=%q\n' "$feature_dir/spec.md"
     printf 'IMPL_PLAN=%q\n' "$feature_dir/plan.md"
-    printf 'TASKS=%q\n' "$feature_dir/tasks.md"
+    printf 'TASKS=%q\n' "$feature_dir/plan.md"   # legacy env name; use plan.md ## Todos
     printf 'RESEARCH=%q\n' "$feature_dir/research.md"
     printf 'DATA_MODEL=%q\n' "$feature_dir/data-model.md"
     printf 'QUICKSTART=%q\n' "$feature_dir/quickstart.md"
@@ -212,6 +212,14 @@ json_escape() {
 
 check_file() { [[ -f "$1" ]] && echo "  ✓ $2" || echo "  ✗ $2"; }
 check_dir() { [[ -d "$1" && -n $(ls -A "$1" 2>/dev/null) ]] && echo "  ✓ $2" || echo "  ✗ $2"; }
+
+# plan.md contains ## Todos with at least one checkbox item
+plan_has_todos() {
+    local plan_file="$1"
+    [[ -f "$plan_file" ]] || return 1
+    grep -qE '^## Todos' "$plan_file" || return 1
+    grep -qE '^- \[[ xX]\]' "$plan_file"
+}
 
 # Resolve a template name to a file path using the priority stack:
 #   1. .specify/templates/overrides/
