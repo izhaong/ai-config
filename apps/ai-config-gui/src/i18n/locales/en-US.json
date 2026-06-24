@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "ai-config",
-    "version": "v0.3.1",
+    "version": "v0.3.2",
     "daemonStopped": "daemon stopped"
   },
   "language": {

@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-24
+
 ### Added
 
 - **GUI 跨项目复制资产**：在 ai-config 源视图勾选资产后，顶栏「复制到项目」可将 skill/rule/agent/command/mcp 从全局或其它项目复制到目标项目 `.ai-config/`（实体副本；目标同名时拒绝）。
@@ -110,6 +112,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CI：`cargo fmt`、clippy 未使用参数、daemon/Windows 交叉编译。
 - GUI Agent/Rule 描述解析与 agent 读取路径。
 
+[0.3.2]: https://github.com/izhaong/ai-config/releases/tag/v0.3.2
 [0.3.1]: https://github.com/izhaong/ai-config/releases/tag/v0.3.1
 [0.3.0]: https://github.com/izhaong/ai-config/releases/tag/v0.3.0
 [0.2.0]: https://github.com/izhaong/ai-config/releases/tag/v0.2.0
