@@ -866,13 +866,8 @@ mod deploy_from_platform_tests {
             "Claude 侧原始安装应保留"
         );
         assert!(
-            cursor_skill.join(".ai-config-deploy.json").is_file(),
-            "目标平台应有下发标记"
-        );
-        assert!(
-            !claude_skill.join(".ai-config-deploy.json").exists()
-                || claude_skill.join("SKILL.md").is_file(),
-            "Claude 侧不应因拷贝而被删除"
+            !cursor_skill.join(".ai-config-deploy.json").exists(),
+            "下发不应生成 deploy marker"
         );
     }
     #[test]

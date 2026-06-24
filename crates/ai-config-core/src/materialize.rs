@@ -1,8 +1,8 @@
 //! 平台下发：复制资产到目标路径（非 symlink），避免删源后各平台链接断裂。
 //!
-//! - `deploy`：目录/文件实体复制 + `.ai-config-deploy.json` 标记；遇历史 symlink 自动迁移
-//! - `retract`：删除本工具下发的副本；兼容收回历史 symlink
-//! - `check`：标记 / legacy symlink / **同名同内容** 判定是否已同步
+//! - `deploy`：目录/文件实体复制；遇历史 symlink 自动迁移
+//! - `retract`：删除本工具下发的副本；兼容收回历史 symlink 与 legacy marker
+//! - `check`：legacy marker / legacy symlink / **同名同内容** 判定是否已同步
 //! - `copy_tree` / `resolve_copy_source`：沿 symlink 找到真实路径并做硬拷贝
 
 use std::collections::HashMap;
@@ -51,18 +51,6 @@ fn read_marker(marker: &Utf8Path) -> Option<Utf8PathBuf> {
         return None;
     }
     Some(Utf8PathBuf::from(parsed.source))
-}
-
-fn write_marker(marker: &Utf8Path, src: &Utf8Path) -> Result<(), CoreError> {
-    if let Some(parent) = marker.parent() {
-        paths::ensure_parent_dir(parent)?;
-    }
-    let body = DeployMarker {
-        version: 1,
-        source: src.to_string(),
-    };
-    let json = serde_json::to_string_pretty(&body).map_err(|e| CoreError::Io(e.into()))?;
-    fs::write(marker.as_std_path(), json).map_err(CoreError::Io)
 }
 
 fn canonical_src(src: &Utf8Path) -> Utf8PathBuf {
@@ -166,10 +154,7 @@ pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
         let _ = link::unlink(dest);
     } else {
         match check(dest, &canonical) {
-            DeployHealth::Linked { .. } if has_copy_marker(dest) => return Ok(()),
-            DeployHealth::Linked { .. } => {
-                link::remove_dest_path(dest)?;
-            }
+            DeployHealth::Linked { .. } => return Ok(()),
             DeployHealth::Broken => link::remove_dest_path(dest)?,
             DeployHealth::Unlinked => {
                 if dest.exists() {
@@ -188,10 +173,8 @@ pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
 
     if material_src.is_dir() {
         copy_dir_materialized(&material_src, dest)?;
-        write_marker(&dest.join(MARKER_NAME), &canonical)?;
     } else {
         fs::copy(material_src.as_std_path(), dest.as_std_path()).map_err(CoreError::Io)?;
-        write_marker(&marker_path_for_dest(dest), &canonical)?;
     }
     Ok(())
 }
@@ -221,12 +204,15 @@ pub fn retract(dest: &Utf8Path) -> Result<(), CoreError> {
         return fs::remove_dir_all(dest.as_std_path()).map_err(CoreError::Io);
     }
 
-    Err(CoreError::LinkFailed {
-        src: String::new(),
-        dest: dest.to_string(),
-        reason: "目标不是本工具下发的副本或链接".to_string(),
-        hint: "仅收回 ai-config 复制/链接的资产;手工目录请自行删除".to_string(),
-    })
+    if fs::symlink_metadata(dest.as_std_path()).is_ok() {
+        if dest.is_dir() {
+            fs::remove_dir_all(dest.as_std_path()).map_err(CoreError::Io)
+        } else {
+            fs::remove_file(dest.as_std_path()).map_err(CoreError::Io)
+        }
+    } else {
+        Ok(())
+    }
 }
 
 /// 导入到源后，将平台上**已存在**的同名资产纳管为从 `src` 下发（写标记，不覆盖内容）。
@@ -246,24 +232,12 @@ pub fn adopt_existing_deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), Core
             if is_symlink_entry(dest) {
                 return deploy(src, dest);
             }
-            if !has_copy_marker(dest) {
-                if dest.is_dir() {
-                    write_marker(&dest.join(MARKER_NAME), &canonical)?;
-                } else if dest.is_file() {
-                    write_marker(&marker_path_for_dest(dest), &canonical)?;
-                }
-            }
             Ok(())
         }
         DeployHealth::Broken => deploy(src, dest),
         DeployHealth::Unlinked => {
             if is_symlink_entry(dest) {
                 return Ok(());
-            }
-            if dest.is_dir() {
-                write_marker(&dest.join(MARKER_NAME), &canonical)?;
-            } else if dest.is_file() {
-                write_marker(&marker_path_for_dest(dest), &canonical)?;
             }
             Ok(())
         }
@@ -443,7 +417,7 @@ mod tests {
 
         deploy(&skill, &dest).unwrap();
         assert!(dest.join("SKILL.md").is_file());
-        assert!(dest.join(MARKER_NAME).is_file());
+        assert!(!dest.join(MARKER_NAME).exists());
         assert!(!is_symlink_entry(&dest));
         assert_eq!(
             check(&dest, &skill),
@@ -473,7 +447,7 @@ mod tests {
         deploy(&src, &dest).unwrap();
         assert!(!is_symlink_entry(&dest));
         assert!(dest.join("SKILL.md").is_file());
-        assert!(has_copy_marker(&dest));
+        assert!(!has_copy_marker(&dest));
         assert_eq!(
             fs::read_to_string(dest.join("SKILL.md").as_std_path()).unwrap(),
             "# migrated"
@@ -522,7 +496,7 @@ mod tests {
         fs::write(dest.join("SKILL.md").as_std_path(), "# x").unwrap();
 
         adopt_existing_deploy(&src, &dest).unwrap();
-        assert!(dest.join(MARKER_NAME).is_file());
+        assert!(!dest.join(MARKER_NAME).exists());
         assert!(matches!(check(&dest, &src), DeployHealth::Linked { .. }));
     }
 

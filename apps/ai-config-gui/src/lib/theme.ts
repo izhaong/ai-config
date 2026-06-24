@@ -18,7 +18,7 @@ export function getStoredThemeMode(): ThemeMode {
   } catch {
     /* private mode / SSR */
   }
-  return "dark";
+  return "system";
 }
 
 export function resolveThemeMode(mode: ThemeMode): ResolvedTheme {
@@ -62,7 +62,7 @@ export function subscribeThemeSystemChange(onChange: () => void): () => void {
   return () => mq.removeEventListener("change", onChange);
 }
 
-/** 内联脚本用：无 localStorage 时回退暗色 */
+/** 内联脚本用：无 localStorage 时回退跟随系统 */
 export function resolveThemeModeForBoot(
   mode: ThemeMode,
   prefersDark: boolean,
