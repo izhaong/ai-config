@@ -330,10 +330,8 @@ mod tests {
         )
         .unwrap();
 
-        let hermes_skill = Utf8PathBuf::from_path_buf(
-            home.join(".hermes/skills").join(skill_name),
-        )
-        .unwrap();
+        let hermes_skill =
+            Utf8PathBuf::from_path_buf(home.join(".hermes/skills").join(skill_name)).unwrap();
         fs::create_dir_all(&hermes_skill).unwrap();
         fs::write(hermes_skill.join("SKILL.md"), "# hermes copy\n").unwrap();
 
@@ -359,11 +357,7 @@ mod tests {
 
         let codex_mcp = Utf8PathBuf::from_path_buf(home.join(".codex/mcp.json")).unwrap();
         fs::create_dir_all(codex_mcp.parent().unwrap()).unwrap();
-        fs::write(
-            &codex_mcp,
-            r#"{"mcpServers":{"other":{"command":"node"}}}"#,
-        )
-        .unwrap();
+        fs::write(&codex_mcp, r#"{"mcpServers":{"other":{"command":"node"}}}"#).unwrap();
 
         let r = compute_report(&root).unwrap();
         assert_eq!(r.wrong_source, 0, "平台自有 mcp.json 差异不计入异常");

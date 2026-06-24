@@ -492,26 +492,12 @@ fn compute_entry_states(
             } else if let Some(src_path) = src.as_ref() {
                 ide_asset_link_state(plat, kind, name, src_path, deploy_base)
             } else {
-                platform_mirror_link_state(
-                    kind,
-                    name,
-                    platform_path,
-                    plat,
-                    deploy_base,
-                    asset_root,
-                )
+                platform_mirror_link_state(kind, name, platform_path, plat, deploy_base, asset_root)
             }
         } else if !platform::supports_at_scope(plat, kind, deploy_base) {
             LinkState::Unlinked
         } else {
-            platform_mirror_link_state(
-                kind,
-                name,
-                platform_path,
-                plat,
-                deploy_base,
-                asset_root,
-            )
+            platform_mirror_link_state(kind, name, platform_path, plat, deploy_base, asset_root)
         };
         states.insert(plat, st);
     }
@@ -601,9 +587,8 @@ fn platform_mirror_link_state(
             return match sync {
                 crate::template::McpSyncState::Linked => LinkState::Synced,
                 crate::template::McpSyncState::Unlinked => LinkState::Missing,
-                crate::template::McpSyncState::WrongValue | crate::template::McpSyncState::Broken => {
-                    LinkState::Unlinked
-                }
+                crate::template::McpSyncState::WrongValue
+                | crate::template::McpSyncState::Broken => LinkState::Unlinked,
             };
         }
     };
@@ -1428,7 +1413,10 @@ mod tests {
             Some(&LinkState::Synced),
             "仅存在于 Cursor 的 MCP 在 Cursor 视图应显示已同步"
         );
-        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Unlinked));
+        assert_eq!(
+            states.get(&PlatformId::AiConfig),
+            Some(&LinkState::Unlinked)
+        );
     }
 
     #[test]
@@ -1492,11 +1480,7 @@ mod tests {
 
         let cursor_mcp = home.join(".cursor/mcp.json");
         crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
-        fs::write(
-            &cursor_mcp,
-            r#"{"mcpServers":{"demo":{"command":"npx"}}}"#,
-        )
-        .unwrap();
+        fs::write(&cursor_mcp, r#"{"mcpServers":{"demo":{"command":"npx"}}}"#).unwrap();
 
         let asset_root = home.join(".ai-config");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
@@ -1569,10 +1553,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            dest,
-            project_root.join("skills").join("git-sync-github")
-        );
+        assert_eq!(dest, project_root.join("skills").join("git-sync-github"));
         assert!(dest.join("SKILL.md").is_file());
         assert_eq!(
             fs::read_to_string(dest.join("SKILL.md").as_std_path()).unwrap(),
@@ -1586,15 +1567,8 @@ mod tests {
         let root = Utf8Path::from_path(tmp.path()).unwrap();
         touch(&root.join("skills").join("x").join("SKILL.md"), "# x");
 
-        let err = copy_asset_to_asset_root(
-            AssetKind::Skill,
-            "x",
-            root,
-            root,
-            root,
-            root,
-        )
-        .unwrap_err();
+        let err =
+            copy_asset_to_asset_root(AssetKind::Skill, "x", root, root, root, root).unwrap_err();
         assert!(err.to_string().contains("相同"));
     }
 

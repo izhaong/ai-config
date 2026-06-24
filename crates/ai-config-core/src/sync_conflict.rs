@@ -288,10 +288,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn scope<'a>(
-        home: &'a Utf8Path,
-        asset_root: &'a Utf8Path,
-    ) -> ScopeRoots<'a> {
+    fn scope<'a>(home: &'a Utf8Path, asset_root: &'a Utf8Path) -> ScopeRoots<'a> {
         ScopeRoots {
             default_root: asset_root,
             asset_root,

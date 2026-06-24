@@ -627,7 +627,9 @@ mod tests {
     #[test]
     fn get_server_config_from_deploy_file_reads_mcp_json() {
         let tmp = TempDir::new().unwrap();
-        let path = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap().join("mcp.json");
+        let path = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+            .unwrap()
+            .join("mcp.json");
         crate::paths::ensure_parent_dir(&path).unwrap();
         fs::write(
             &path,
@@ -642,7 +644,9 @@ mod tests {
     #[test]
     fn get_server_config_from_deploy_file_errors_when_server_missing() {
         let tmp = TempDir::new().unwrap();
-        let path = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap().join("mcp.json");
+        let path = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf())
+            .unwrap()
+            .join("mcp.json");
         crate::paths::ensure_parent_dir(&path).unwrap();
         fs::write(&path, r#"{"mcpServers":{}}"#).unwrap();
 

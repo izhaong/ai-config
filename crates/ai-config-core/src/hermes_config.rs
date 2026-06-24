@@ -172,9 +172,7 @@ pub fn get_mcp_server_config(
             hint: "config.yaml 无根 mapping".into(),
         });
     };
-    let Some(YamlValue::Mapping(servers)) =
-        map.get(YamlValue::String("mcp_servers".into()))
-    else {
+    let Some(YamlValue::Mapping(servers)) = map.get(YamlValue::String("mcp_servers".into())) else {
         return Err(CoreError::AssetNotFound {
             kind: crate::model::AssetKind::Mcp,
             name: server_name.into(),

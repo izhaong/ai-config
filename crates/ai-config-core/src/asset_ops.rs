@@ -514,10 +514,8 @@ fn deploy_mcp_from_platform(
     let from_adapter =
         platform::for_scope_with_asset(from_plat, scope.deploy_base, scope.asset_root)?;
     let to_adapter = platform::for_scope_with_asset(to_plat, scope.deploy_base, scope.asset_root)?;
-    let config = crate::platform_scan::read_platform_mcp_server_config(
-        from_adapter.as_ref(),
-        name,
-    )?;
+    let config =
+        crate::platform_scan::read_platform_mcp_server_config(from_adapter.as_ref(), name)?;
     let dest = to_adapter.mcp_deploy_path();
     mcp_json::upsert_server_on_platform(to_plat, &dest, name, &config, None)?;
     Ok(format!(
