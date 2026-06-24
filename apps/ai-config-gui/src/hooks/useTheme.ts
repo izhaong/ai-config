@@ -34,7 +34,7 @@ export function useTheme() {
   const mode = useSyncExternalStore(
     subscribeThemeStore,
     getThemeSnapshot,
-    () => "dark" as ThemeMode,
+    () => "system" as ThemeMode,
   );
 
   useEffect(() => {

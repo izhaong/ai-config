@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isThemeMode, resolveThemeModeForBoot } from "./theme";
+import {
+  getStoredThemeMode,
+  isThemeMode,
+  resolveThemeModeForBoot,
+  THEME_STORAGE_KEY,
+} from "./theme";
 
 describe("theme", () => {
   it("isThemeMode", () => {
@@ -9,6 +14,11 @@ describe("theme", () => {
     expect(isThemeMode("system")).toBe(true);
     expect(isThemeMode("sepia")).toBe(false);
     expect(isThemeMode(null)).toBe(false);
+  });
+
+  it("getStoredThemeMode defaults to system", () => {
+    localStorage.removeItem(THEME_STORAGE_KEY);
+    expect(getStoredThemeMode()).toBe("system");
   });
 
   it("resolveThemeModeForBoot", () => {

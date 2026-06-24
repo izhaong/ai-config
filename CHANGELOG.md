@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **GUI 主题默认跟随系统**：首次打开或未设置时主题为 `system`，随系统深浅色切换。
+- **资产下发不再生成 `.ai-config-deploy.json`**：同步状态改由内容比对判定；仍兼容读取历史 marker 与 symlink。
+
 ## [0.3.2] - 2026-06-24
 
 ### Added

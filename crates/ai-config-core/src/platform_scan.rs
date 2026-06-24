@@ -639,13 +639,7 @@ fn deploy_health_to_link_state(
     health: crate::materialize::DeployHealth,
 ) -> LinkState {
     match health {
-        crate::materialize::DeployHealth::Linked { .. } => {
-            if crate::materialize::is_managed_deploy(dest) {
-                LinkState::Linked
-            } else {
-                LinkState::Synced
-            }
-        }
+        crate::materialize::DeployHealth::Linked { .. } => LinkState::Linked,
         crate::materialize::DeployHealth::Broken => LinkState::Broken,
         crate::materialize::DeployHealth::Unlinked => {
             if fs::symlink_metadata(dest.as_std_path()).is_ok() {
@@ -1211,8 +1205,8 @@ mod tests {
         assert!(dest.join("SKILL.md").is_file());
         assert!(dest.join("scripts/run.sh").is_file());
         assert!(
-            claude_skills.join(".ai-config-deploy.json").is_file(),
-            "导入后应纳管 Claude 侧已有 skill"
+            !claude_skills.join(".ai-config-deploy.json").exists(),
+            "导入纳管不应生成 deploy marker"
         );
 
         let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
@@ -1272,7 +1266,7 @@ mod tests {
             &source_scan,
         );
         assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Synced));
-        assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Synced));
     }
 
     #[test]

@@ -298,13 +298,7 @@ async fn cmd_list(
                     _ => src.clone(),
                 };
                 match materialize::check(&dest, &expected_src) {
-                    materialize::DeployHealth::Linked { .. } => {
-                        if materialize::is_managed_deploy(&dest) {
-                            LinkState::Linked
-                        } else {
-                            LinkState::Synced
-                        }
-                    }
+                    materialize::DeployHealth::Linked { .. } => LinkState::Linked,
                     materialize::DeployHealth::Broken => LinkState::Broken,
                     materialize::DeployHealth::Unlinked => LinkState::Unlinked,
                 }
