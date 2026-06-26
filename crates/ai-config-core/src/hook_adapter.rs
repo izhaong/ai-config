@@ -20,9 +20,33 @@ pub fn platform_hooks_dir(deploy_base: &Utf8Path, plat: PlatformId) -> Utf8PathB
     match plat {
         PlatformId::Cursor => deploy_base.join(".cursor/hooks"),
         PlatformId::Codex => deploy_base.join(".codex/hooks"),
-        PlatformId::Claude => deploy_base.join(".claude/hooks"),
+        PlatformId::Claude => claude_hooks_script_dir(deploy_base),
         PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
         PlatformId::AiConfig => hook::hooks_dir(deploy_base),
+    }
+}
+
+/// 项目已用 `.cursor/hooks/` 作为 Claude/Cursor 共享脚本目录。
+pub fn project_uses_shared_cursor_hooks(deploy_base: &Utf8Path) -> bool {
+    if deploy_base == paths::home_dir() {
+        return false;
+    }
+    let settings = deploy_base.join(".claude/settings.json");
+    if settings.is_file() {
+        if let Ok(content) = fs::read_to_string(settings.as_std_path()) {
+            if content.contains(".cursor/hooks/") {
+                return true;
+            }
+        }
+    }
+    deploy_base.join(".cursor/hooks").is_dir()
+}
+
+fn claude_hooks_script_dir(deploy_base: &Utf8Path) -> Utf8PathBuf {
+    if project_uses_shared_cursor_hooks(deploy_base) {
+        deploy_base.join(".cursor/hooks")
+    } else {
+        deploy_base.join(".claude/hooks")
     }
 }
 
@@ -142,10 +166,15 @@ pub fn retract(
     }
 
     if script_dest.exists() {
-        if script_dest.is_dir() {
-            fs::remove_dir_all(script_dest.as_std_path()).map_err(CoreError::Io)?;
-        } else {
-            fs::remove_file(script_dest.as_std_path()).map_err(CoreError::Io)?;
+        let shared_cursor = plat == PlatformId::Claude
+            && project_uses_shared_cursor_hooks(deploy_base)
+            && script_dest.as_str().contains("/.cursor/hooks/");
+        if !shared_cursor {
+            if script_dest.is_dir() {
+                fs::remove_dir_all(script_dest.as_std_path()).map_err(CoreError::Io)?;
+            } else {
+                fs::remove_file(script_dest.as_std_path()).map_err(CoreError::Io)?;
+            }
         }
     }
 
@@ -748,16 +777,28 @@ fn config_contains_token(path: &Utf8Path, token: &str) -> bool {
     let Ok(existing) = read_json(path) else {
         return false;
     };
-    json_contains_str(&existing, token)
-}
-
-fn json_contains_str(v: &Value, needle: &str) -> bool {
-    match v {
-        Value::String(s) => s.contains(needle),
-        Value::Array(arr) => arr.iter().any(|x| json_contains_str(x, needle)),
-        Value::Object(map) => map.values().any(|x| json_contains_str(x, needle)),
-        _ => false,
+    let script = token.strip_prefix("/hooks/").unwrap_or(token);
+    let cursor_flat = path.as_str().contains(".cursor/hooks.json");
+    if cursor_flat {
+        let Some(hooks) = existing.get("hooks").and_then(|v| v.as_object()) else {
+            return false;
+        };
+        return hooks.values().any(|entries| {
+            entries
+                .as_array()
+                .is_some_and(|arr| arr.iter().any(|e| entry_matches_token(e, token, true)))
+        });
     }
+    if let Some(hooks) = existing.get("hooks").and_then(|v| v.as_object()) {
+        return hooks.values().any(|entries| {
+            entries.as_array().is_some_and(|arr| {
+                arr.iter()
+                    .any(|e| entry_matches_token(e, token, false))
+            })
+        });
+    }
+    let _ = script;
+    false
 }
 
 fn hermes_contains_hook(hook_name: &str) -> bool {
@@ -824,6 +865,8 @@ fn codex_command_path(deploy_base: &Utf8Path, script_filename: &str) -> String {
 fn claude_command_path(deploy_base: &Utf8Path, script_filename: &str) -> String {
     if deploy_base == paths::home_dir() {
         absolute_command_path(deploy_base, PlatformId::Claude, script_filename)
+    } else if project_uses_shared_cursor_hooks(deploy_base) {
+        format!(".cursor/hooks/{script_filename}")
     } else {
         format!("${{CLAUDE_PROJECT_DIR}}/.claude/hooks/{script_filename}")
     }
@@ -1067,18 +1110,32 @@ fn merge_json_hook_events(
 }
 
 fn entry_matches_token(entry: &Value, token: &str, cursor_flat: bool) -> bool {
-    if json_contains_str(entry, token) {
-        return true;
-    }
+    let script = token.strip_prefix("/hooks/").unwrap_or(token);
     if cursor_flat {
-        let script = token.strip_prefix("/hooks/").unwrap_or(token);
+        if entry.get("managedBy").and_then(|v| v.as_str()) != Some(MANAGED_BY) {
+            return false;
+        }
         return entry.get("hook").and_then(|v| v.as_str()) == Some(script)
-            && entry.get("managedBy").and_then(|v| v.as_str()) == Some(MANAGED_BY);
+            || entry
+                .get("command")
+                .and_then(|v| v.as_str())
+                .is_some_and(|c| hook::filename_from_command(c).as_deref() == Some(script));
     }
-    entry
-        .get("hooks")
-        .and_then(|v| v.as_array())
-        .is_some_and(|arr| arr.iter().any(|h| json_contains_str(h, token)))
+    if let Some(arr) = entry.get("hooks").and_then(|v| v.as_array()) {
+        return arr.iter().any(|h| hook_entry_matches_script(h, script));
+    }
+    hook_entry_matches_script(entry, script)
+}
+
+fn hook_entry_matches_script(entry: &Value, script: &str) -> bool {
+    if entry.get("managedBy").and_then(|v| v.as_str()) != Some(MANAGED_BY) {
+        return false;
+    }
+    entry.get("hook").and_then(|v| v.as_str()) == Some(script)
+        || entry
+            .get("command")
+            .and_then(|v| v.as_str())
+            .is_some_and(|c| hook::filename_from_command(c).as_deref() == Some(script))
 }
 
 fn remove_cursor_codex_managed(existing: Value, token: &str) -> Result<Value, CoreError> {
@@ -1092,9 +1149,19 @@ fn merge_claude_settings(deploy_base: &Utf8Path, spec: &HookScriptSpec) -> Resul
     } else {
         None
     };
+    let mcp_servers = existing
+        .as_ref()
+        .and_then(|e| e.get("mcpServers"))
+        .cloned();
     let token = hook::managed_command_token(&spec.filename);
     let src = build_codex_claude_group(spec, deploy_base, PlatformId::Claude);
-    let merged = merge_json_hook_events(existing, &token, src, false)?;
+    let mut merged = merge_json_hook_events(existing, &token, src, false)?;
+    if let Some(mcp) = mcp_servers {
+        merged
+            .as_object_mut()
+            .ok_or_else(|| CoreError::InvalidPath("settings.json 顶层须为 object".into()))?
+            .insert("mcpServers".into(), mcp);
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent.as_std_path()).map_err(CoreError::Io)?;
     }
@@ -1626,8 +1693,7 @@ mod tests {
         });
         let merged = remove_claude_managed(existing, "/hooks/run.sh").unwrap();
         let arr = merged["hooks"]["PostToolUse"].as_array().unwrap();
-        assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["hooks"][0]["command"], "/tmp/third-party.sh");
+        assert_eq!(arr.len(), 2, "无 managedBy 的第三方条目不得被误删");
     }
 
     #[test]
@@ -1968,6 +2034,123 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn merge_cursor_preserves_unmanaged_user_hooks() {
+        let tmp = TempDir::new().unwrap();
+        let asset = tmp.path().join("asset");
+        let hooks = asset.join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        std::fs::write(
+            asset.join("hooks.json"),
+            r#"{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "command": "./hooks/speak-lifecycle.py sessionStart" }
+    ]
+  }
+}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            hooks.join("speak-lifecycle.py"),
+            "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
+
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".cursor/hooks")).unwrap();
+        std::fs::write(
+            repo.join(".cursor/hooks.json"),
+            r#"{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "command": ".cursor/hooks/session-branch-check.py", "timeout": 10 }
+    ],
+    "preToolUse": [
+      { "command": ".cursor/hooks/block-edit-protected-branch.py", "timeout": 10 }
+    ],
+    "beforeShellExecution": [
+      { "command": ".cursor/hooks/speak-lifecycle.py beforeShellExecution", "timeout": 3 }
+    ]
+  }
+}"#,
+        )
+        .unwrap();
+
+        let asset_u = Utf8PathBuf::from_path_buf(asset).unwrap();
+        let repo_u = Utf8PathBuf::from_path_buf(repo.clone()).unwrap();
+        deploy(&asset_u, &repo_u, "speak-lifecycle.py", PlatformId::Cursor).unwrap();
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(repo.join(".cursor/hooks.json")).unwrap())
+                .unwrap();
+        let hooks_obj = doc["hooks"].as_object().unwrap();
+        assert!(hooks_obj.contains_key("preToolUse"));
+        assert!(hooks_obj.contains_key("beforeShellExecution"));
+        let pre = hooks_obj["preToolUse"].as_array().unwrap();
+        assert!(
+            pre.iter().any(|e| e["command"]
+                .as_str()
+                .is_some_and(|c| c.contains("block-edit-protected-branch.py")))
+        );
+    }
+
+    #[test]
+    fn merge_claude_settings_preserves_mcp_servers() {
+        let tmp = TempDir::new().unwrap();
+        let asset = tmp.path().join("asset");
+        let hooks = asset.join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        std::fs::write(
+            asset.join("hooks.json"),
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":"./hooks/speak-lifecycle.py sessionStart"}]}}"#,
+        )
+        .unwrap();
+        std::fs::write(hooks.join("speak-lifecycle.py"), "#!/usr/bin/env python3\n").unwrap();
+
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        std::fs::write(
+            repo.join(".claude/settings.json"),
+            r#"{
+  "mcpServers": { "gitea": { "command": "npx", "args": ["-y", "gitea-mcp"] } },
+  "hooks": { "SessionStart": [] }
+}"#,
+        )
+        .unwrap();
+
+        let asset_u = Utf8PathBuf::from_path_buf(asset).unwrap();
+        let repo_u = Utf8PathBuf::from_path_buf(repo.clone()).unwrap();
+        deploy(&asset_u, &repo_u, "speak-lifecycle.py", PlatformId::Claude).unwrap();
+
+        let doc: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(repo.join(".claude/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(doc["mcpServers"]["gitea"]["command"], "npx");
+    }
+
+    #[test]
+    fn claude_shared_cursor_hooks_uses_cursor_path() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".cursor/hooks")).unwrap();
+        std::fs::create_dir_all(repo.join(".claude")).unwrap();
+        std::fs::write(
+            repo.join(".claude/settings.json"),
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"command":".cursor/hooks/foo.py"}]}]}}"#,
+        )
+        .unwrap();
+        let repo_u = Utf8PathBuf::from_path_buf(repo).unwrap();
+        assert!(project_uses_shared_cursor_hooks(&repo_u));
+        assert_eq!(
+            platform_hooks_dir(&repo_u, PlatformId::Claude),
+            repo_u.join(".cursor/hooks")
+        );
     }
 }
 

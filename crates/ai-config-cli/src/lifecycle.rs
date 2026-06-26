@@ -36,6 +36,7 @@ use ai_config_core::secrets as core_secrets;
 use ai_config_core::source;
 use ai_config_core::sync;
 use ai_config_core::template::McpSyncState;
+use ai_config_core::workspace;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
@@ -47,18 +48,38 @@ struct SyncContext {
     /// secrets 已加载(key→value)。**绝不**回显 value 到日志 / stdout / JSON。
     secrets_pairs: Vec<(String, String)>,
     actions: Vec<SyncAction>,
+    deploy_base: camino::Utf8PathBuf,
 }
 
 fn load_context(default_root: &Utf8Path) -> Result<SyncContext, CoreError> {
-    let scan = source::scan_project_root(default_root)?;
-    let project = ai_config_core::model::Project::new("default", default_root.to_path_buf());
-    let actions = sync::compute_for_project(&project, default_root)?;
+    let roots = paths::resolve_sync_roots(default_root);
+    load_context_from_roots(&roots)
+}
+
+fn load_context_from_roots(roots: &paths::SyncRoots) -> Result<SyncContext, CoreError> {
+    let scan = source::scan_with_override(&roots.asset_root, &roots.global_default)?;
+    let name = roots
+        .repo_root
+        .file_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "default".to_string());
+    let project = ai_config_core::model::Project::new(name, roots.repo_root.clone());
+    let actions = sync::compute_for_sync_roots(&project, roots)?;
     let pairs = core_secrets::load()?;
     Ok(SyncContext {
         scan,
         secrets_pairs: pairs,
         actions,
+        deploy_base: roots.deploy_base.clone(),
     })
+}
+
+fn load_context_for_member(
+    workspace_root: &Utf8Path,
+    member: &Utf8Path,
+) -> Result<SyncContext, CoreError> {
+    let roots = workspace::resolve_member_sync_roots(member, workspace_root);
+    load_context_from_roots(&roots)
 }
 
 fn all_platforms() -> [PlatformId; 4] {
@@ -181,6 +202,19 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
                     _ => src.clone(),
                 };
                 let label = format!("Create {} → {}", kind, dest);
+                if paths::is_project_deploy_base(&ctx.deploy_base)
+                    && dest.exists()
+                    && !materialize::is_managed_deploy(dest)
+                    && kind != "hook"
+                {
+                    out.push(Outcome::skipped(
+                        label,
+                        *platform,
+                        kind,
+                        "项目已有非托管文件，跳过覆盖",
+                    ));
+                    continue;
+                }
                 // 确保父目录存在
                 if let Some(parent) = dest.parent() {
                     if !parent.as_str().is_empty() && !parent.exists() {
@@ -297,6 +331,22 @@ struct InstallReport {
     outcomes: Vec<Outcome>,
     secrets: SecretsSummary,
     exit_code: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace: Option<WorkspaceInstallReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceInstallReport {
+    workspace: String,
+    members: Vec<WorkspaceMemberReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceMemberReport {
+    path: String,
+    assets_synced: usize,
+    failed: usize,
+    outcomes: Vec<Outcome>,
 }
 
 #[derive(Debug, Serialize)]
@@ -313,7 +363,10 @@ struct MissingSecret {
 }
 
 /// `ai-config install`(PRD §5 场景 A / §10 A-1)
-pub fn run_install(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+pub fn run_install(default_root: &Utf8Path, workspace: bool, mode: OutputMode) -> ExitCode {
+    if workspace {
+        return run_install_workspace(default_root, mode);
+    }
     // 1. 初始化 ~/.config/ai-config/(若不在)
     let config_dir = ai_config_home().join(".config").join("ai-config");
     let config_dir_created = !config_dir.exists();
@@ -372,6 +425,7 @@ pub fn run_install(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
         outcomes,
         secrets: secrets_summary,
         exit_code: code,
+        workspace: None,
     };
 
     if mode.is_json() {
@@ -403,6 +457,115 @@ pub fn run_install(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
                 ),
             );
         }
+    }
+
+    ExitCode::from(code)
+}
+
+fn run_install_workspace(workspace_root: &Utf8Path, mode: OutputMode) -> ExitCode {
+    let config_dir = ai_config_home().join(".config").join("ai-config");
+    let config_dir_created = !config_dir.exists();
+    if config_dir_created {
+        if let Err(e) = std::fs::create_dir_all(config_dir.as_std_path()) {
+            emit_error_envelope(
+                mode,
+                exit_code::FS_ERROR,
+                &format!("创建 {} 失败: {e}", config_dir),
+                Some("检查 $HOME 权限"),
+            );
+            return ExitCode::from(exit_code::FS_ERROR);
+        }
+    }
+
+    let members = match workspace::discover_members(workspace_root) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+            return ExitCode::from(e.exit_code());
+        }
+    };
+
+    let mut member_reports = Vec::new();
+    let mut all_outcomes = Vec::new();
+    let mut total_ok = 0usize;
+    let mut total_failed = 0usize;
+
+    for member in &members {
+        let ctx = match load_context_for_member(workspace_root, member) {
+            Ok(c) => c,
+            Err(e) => {
+                emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
+                return ExitCode::from(e.exit_code());
+            }
+        };
+        let outcomes = execute_all_actions(&ctx);
+        let ok = outcomes
+            .iter()
+            .filter(|o| o.result == "ok" || o.result == "skipped")
+            .count();
+        let failed = outcomes.iter().filter(|o| o.result == "failed").count();
+        total_ok += ok;
+        total_failed += failed;
+        if !mode.is_quiet() && !mode.is_json() {
+            emit_line(
+                mode,
+                format!(
+                    "==> {} ({} ok, {} failed)",
+                    member,
+                    ok,
+                    failed
+                ),
+            );
+        }
+        member_reports.push(WorkspaceMemberReport {
+            path: member.as_str().to_string(),
+            assets_synced: ok,
+            failed,
+            outcomes: outcomes.clone(),
+        });
+        all_outcomes.extend(outcomes);
+    }
+
+    let secrets_summary = SecretsSummary {
+        file_exists: core_secrets::default_path().exists(),
+        key_count: core_secrets::load().map(|p| p.len()).unwrap_or(0),
+        missing: Vec::new(),
+    };
+
+    let code = if total_failed > 0 {
+        exit_code::PARTIAL_FAILURE
+    } else {
+        exit_code::SUCCESS
+    };
+
+    let report = InstallReport {
+        ok: code == exit_code::SUCCESS,
+        config_dir: config_dir.as_str().to_string(),
+        config_dir_created,
+        assets_synced: total_ok,
+        platforms: all_platforms().len(),
+        outcomes: all_outcomes,
+        secrets: secrets_summary,
+        exit_code: code,
+        workspace: Some(WorkspaceInstallReport {
+            workspace: workspace_root.as_str().to_string(),
+            members: member_reports,
+        }),
+    };
+
+    if mode.is_json() {
+        emit_json(mode, &report);
+    } else if !mode.is_quiet() {
+        emit_line(
+            mode,
+            format!(
+                "workspace {}: {} 成员, {} 项下发, {} 失败",
+                workspace_root,
+                members.len(),
+                total_ok,
+                total_failed
+            ),
+        );
     }
 
     ExitCode::from(code)
@@ -537,9 +700,38 @@ pub struct SyncReport {
 }
 
 /// `ai-config sync` — 返回结构化报告（CLI / MCP 共用）。
-pub fn sync_report(default_root: &Utf8Path) -> Result<SyncReport, CoreError> {
+pub fn sync_report(default_root: &Utf8Path, workspace: bool) -> Result<SyncReport, CoreError> {
+    if workspace {
+        return sync_report_workspace(default_root);
+    }
     let ctx = load_context(default_root)?;
-    let mut outcomes = execute_all_actions(&ctx);
+    let outcomes = execute_all_actions(&ctx);
+    let synced = outcomes
+        .iter()
+        .filter(|o| o.result == "ok" || o.result == "skipped")
+        .count();
+    let failed = outcomes.iter().filter(|o| o.result == "failed").count();
+    let code = if failed > 0 {
+        exit_code::PARTIAL_FAILURE
+    } else {
+        exit_code::SUCCESS
+    };
+    Ok(SyncReport {
+        ok: code == exit_code::SUCCESS,
+        synced,
+        failed,
+        outcomes,
+        exit_code: code,
+    })
+}
+
+fn sync_report_workspace(workspace_root: &Utf8Path) -> Result<SyncReport, CoreError> {
+    let members = workspace::discover_members(workspace_root)?;
+    let mut outcomes = Vec::new();
+    for member in &members {
+        let ctx = load_context_for_member(workspace_root, member)?;
+        outcomes.extend(execute_all_actions(&ctx));
+    }
     let synced = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
@@ -560,8 +752,8 @@ pub fn sync_report(default_root: &Utf8Path) -> Result<SyncReport, CoreError> {
 }
 
 /// `ai-config sync`(PRD §10 A-5)
-pub fn run_sync(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let report = match sync_report(default_root) {
+pub fn run_sync(default_root: &Utf8Path, workspace: bool, mode: OutputMode) -> ExitCode {
+    let report = match sync_report(default_root, workspace) {
         Ok(r) => r,
         Err(e) => {
             emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
@@ -1328,10 +1520,33 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("home");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        let report = super::sync_report(&root).expect("sync_report");
+        let report = super::sync_report(&root, false).expect("sync_report");
         assert!(!report.outcomes.is_empty());
         assert!(report.synced > 0 || report.failed > 0);
         drop(root_tmp);
+    }
+
+    #[test]
+    fn workspace_install_discovers_parent_and_submodule() {
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let ws = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let home_tmp = tempfile::tempdir().expect("home");
+        let _home = HomeGuard::set_to(home_tmp.path());
+
+        std::fs::create_dir_all(ws.join(".ai-config/skills/foo")).unwrap();
+        std::fs::write(ws.join(".ai-config/skills/foo/SKILL.md"), "SKILL").unwrap();
+        std::fs::create_dir_all(ws.join("child")).unwrap();
+        std::fs::write(
+            ws.join(".gitmodules"),
+            "[submodule \"child\"]\n\tpath = child\n",
+        )
+        .unwrap();
+
+        let members = ai_config_core::workspace::discover_members(&ws).unwrap();
+        assert_eq!(members.len(), 2);
+
+        let report = super::sync_report(&ws, true).expect("workspace sync");
+        assert!(!report.outcomes.is_empty());
     }
 
     // ── 共享测试:show 不存在的 name 退出码 3(部分失败) ────────

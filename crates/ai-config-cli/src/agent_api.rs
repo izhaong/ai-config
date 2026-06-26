@@ -77,7 +77,7 @@ pub fn status(root: &Utf8Path) -> Result<StatusReport, CoreError> {
 }
 
 pub fn sync(root: &Utf8Path) -> Result<SyncReport, CoreError> {
-    crate::lifecycle::sync_report(root)
+    crate::lifecycle::sync_report(root, false)
 }
 
 pub fn doctor(root: &Utf8Path) -> Result<doctor::DoctorReport, CoreError> {

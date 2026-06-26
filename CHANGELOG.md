@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **install 项目级增量合并**（Gitea #22）：`AI_CONFIG_ROOT=<repo>` 时正确解析 `<repo>/.ai-config` + `~/.ai-config` 合并源并下发到仓库根；hook merge 仅移除 `managedBy: ai-config` 条目；项目作用域跳过覆盖非托管文件。
+
+### Added
+
+- **`install` / `sync --workspace`**（zh-cloud #42）：解析 `.gitmodules`，对父仓与已 checkout 子模块逐个下发；子仓无本地 `.ai-config` 时继承父仓资产源。
+
 ## [0.3.3] - 2026-06-26
 
 ### Added

@@ -37,6 +37,7 @@ pub mod source;
 pub mod sync;
 pub mod sync_conflict;
 pub mod template;
+pub mod workspace;
 
 #[cfg(test)]
 pub(crate) mod test_env;

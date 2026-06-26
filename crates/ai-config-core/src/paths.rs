@@ -79,6 +79,57 @@ pub fn project_deploy_base(repo_root: &Utf8Path) -> Utf8PathBuf {
     repo_root.to_path_buf()
 }
 
+/// install / sync 作用域解析结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncRoots {
+    /// 仓库根（全局 install 时为 `$HOME` 或资产根父目录）。
+    pub repo_root: Utf8PathBuf,
+    /// 扫描资产用的根（`<repo>/.ai-config/` 或 `~/.ai-config/`）。
+    pub asset_root: Utf8PathBuf,
+    /// `scan_with_override` 的 default 侧（项目模式为 `~/.ai-config`，全局为 `asset_root`）。
+    pub global_default: Utf8PathBuf,
+    /// IDE 平台配置下发根（`$HOME` 或 `<repo>`）。
+    pub deploy_base: Utf8PathBuf,
+}
+
+/// 解析 CLI `--root` / `AI_CONFIG_ROOT` 对应的 install/sync 作用域。
+///
+/// - 全局：`~/.ai-config` 或纯资产根 → 下发到 `$HOME`，合并源为自身。
+/// - 项目：仓库根 → 资产 `<repo>/.ai-config`，default 合并 `~/.ai-config`，下发到 `<repo>`。
+pub fn resolve_sync_roots(candidate: &Utf8Path) -> SyncRoots {
+    let user_global = discover_global_asset_root();
+    let normalized = resolve_asset_root(candidate);
+    let (repo_root, asset_root) = resolve_project_roots(&normalized);
+
+    let is_project =
+        asset_root != repo_root && !is_asset_root(&repo_root) && asset_root != user_global;
+    let global_default = if is_project {
+        user_global
+    } else {
+        asset_root.clone()
+    };
+
+    let deploy_base = if is_project {
+        project_deploy_base(&repo_root)
+    } else if repo_root == asset_root && is_asset_root(&asset_root) {
+        global_deploy_base()
+    } else {
+        project_deploy_base(&repo_root)
+    };
+
+    SyncRoots {
+        repo_root,
+        asset_root,
+        global_default,
+        deploy_base,
+    }
+}
+
+/// 下发根是否为项目作用域（非 `$HOME` 全局）。
+pub fn is_project_deploy_base(deploy_base: &Utf8Path) -> bool {
+    deploy_base != home_dir()
+}
+
 /// 候选路径是否已是「资产根」(直接含 `skills/`)。
 pub fn is_asset_root(p: &Utf8Path) -> bool {
     p.join("skills").is_dir()
@@ -347,7 +398,10 @@ pub fn discover_global_asset_root() -> Utf8PathBuf {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+
+    static HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn ensure_creates_standard_subdirs() {
@@ -487,5 +541,51 @@ mod tests {
             r,
             Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap()
         );
+    }
+
+    #[test]
+    fn resolve_sync_roots_project_repo() {
+        let _lock = HOME_TEST_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let prev = std::env::var("HOME").ok();
+        std::env::set_var("HOME", home.as_str());
+        std::env::remove_var("AI_CONFIG_ROOT");
+        fs::create_dir_all(home.join(".ai-config/skills")).unwrap();
+        let repo = home.join("myproj");
+        fs::create_dir_all(repo.join(".ai-config/skills")).unwrap();
+        let roots = resolve_sync_roots(&repo);
+        assert_eq!(roots.repo_root, repo);
+        assert_eq!(roots.asset_root, repo.join(".ai-config"));
+        assert_eq!(roots.deploy_base, repo);
+        assert_ne!(roots.global_default, roots.asset_root);
+        assert!(roots.global_default.ends_with(".ai-config"));
+        if let Some(p) = prev {
+            std::env::set_var("HOME", p);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn resolve_sync_roots_global_asset_root() {
+        let _lock = HOME_TEST_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let prev = std::env::var("HOME").ok();
+        std::env::set_var("HOME", home.as_str());
+        std::env::remove_var("AI_CONFIG_ROOT");
+        let asset = home.join(".ai-config");
+        fs::create_dir_all(asset.join("skills/foo")).unwrap();
+        let roots = resolve_sync_roots(&asset);
+        assert_eq!(roots.repo_root, home);
+        assert_eq!(roots.asset_root, asset);
+        assert_eq!(roots.global_default, asset);
+        assert_eq!(roots.deploy_base, home);
+        if let Some(p) = prev {
+            std::env::set_var("HOME", p);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 }

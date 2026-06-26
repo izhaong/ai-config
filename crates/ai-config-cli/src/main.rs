@@ -39,6 +39,10 @@ struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     root: Option<String>,
 
+    /// 聚合仓模式：对 `.gitmodules` 父仓及已 checkout 子模块逐个 install/sync
+    #[arg(long, global = true)]
+    workspace: bool,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -305,12 +309,12 @@ fn main() -> ExitCode {
             };
             daemon::run(mapped, mode)
         }
-        Cmd::Install => lifecycle::run_install(&default_root, mode),
+        Cmd::Install => lifecycle::run_install(&default_root, cli.workspace, mode),
         Cmd::Uninstall => {
             // Phase 1 不区分 interactive(无 stdin 提示);force 始终为 true。
             lifecycle::run_uninstall(&default_root, true, mode)
         }
-        Cmd::Sync => lifecycle::run_sync(&default_root, mode),
+        Cmd::Sync => lifecycle::run_sync(&default_root, cli.workspace, mode),
         Cmd::Status => lifecycle::run_status(&default_root, mode),
         Cmd::List => lifecycle::run_list(&default_root, mode),
         Cmd::Show { name } => lifecycle::run_show(&default_root, &name, mode),

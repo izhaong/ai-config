@@ -169,13 +169,34 @@ pub fn compute_for_project(
     default_root: &Utf8Path,
 ) -> Result<Vec<SyncAction>, CoreError> {
     let (repo_root, asset_root) = paths::resolve_project_roots(&project.root_path);
-    // 历史 CLI `--root` 直接指向资产根(skills/ 在顶层)时,下发到 $HOME 而非自环到同目录。
     let deploy_base = if repo_root == asset_root && paths::is_asset_root(&asset_root) {
         paths::global_deploy_base()
     } else {
         paths::project_deploy_base(&repo_root)
     };
-    let merged = source::scan_with_override(&asset_root, default_root)?;
+    compute_actions(project, default_root, &asset_root, &deploy_base)
+}
+
+/// 显式指定资产根与下发根（workspace 子仓继承父仓 `.ai-config` 时使用）。
+pub fn compute_for_sync_roots(
+    project: &Project,
+    roots: &paths::SyncRoots,
+) -> Result<Vec<SyncAction>, CoreError> {
+    compute_actions(
+        project,
+        &roots.global_default,
+        &roots.asset_root,
+        &roots.deploy_base,
+    )
+}
+
+fn compute_actions(
+    project: &Project,
+    default_root: &Utf8Path,
+    asset_root: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Result<Vec<SyncAction>, CoreError> {
+    let merged = source::scan_with_override(asset_root, default_root)?;
     let mut out: Vec<SyncAction> = Vec::new();
     let platforms = all_platforms();
 
@@ -260,8 +281,8 @@ pub fn compute_for_project(
                         platform: *plat,
                         name: name.clone(),
                         src: src.clone(),
-                        asset_root: asset_root.clone(),
-                        deploy_base: deploy_base.clone(),
+                        asset_root: asset_root.to_path_buf(),
+                        deploy_base: deploy_base.to_path_buf(),
                     });
                     continue;
                 }
