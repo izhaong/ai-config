@@ -1743,7 +1743,8 @@ mod tests {
         );
         assert_eq!(
             states.get(&PlatformId::AiConfig),
-            Some(&LinkState::Unlinked)
+            Some(&LinkState::Missing),
+            "仅存在于 Cursor 的 MCP 在 Cursor 视图下 ai-config icon 应显示源缺失"
         );
     }
 

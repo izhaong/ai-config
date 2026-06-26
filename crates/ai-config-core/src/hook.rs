@@ -66,8 +66,8 @@ pub struct HookBinding {
 
 #[derive(Debug, Deserialize)]
 struct HooksManifestFile {
-    #[serde(default)]
-    version: u32,
+    #[serde(default, rename = "version")]
+    _version: u32,
     hooks: HashMap<String, Vec<HooksManifestEntry>>,
 }
 
@@ -93,6 +93,16 @@ pub fn manifest_path(asset_root: &Utf8Path) -> Utf8PathBuf {
 
 pub fn script_path(asset_root: &Utf8Path, filename: &str) -> Utf8PathBuf {
     hooks_dir(asset_root).join(filename)
+}
+
+/// 源侧 hook 资产路径（单文件或 bundle 目录）。
+pub fn source_entry_path(asset_root: &Utf8Path, asset_name: &str) -> Utf8PathBuf {
+    script_path(asset_root, asset_name)
+}
+
+fn binding_matches_asset(command: &str, asset_name: &str, asset_root: &Utf8Path) -> bool {
+    asset_key_from_command(command, asset_root).as_deref() == Some(asset_name)
+        || filename_from_command(command).as_deref() == Some(asset_name)
 }
 
 /// 从 `command` 字段提取脚本文件名（忽略参数；支持 `./hooks/x.sh` 与 `.cursor/hooks/x.py`）。
@@ -312,6 +322,9 @@ pub fn asset_key_from_command(command: &str, asset_root: &Utf8Path) -> Option<St
     let rel = executable.strip_prefix("./").unwrap_or(executable);
     let path = Utf8Path::new(rel);
     let mut components = path.iter().collect::<Vec<_>>();
+    if components.first() == Some(&"hooks") && components.len() >= 3 {
+        return Some(components[1].to_string());
+    }
     if components.first() == Some(&"hooks") && components.len() >= 2 {
         let bundle = components[1].to_string();
         if hooks_dir(asset_root).join(&bundle).is_dir() {
@@ -604,9 +617,7 @@ pub fn remove_bindings_for_script(asset_root: &Utf8Path, script_filename: &str) 
             arr.retain(|e| {
                 e.get("command")
                     .and_then(|v| v.as_str())
-                    .and_then(filename_from_command)
-                    .as_deref()
-                    != Some(script_filename)
+                    .is_none_or(|cmd| !binding_matches_asset(cmd, script_filename, asset_root))
             });
         }
     }
@@ -640,9 +651,7 @@ pub fn remove_binding_for_script_lifecycle(
     entries.retain(|e| {
         e.get("command")
             .and_then(|v| v.as_str())
-            .and_then(filename_from_command)
-            .as_deref()
-            != Some(script_filename)
+            .is_none_or(|cmd| !binding_matches_asset(cmd, script_filename, asset_root))
     });
     if entries.is_empty() {
         hooks.remove(lifecycle);
@@ -866,5 +875,21 @@ mod tests {
             asset_key_from_command("./hooks/my-bundle/run.sh", &root).as_deref(),
             Some("my-bundle")
         );
+    }
+
+    #[test]
+    fn remove_bindings_for_bundle_asset_name() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        fs::create_dir_all(root.join("hooks/lifecycle-tts/scripts")).unwrap();
+        fs::write(
+            root.join("hooks.json"),
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/lifecycle-tts/scripts/run.sh afterShellExecution"}]}}"#,
+        )
+        .unwrap();
+        remove_bindings_for_script(&root, "lifecycle-tts").unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("hooks.json")).unwrap()).unwrap();
+        assert!(doc["hooks"].as_object().unwrap().is_empty());
     }
 }

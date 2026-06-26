@@ -1,5 +1,5 @@
 ---
-description: Hook 资产物理布局——仅允许「单文件」或「单目录整包」，便于备份与跨平台同步
+description: Hook 资产物理布局——仅允许「单文件」或「单目录整包」，便于跨平台同步；删除为直接移除、不留备份
 globs: "**/{hooks,hooks.json,.ai-config/hooks/**,.cursor/hooks/**,.codex/hooks/**,.claude/hooks/**}/*"
 alwaysApply: false
 ---
@@ -52,7 +52,7 @@ alwaysApply: false
     ...                     # 所有附属文件只能在此目录树下
 ```
 
-- **一个 bundle 目录 = 一个可备份、可 deploy、可跨平台拷贝的单元**；同步时整目录移动，不得只拷入口脚本而漏配置。
+- **一个 bundle 目录 = 一个可 deploy、可跨平台拷贝的单元**；同步时整目录移动，不得只拷入口脚本而漏配置；**删除时整目录直接移除，不留备份**。
 - 运行时生成的状态（如 `.tts-state/`）可在平台侧产生；源仓库不提交缓存，但脚本应把状态写在入口同目录或子目录，勿写到资产根外。
 
 ---

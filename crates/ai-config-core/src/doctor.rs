@@ -5,7 +5,6 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::CoreError;
-use crate::hook;
 use crate::materialize;
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId};

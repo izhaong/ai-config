@@ -12,7 +12,7 @@
 
 1. **`ai-config-core` 是唯一业务逻辑归宿** — CLI、daemon、GUI 只调用 core，禁止在 `apps/` 或 `cli` 重复实现同步/链接/模板逻辑。
 2. **平台差异收敛在 `platform` 模块** — 新增 IDE 支持 = 新 adapter + 测试，不 scattered if-else。
-3. **幂等与可回滚** — 链接/覆盖前备份；`sync` / `install` 可重复执行。
+3. **幂等与可重复** — 链接/覆盖直接替换（不留 `.bak` 备份）；`delete_source` 永久删除源资产；`sync` / `install` 可重复执行。
 4. **密钥隔离** — 真实 token 只进 `~/.config/ai-config/secrets.env`（0600）；仓库内仅 `.example` 占位符。
 
 ## 3. 实现准则（Karpathy）

@@ -295,9 +295,9 @@ fn retract_aiconfig_platform(
             Ok(format!("agent `{name}` ← {label} OK ({src})"))
         }
         AssetKind::Hook => {
-            let path = hook::script_path(scope.asset_root, name);
-            remove_native_platform_copy(&path)?;
+            let path = hook::source_entry_path(scope.asset_root, name);
             hook::remove_bindings_for_script(scope.asset_root, name)?;
+            remove_native_platform_copy(&path)?;
             Ok(format!("hook `{name}` ← {label} OK ({path})"))
         }
     }
@@ -388,12 +388,14 @@ fn remove_source_entry(
             Ok(format!("agent `{name}` 已从源删除 ({path_str})"))
         }
         AssetKind::Hook => {
-            let path = hook::script_path(scope.asset_root, name);
+            let path = hook::source_entry_path(scope.asset_root, name);
             let path_str = path.to_string();
-            if path.is_file() {
+            hook::remove_bindings_for_script(scope.asset_root, name)?;
+            if path.is_dir() {
+                fs::remove_dir_all(&path).map_err(CoreError::Io)?;
+            } else if path.is_file() {
                 fs::remove_file(&path).map_err(CoreError::Io)?;
             }
-            hook::remove_bindings_for_script(scope.asset_root, name)?;
             Ok(format!("hook `{name}` 已从源删除 ({path_str})"))
         }
     }
@@ -1010,6 +1012,39 @@ mod deploy_from_platform_tests {
             "retract ai-config hook 应删除 hooks.json 对应绑定"
         );
         assert!(!asset_root.join("hooks/speak-lifecycle.py").exists());
+    }
+
+    #[test]
+    fn delete_source_hook_bundle_removes_directory_without_backup() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let asset_root = home.join(".ai-config");
+        let bundle = asset_root.join("hooks/lifecycle-tts");
+        fs::create_dir_all(bundle.join("scripts")).unwrap();
+        fs::write(bundle.join("scripts/run.sh"), "#!/bin/sh\n").unwrap();
+        fs::write(
+            asset_root.join("hooks.json"),
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/lifecycle-tts/scripts/run.sh afterShellExecution"}]}}"#,
+        )
+        .unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        delete_source(&scope, AssetKind::Hook, "lifecycle-tts").unwrap();
+
+        assert!(!bundle.exists(), "bundle 目录应被直接删除");
+        let dir = fs::read_dir(asset_root.join("hooks").as_std_path()).unwrap();
+        assert_eq!(dir.count(), 0, "hooks/ 下不应残留 .bak 或目录");
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(asset_root.join("hooks.json")).unwrap())
+                .unwrap();
+        assert!(doc["hooks"].as_object().unwrap().is_empty());
     }
 
     #[test]
