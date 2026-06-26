@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-26
+
 ### Added
 
 - **资产同步 Hooks（第六类）+ 生命周期 TTS**：源资产为 Cursor 格式 `hooks/hooks.json` + 扁平脚本（如 `hooks/lifecycle-tts.sh`）；列表项对应 manifest 中各生命周期下的 hook 对象，**title = command 路径中的文件名**，**description = 脚本开头 `"""..."""`**；唯一性按文件名 + 脚本内容。`install` / `sync` 按脚本 merge 下发四平台（adapter 兼容 Codex / Claude / Hermes）。默认 `lifecycle-tts` TTS 播报；`AI_CONFIG_TTS=0` 可关闭。
@@ -121,6 +123,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CI：`cargo fmt`、clippy 未使用参数、daemon/Windows 交叉编译。
 - GUI Agent/Rule 描述解析与 agent 读取路径。
 
+[0.3.3]: https://github.com/izhaong/ai-config/releases/tag/v0.3.3
 [0.3.2]: https://github.com/izhaong/ai-config/releases/tag/v0.3.2
 [0.3.1]: https://github.com/izhaong/ai-config/releases/tag/v0.3.1
 [0.3.0]: https://github.com/izhaong/ai-config/releases/tag/v0.3.0
