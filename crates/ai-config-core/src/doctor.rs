@@ -5,10 +5,12 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::error::CoreError;
+use crate::hook;
 use crate::materialize;
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId};
 use crate::path_independence;
+use crate::paths;
 use crate::platform::{self, platform_label};
 use crate::source;
 use crate::sync;
@@ -241,6 +243,9 @@ fn flat_assets(scan: &source::ScanResult) -> Vec<(AssetKind, String, Utf8PathBuf
             out.push((AssetKind::Agent, name, p.clone()));
         }
     }
+    for item in &scan.hooks {
+        out.push((AssetKind::Hook, item.script_filename.clone(), item.script_path.clone()));
+    }
     out
 }
 
@@ -286,6 +291,14 @@ fn describe_link_state(
                 McpSyncState::WrongValue if dest.exists() => "synced".to_string(),
                 McpSyncState::WrongValue => "wrong_source".to_string(),
                 McpSyncState::Broken => "broken".to_string(),
+            };
+        }
+        AssetKind::Hook => {
+            let deploy_base = paths::global_deploy_base();
+            return if crate::hook_adapter::is_deployed(&deploy_base, platform, name) {
+                "linked".to_string()
+            } else {
+                "missing".to_string()
             };
         }
     };

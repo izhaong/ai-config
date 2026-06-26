@@ -9,6 +9,8 @@ use serde::Serialize;
 use crate::asset_scope::{self, locate_source};
 use crate::error::CoreError;
 use crate::hermes_config;
+use crate::hook;
+use crate::hook_adapter;
 use crate::materialize;
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId};
@@ -50,6 +52,14 @@ pub fn deploy_from_platform(
     ensure_platform_supports(scope, to_plat, kind)?;
     if kind == AssetKind::Mcp {
         return deploy_mcp_from_platform(scope, name, from_plat, to_plat);
+    }
+    if kind == AssetKind::Hook {
+        return hook_adapter::deploy_between_platforms(
+            scope.deploy_base,
+            name,
+            from_plat,
+            to_plat,
+        );
     }
 
     let from_adapter =
@@ -93,6 +103,7 @@ pub fn deploy(
     match kind {
         AssetKind::Mcp => deploy_mcp(scope, name, plat),
         AssetKind::Skill => deploy_skill(scope, name, plat),
+        AssetKind::Hook => deploy_hook(scope, name, plat),
         AssetKind::Rule | AssetKind::Command | AssetKind::Agent => {
             deploy_materialized(scope, kind, name, plat)
         }
@@ -113,6 +124,7 @@ pub fn retract(
     ensure_platform_supports(scope, plat, kind)?;
     match kind {
         AssetKind::Mcp => retract_mcp(scope, name, plat),
+        AssetKind::Hook => retract_hook(scope, name, plat),
         _ => {
             let dest = resolve_platform_retract_dest(scope, plat, kind, name)?;
             remove_native_platform_copy(&dest)?;
@@ -151,6 +163,17 @@ pub fn get_detail(
                 content,
                 source_path: src.to_string(),
                 parent_path: src.parent().map(|p| p.to_string()).unwrap_or_default(),
+            })
+        }
+        AssetKind::Hook => {
+            let spec = hook::load_spec(scope.asset_root, name)?;
+            let content = fs::read_to_string(&spec.script_path).map_err(CoreError::Io)?;
+            Ok(AssetFileDetail {
+                name: name.to_string(),
+                description: spec.description,
+                content,
+                source_path: spec.script_path.to_string(),
+                parent_path: hook::hooks_dir(scope.asset_root).to_string(),
             })
         }
         AssetKind::Agent => {
@@ -196,6 +219,11 @@ pub fn save_content(
             let write_path = agent_edit_path(&src).unwrap_or(src);
             fs::write(&write_path, content).map_err(CoreError::Io)?;
             Ok(format!("agent `{name}` 已保存"))
+        }
+        AssetKind::Hook => {
+            let path = hook::script_path(scope.asset_root, name);
+            fs::write(&path, content).map_err(CoreError::Io)?;
+            Ok(format!("hook `{name}` 已保存"))
         }
     }
 }
@@ -266,6 +294,12 @@ fn retract_aiconfig_platform(
             remove_native_platform_copy(&src)?;
             Ok(format!("agent `{name}` ← {label} OK ({src})"))
         }
+        AssetKind::Hook => {
+            let path = hook::script_path(scope.asset_root, name);
+            remove_native_platform_copy(&path)?;
+            hook::remove_bindings_for_script(scope.asset_root, name)?;
+            Ok(format!("hook `{name}` ← {label} OK ({path})"))
+        }
     }
 }
 
@@ -311,6 +345,7 @@ fn platform_native_dest(
         AssetKind::Rule => adapter.rules_dir().join(format!("{name}.mdc")),
         AssetKind::Command => adapter.commands_dir().join(format!("{name}.md")),
         AssetKind::Agent => adapter.agents_dir().join(name),
+        AssetKind::Hook => hook_adapter::platform_scripts_dir(scope.deploy_base, plat, name),
         AssetKind::Mcp => {
             return Err(CoreError::InvalidPath(
                 "MCP 收回需要 ai-config 源中的条目".into(),
@@ -351,6 +386,15 @@ fn remove_source_entry(
                 fs::remove_file(&src).map_err(CoreError::Io)?;
             }
             Ok(format!("agent `{name}` 已从源删除 ({path_str})"))
+        }
+        AssetKind::Hook => {
+            let path = hook::script_path(scope.asset_root, name);
+            let path_str = path.to_string();
+            if path.is_file() {
+                fs::remove_file(&path).map_err(CoreError::Io)?;
+            }
+            hook::remove_bindings_for_script(scope.asset_root, name)?;
+            Ok(format!("hook `{name}` 已从源删除 ({path_str})"))
         }
     }
 }
@@ -453,6 +497,7 @@ fn platform_asset_paths(
             }
         }
         AssetKind::Mcp => Err(CoreError::InvalidPath("MCP 不支持平台间直拷".into())),
+        AssetKind::Hook => Err(CoreError::InvalidPath("Hook 不支持平台间直拷".into())),
     }
 }
 
@@ -487,6 +532,15 @@ fn deploy_skill(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<
         hermes_config::after_skill_deploy(&skills_parent)?;
     }
     Ok(format!("skill `{name}` → {plat:?} OK ({dest})"))
+}
+
+fn deploy_hook(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
+    let _ = locate_source(scope.default_root, scope.asset_root, AssetKind::Hook, name)?;
+    hook_adapter::deploy(scope.asset_root, scope.deploy_base, name, plat)
+}
+
+fn retract_hook(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
+    hook_adapter::retract(scope.asset_root, scope.deploy_base, name, plat)
 }
 
 fn deploy_materialized(
@@ -630,6 +684,15 @@ fn platform_read_path(kind: AssetKind, platform_path: &Utf8Path) -> Result<Utf8P
         }
         AssetKind::Agent => Ok(agent_read_path(platform_path)),
         AssetKind::Mcp => Ok(platform_path.to_path_buf()),
+        AssetKind::Hook => {
+            if platform_path.is_file() {
+                Ok(platform_path.to_path_buf())
+            } else {
+                Err(CoreError::InvalidPath(format!(
+                    "平台 hook 路径不是脚本文件: {platform_path}"
+                )))
+            }
+        }
     }
 }
 
@@ -818,6 +881,10 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
             .ok()
             .map(|c| parse_skill_meta(&c).1)
             .unwrap_or_default(),
+        AssetKind::Hook => fs::read_to_string(src)
+            .ok()
+            .map(|c| hook::parse_script_description(&c))
+            .unwrap_or_default(),
     }
 }
 
@@ -903,6 +970,46 @@ mod deploy_from_platform_tests {
             claude_skill.join("SKILL.md").is_file(),
             "收回 ai-config 平台副本不应删除 Claude 侧 skill"
         );
+    }
+
+    #[test]
+    fn retract_aiconfig_hook_removes_bindings_from_manifest() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
+
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(asset_root.join("hooks")).unwrap();
+        fs::write(asset_root.join("hooks/speak-lifecycle.py"), "#!/usr/bin/env python3\n").unwrap();
+        fs::write(
+            asset_root.join("hooks.json"),
+            r#"{"version":1,"hooks":{"postToolUse":[{"command":"./hooks/speak-lifecycle.py postToolUse"}]}}"#,
+        )
+        .unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+        retract(
+            &scope,
+            AssetKind::Hook,
+            "speak-lifecycle.py",
+            PlatformId::AiConfig,
+        )
+        .unwrap();
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(asset_root.join("hooks.json")).unwrap())
+                .unwrap();
+        let hooks = doc["hooks"].as_object().expect("hooks should remain object");
+        assert!(
+            hooks.get("postToolUse").is_none(),
+            "retract ai-config hook 应删除 hooks.json 对应绑定"
+        );
+        assert!(!asset_root.join("hooks/speak-lifecycle.py").exists());
     }
 
     #[test]

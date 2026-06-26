@@ -24,11 +24,16 @@ interface AssetListPaneProps {
   drawerEditing: boolean;
   drawerDraft: string;
   drawerReadOnly: boolean;
+  drawerHookEntry: PlatformAssetEntry | null;
   onToggleSelect: (key: string, checked: boolean) => void;
   onOpenAsset: (entry: PlatformAssetEntry) => void;
   onPlatformToggle: (entry: PlatformAssetEntry, plat: Platform) => void;
   onUpdateEntry: (entry: PlatformAssetEntry) => void;
   onDeleteEntry: (entry: PlatformAssetEntry) => void;
+  onHookLifecyclePairToggle?: (
+    entry: PlatformAssetEntry,
+    plan: Array<{ lifecycle: string; enabled: boolean }>,
+  ) => void;
   onCloseDrawer: () => void;
   onDraftChange: (value: string) => void;
   onEdit: () => void;
@@ -54,11 +59,13 @@ export function AssetListPane({
   drawerEditing,
   drawerDraft,
   drawerReadOnly,
+  drawerHookEntry,
   onToggleSelect,
   onOpenAsset,
   onPlatformToggle,
   onUpdateEntry,
   onDeleteEntry,
+  onHookLifecyclePairToggle,
   onCloseDrawer,
   onDraftChange,
   onEdit,
@@ -122,6 +129,9 @@ export function AssetListPane({
         editing={drawerEditing}
         draft={drawerDraft}
         readOnly={drawerReadOnly}
+        hookEntry={drawerHookEntry}
+        hookLifecycleLoading={loading || busy}
+        onHookLifecyclePairToggle={onHookLifecyclePairToggle}
         onClose={onCloseDrawer}
         onDraftChange={onDraftChange}
         onEdit={onEdit}

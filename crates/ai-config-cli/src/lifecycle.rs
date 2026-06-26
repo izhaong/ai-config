@@ -25,10 +25,12 @@ use serde::Serialize;
 
 use ai_config_core::error::{exit_code, CoreError};
 use ai_config_core::hermes_config;
+use ai_config_core::hook_adapter;
 use ai_config_core::link::{self, LinkHealth};
 use ai_config_core::materialize;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{AssetKind, PlatformId, SyncAction};
+use ai_config_core::paths;
 use ai_config_core::platform;
 use ai_config_core::secrets as core_secrets;
 use ai_config_core::source;
@@ -128,6 +130,9 @@ impl Outcome {
 
 fn infer_kind_from_dest(dest: &camino::Utf8Path) -> &'static str {
     let s = dest.as_str();
+    if s.contains("/hooks/") && !s.ends_with("/hooks") {
+        return "hook";
+    }
     if s.contains("/skills/") || s.ends_with("/skills") {
         "skill"
     } else if s.contains("/rules/") {
@@ -148,6 +153,19 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
 
     for action in &ctx.actions {
         match action {
+            SyncAction::DeployHook {
+                platform,
+                name,
+                asset_root,
+                deploy_base,
+                ..
+            } => {
+                let label = format!("DeployHook {name} → {}", platform_label(*platform));
+                match hook_adapter::deploy(asset_root, deploy_base, name, *platform) {
+                    Ok(msg) => out.push(Outcome::ok(msg, *platform, "hook")),
+                    Err(e) => out.push(Outcome::failed(label, *platform, "hook", &e)),
+                }
+            }
             SyncAction::Create {
                 platform,
                 dest,
@@ -329,7 +347,7 @@ pub fn run_install(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
     };
 
     // 4. 执行 SyncAction
-    let outcomes = execute_all_actions(&ctx);
+    let mut outcomes = execute_all_actions(&ctx);
     let ok_count = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
@@ -521,7 +539,7 @@ pub struct SyncReport {
 /// `ai-config sync` — 返回结构化报告（CLI / MCP 共用）。
 pub fn sync_report(default_root: &Utf8Path) -> Result<SyncReport, CoreError> {
     let ctx = load_context(default_root)?;
-    let outcomes = execute_all_actions(&ctx);
+    let mut outcomes = execute_all_actions(&ctx);
     let synced = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
@@ -738,6 +756,16 @@ fn describe_for(
                 McpSyncState::Unlinked => "missing",
                 McpSyncState::WrongValue => "wrong_source",
                 McpSyncState::Broken => "broken",
+            };
+            return (state.to_string(), dest);
+        }
+        AssetKind::Hook => {
+            let deploy_base = paths::global_deploy_base();
+            let dest = hook_adapter::platform_scripts_dir(&deploy_base, platform, name);
+            let state = if hook_adapter::is_deployed(&deploy_base, platform, name) {
+                "linked"
+            } else {
+                "missing"
             };
             return (state.to_string(), dest);
         }
@@ -995,6 +1023,7 @@ fn kind_to_str(k: AssetKind) -> &'static str {
         AssetKind::Mcp => "mcp",
         AssetKind::Agent => "agent",
         AssetKind::Command => "command",
+        AssetKind::Hook => "hook",
     }
 }
 
@@ -1035,6 +1064,9 @@ fn flat_assets(scan: &source::ScanResult) -> Vec<(AssetKind, String, camino::Utf
         if let Some(name) = name {
             out.push((AssetKind::Agent, name, p.clone()));
         }
+    }
+    for item in &scan.hooks {
+        out.push((AssetKind::Hook, item.script_filename.clone(), item.script_path.clone()));
     }
     out
 }

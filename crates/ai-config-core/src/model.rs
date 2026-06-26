@@ -48,6 +48,7 @@ pub enum AssetKind {
     Mcp,
     Agent,
     Command,
+    Hook,
 }
 
 /// 单条 skill(目录形态,`SKILL.md` + 可能的 scripts/ / assets/ / agents/)。
@@ -245,6 +246,15 @@ pub enum SyncAction {
     },
     /// 收回 + 移除 mcp.json 中的 server
     Unlink { item_id: u64, platform: PlatformId },
+    /// 下发 hook（分平台 adapter 合并配置 + 拷贝脚本）
+    DeployHook {
+        item_id: u64,
+        platform: PlatformId,
+        name: String,
+        src: Utf8PathBuf,
+        asset_root: Utf8PathBuf,
+        deploy_base: Utf8PathBuf,
+    },
 }
 
 impl SyncAction {
@@ -255,7 +265,8 @@ impl SyncAction {
             | Self::Linked { platform, .. }
             | Self::RenderMcp { platform, .. }
             | Self::Retract { platform, .. }
-            | Self::Unlink { platform, .. } => *platform,
+            | Self::Unlink { platform, .. }
+            | Self::DeployHook { platform, .. } => *platform,
         }
     }
 
@@ -274,6 +285,7 @@ impl SyncAction {
         match self {
             Self::Create { dest, .. } | Self::Retract { dest, .. } => Some(dest),
             Self::Linked { .. } | Self::RenderMcp { .. } | Self::Unlink { .. } => None,
+            Self::DeployHook { .. } => None,
         }
     }
 }
@@ -471,6 +483,7 @@ mod tests {
             (AssetKind::Mcp, "\"mcp\""),
             (AssetKind::Agent, "\"agent\""),
             (AssetKind::Command, "\"command\""),
+            (AssetKind::Hook, "\"hook\""),
         ] {
             assert_eq!(serde_json::to_string(&k).unwrap(), expected);
         }

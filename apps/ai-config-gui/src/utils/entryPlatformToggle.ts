@@ -41,7 +41,7 @@ function isBrowsingDeployPlatform(ctx: EntryPlatformToggleContext): boolean {
 
 /** MCP 与其它资产：已激活（linked / synced）均可点击收回 */
 function canRetractEntry(entry: PlatformAssetEntry, state: LinkState): boolean {
-  if (entry.kind === "mcp") {
+  if (entry.kind === "mcp" || entry.kind === "hook") {
     return isPlatformActive(state);
   }
   return canRetract(state);

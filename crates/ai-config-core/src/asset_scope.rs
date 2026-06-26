@@ -31,6 +31,7 @@ pub fn parse_asset_kind(s: &str) -> Result<AssetKind, CoreError> {
         "mcp" | "Mcp" => Ok(AssetKind::Mcp),
         "agent" | "Agent" => Ok(AssetKind::Agent),
         "command" | "Command" => Ok(AssetKind::Command),
+        "hook" | "Hook" => Ok(AssetKind::Hook),
         other => Err(CoreError::InvalidPath(format!("未知资产类型 `{other}`"))),
     }
 }
@@ -84,6 +85,14 @@ pub fn retract_all_platforms_best_effort(
                     name,
                     Some(&source_mcp),
                 );
+            }
+        }
+        return;
+    }
+    if kind == AssetKind::Hook {
+        for plat in platform::deploy_platform_ids() {
+            if platform::supports_at_scope(plat, kind, deploy_base) {
+                let _ = crate::hook_adapter::retract(asset_root, deploy_base, name, plat);
             }
         }
         return;

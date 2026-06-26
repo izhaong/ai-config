@@ -90,7 +90,8 @@
     "rule": "Rules",
     "mcp": "MCP",
     "agent": "Agents",
-    "command": "Commands"
+    "command": "Commands",
+    "hook": "Hooks"
   },
   "linkState": {
     "linked": "已同步",
@@ -213,9 +214,66 @@
     "preview": "所选：{{names}}",
     "previewMore": "所选：{{names}} 等另 {{rest}} 项",
     "targetLabel": "目标项目",
+    "destPath": "目标目录：{{path}}",
+    "hintHook": "Hook 将写入 {{path}}/hooks/<脚本>，并合并 {{path}}/hooks.json",
     "hint": "复制为实体副本；目标已有同名资产时将失败。",
     "submit": "复制",
     "noTargets": "没有可用的目标项目。请先在侧栏注册其它项目。"
+  },
+  "hookLifecycle": {
+    "panelTitle": "生命周期",
+    "enabledBadge": "{{active}}/{{total}} 已启用",
+    "pairBadge": "{{active}}/{{total}} 组",
+    "enabledSummary": "已启用 {{active}} / 当前平台支持 {{total}} 个",
+    "unsupportedShort": "不支持",
+    "clickEnablePair": "点击启用整组",
+    "clickDisablePair": "点击关闭整组",
+    "groupAgent": "智能体",
+    "groupTab": "Tab 补全",
+    "groupWorkspace": "工作区",
+    "clickEnable": "启用 {lifecycle}",
+    "clickDisable": "关闭 {lifecycle}",
+    "unsupported": "当前平台不支持 {lifecycle}",
+    "unsupportedOnPlatformWithList": "当前平台不支持 {lifecycle}（支持：{platforms}）",
+    "toggleFailed": "生命周期切换失败: {error}",
+    "pairs": {
+      "session": "会话",
+      "tool": "工具",
+      "toolFail": "工具失败",
+      "subagent": "子代理",
+      "shell": "Shell",
+      "mcp": "MCP",
+      "file": "文件",
+      "prompt": "提交",
+      "compact": "压缩",
+      "stop": "完成",
+      "agentOut": "输出",
+      "tab": "Tab",
+      "workspace": "工作区"
+    },
+    "chips": {
+      "sessionStart": "会话开始",
+      "sessionEnd": "会话结束",
+      "preToolUse": "工具前",
+      "postToolUse": "工具后",
+      "postToolUseFailure": "工具失败",
+      "subagentStart": "子代理起",
+      "subagentStop": "子代理止",
+      "beforeShellExecution": "Shell前",
+      "afterShellExecution": "Shell后",
+      "beforeMCPExecution": "MCP前",
+      "afterMCPExecution": "MCP后",
+      "beforeReadFile": "读文件前",
+      "afterFileEdit": "编辑后",
+      "beforeSubmitPrompt": "提交前",
+      "preCompact": "压缩前",
+      "stop": "完成",
+      "afterAgentResponse": "回复后",
+      "afterAgentThought": "思考后",
+      "beforeTabFileRead": "Tab读前",
+      "afterTabFileEdit": "Tab编辑后",
+      "workspaceOpen": "工作区开"
+    }
   },
   "registerProject": {
     "title": "注册项目",
@@ -342,6 +400,7 @@
     "rule": "rules",
     "mcp": "mcp",
     "agent": "agents",
-    "command": "commands"
+    "command": "commands",
+    "hook": "hooks"
   }
 }

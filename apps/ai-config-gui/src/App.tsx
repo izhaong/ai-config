@@ -172,12 +172,16 @@ export function App() {
                 drawerEditing={drawer.drawerEditing}
                 drawerDraft={drawer.drawerDraft}
                 drawerReadOnly={drawer.drawerReadOnly}
+                drawerHookEntry={drawer.drawerHookEntry}
                 issueReasonFor={browser.issueReasonFor}
                 onToggleSelect={browser.toggleSelect}
                 onOpenAsset={(entry) => void drawer.openAsset(entry)}
                 onPlatformToggle={ops.handlePlatformToggle}
                 onUpdateEntry={ops.handleUpdateEntry}
                 onDeleteEntry={ops.requestDeleteEntry}
+                onHookLifecyclePairToggle={(entry, plan) =>
+                  void ops.handleHookLifecyclePairToggle(entry, plan)
+                }
                 onCloseDrawer={drawer.closeDrawer}
                 onDraftChange={drawer.setDrawerDraft}
                 onEdit={() => drawer.setDrawerEditing(true)}
@@ -273,8 +277,10 @@ export function App() {
           busy={busy}
           activeProject={browser.activeProject}
           projects={projects.projects}
+          globalAssetRoot={gitSync.assetRoot}
           selectedCount={browser.selectedEntries.length}
           selectedNames={browser.selectedEntries.map((e) => e.name)}
+          selectedKinds={[...new Set(browser.selectedEntries.map((e) => e.kind))]}
           onCancel={ops.closeCopyToProject}
           onSubmit={(toProject) => void ops.submitCopyToProject(toProject)}
         />

@@ -1,0 +1,159 @@
+{
+  "hooks": {
+    "afterAgentResponse": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py afterAgentResponse",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "afterAgentThought": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py afterAgentThought",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py afterFileEdit",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "afterMCPExecution": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py afterMCPExecution",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py afterShellExecution",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config",
+        "matcher": "ai-config\\b"
+      }
+    ],
+    "afterTabFileEdit": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py afterTabFileEdit",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py beforeMCPExecution",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py beforeReadFile",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py beforeShellExecution",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config",
+        "matcher": "ai-config\\b"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py beforeSubmitPrompt",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      },
+      {
+        "command": ".cursor/hooks/test-prompt-hook.sh",
+        "hook": "test-prompt-hook.sh",
+        "managedBy": "ai-config"
+      }
+    ],
+    "beforeTabFileRead": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py beforeTabFileRead",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py postToolUse",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py postToolUseFailure",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "preCompact": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py preCompact",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py preToolUse",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py sessionEnd",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py sessionStart",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "stop": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py stop",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py subagentStart",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py subagentStop",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ],
+    "workspaceOpen": [
+      {
+        "command": ".cursor/hooks/speak-lifecycle.py workspaceOpen",
+        "hook": "speak-lifecycle.py",
+        "managedBy": "ai-config"
+      }
+    ]
+  },
+  "version": 1
+}

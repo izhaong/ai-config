@@ -37,6 +37,8 @@ pub struct ScanResult {
     pub agents: Vec<Utf8PathBuf>,
     /// 每个元素是 `commands/<name>.md`
     pub commands: Vec<Utf8PathBuf>,
+    /// 每个元素是 `hooks.json` 中一条生命周期绑定。
+    pub hooks: Vec<crate::hook::HookListItem>,
 }
 
 // ── 过滤规则 ──────────────────────────────────────────────────────
@@ -230,6 +232,21 @@ fn scan_commands(root: &Utf8Path) -> Result<Vec<Utf8PathBuf>, CoreError> {
     Ok(out)
 }
 
+/// 扫 `<root>/hooks.json` 与 `hooks/` 目录，返回去重后的 command 型绑定项（供 doctor/sync 兼容）。
+fn scan_hooks(root: &Utf8Path) -> Result<Vec<crate::hook::HookListItem>, CoreError> {
+    let manifest = root.join(crate::hook::HOOKS_MANIFEST);
+    Ok(crate::hook::list_hook_catalog(root)?
+        .into_iter()
+        .filter(|item| item.hook_type == crate::hook::HookEntryType::Command)
+        .map(|item| crate::hook::HookListItem {
+            lifecycle: String::new(),
+            script_filename: item.binding_key,
+            script_path: item.source_path,
+            manifest_path: manifest.clone(),
+        })
+        .collect())
+}
+
 // ── 公共 API ──────────────────────────────────────────────────────
 
 /// 扫描单个根目录下的 4 类资产。
@@ -242,12 +259,16 @@ pub fn scan_project_root(root: &Utf8Path) -> Result<ScanResult, CoreError> {
         return Err(CoreError::InvalidPath(format!("资产根目录不存在: {root}")));
     }
 
+    let deploy_base = crate::hook::deploy_base_for_asset_root(root);
+    let _ = crate::hook::reconcile_orphan_hook_scripts(root, &deploy_base);
+
     Ok(ScanResult {
         skills: scan_skills(root)?,
         rules: scan_rules(root)?,
         mcp_json: scan_mcp_json(root)?,
         agents: scan_agents(root)?,
         commands: scan_commands(root)?,
+        hooks: scan_hooks(root)?,
     })
 }
 
@@ -293,7 +314,30 @@ pub fn scan_with_override(
         commands: merge_override(&default.commands, &project.commands, |p| {
             p.file_stem().map(str::to_owned)
         }),
+        hooks: merge_hook_items(&default.hooks, &project.hooks),
     })
+}
+
+fn merge_hook_items(
+    default: &[crate::hook::HookListItem],
+    project: &[crate::hook::HookListItem],
+) -> Vec<crate::hook::HookListItem> {
+    let mut out = default.to_vec();
+    for item in project {
+        let key = format!("{}:{}", item.lifecycle, item.script_filename);
+        if let Some(idx) = out
+            .iter()
+            .position(|x| format!("{}:{}", x.lifecycle, x.script_filename) == key)
+        {
+            out[idx] = item.clone();
+        } else {
+            out.push(item.clone());
+        }
+    }
+    out.sort_by(|a, b| {
+        (&a.lifecycle, &a.script_filename).cmp(&(&b.lifecycle, &b.script_filename))
+    });
+    out
 }
 
 /// `default` 先入,`override` 后入;同 key 时**后者**赢(项目覆盖默认)。

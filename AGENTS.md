@@ -9,7 +9,8 @@
 3. `.cursor/rules/spec-kit-gate.mdc`（非平凡改动先 spec）
 4. `.cursor/rules/karpathy-guidelines.mdc`
 5. 按任务读 `.cursor/agents/*.md` 与 `.cursor/skills/*/SKILL.md`
-6. Hermes 在仓内改码：另读 `HERMES.md`
+6. 编写 Hook 脚本 / `hooks.json` → `.cursor/rules/hooks-asset-layout.mdc`
+7. Hermes 在仓内改码：另读 `HERMES.md`
 
 ## 仓库地图
 
@@ -30,6 +31,7 @@
 | ------------------------ | -------------------------------------- |
 | Rust core / CLI / daemon | `.cursor/agents/rust-ai-config-dev.md` |
 | GUI React / Tauri 对接   | `.cursor/agents/gui-ai-config-dev.md`  |
+| 测试 / 验收 / 验证闭环   | `.cursor/agents/qa-ai-config-dev.md`   |
 
 ## Skills
 

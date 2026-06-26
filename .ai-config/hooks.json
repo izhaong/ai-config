@@ -1,0 +1,113 @@
+{
+  "hooks": {
+    "afterAgentResponse": [
+      {
+        "command": "./hooks/speak-lifecycle.py afterAgentResponse"
+      }
+    ],
+    "afterAgentThought": [
+      {
+        "command": "./hooks/speak-lifecycle.py afterAgentThought"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "./hooks/speak-lifecycle.py afterFileEdit"
+      }
+    ],
+    "afterMCPExecution": [
+      {
+        "command": "./hooks/speak-lifecycle.py afterMCPExecution"
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": "./hooks/speak-lifecycle.py afterShellExecution"
+      }
+    ],
+    "afterTabFileEdit": [
+      {
+        "command": "./hooks/speak-lifecycle.py afterTabFileEdit"
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "./hooks/speak-lifecycle.py beforeMCPExecution"
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "./hooks/speak-lifecycle.py beforeReadFile"
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "./hooks/speak-lifecycle.py beforeShellExecution"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "./hooks/speak-lifecycle.py beforeSubmitPrompt"
+      },
+      {
+        "command": "./hooks/test-prompt-hook.sh"
+      }
+    ],
+    "beforeTabFileRead": [
+      {
+        "command": "./hooks/speak-lifecycle.py beforeTabFileRead"
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "./hooks/speak-lifecycle.py postToolUse"
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "./hooks/speak-lifecycle.py postToolUseFailure"
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "./hooks/speak-lifecycle.py preCompact"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "./hooks/speak-lifecycle.py preToolUse"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "./hooks/speak-lifecycle.py sessionEnd"
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": "./hooks/speak-lifecycle.py sessionStart"
+      }
+    ],
+    "stop": [
+      {
+        "command": "./hooks/speak-lifecycle.py stop"
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "./hooks/speak-lifecycle.py subagentStart"
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "./hooks/speak-lifecycle.py subagentStop"
+      }
+    ],
+    "workspaceOpen": [
+      {
+        "command": "./hooks/speak-lifecycle.py workspaceOpen"
+      }
+    ]
+  },
+  "version": 1
+}

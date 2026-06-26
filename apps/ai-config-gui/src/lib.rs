@@ -39,12 +39,15 @@ use ai_config_core::asset_scope;
 use ai_config_core::doctor;
 use ai_config_core::error::CoreError;
 use ai_config_core::git::{self, GitEnsureOutcome, GitRepoStatus, GitSyncConfig, GitSyncOutcome};
+use ai_config_core::hook;
+use ai_config_core::hook_adapter;
+use ai_config_core::hook_lifecycle;
 use ai_config_core::materialize;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{AssetKind, PlatformId, Project};
 use ai_config_core::paths;
 use ai_config_core::platform;
-use ai_config_core::platform_scan::{self, PlatformAssetEntry, PlatformAssetList};
+use ai_config_core::platform_scan::{self, LinkState, PlatformAssetEntry, PlatformAssetList};
 use ai_config_core::source;
 use ai_config_core::sync::{agent_link_src, asset_dest_for_at_base};
 use ai_config_core::sync_conflict::SyncConflictReport;
@@ -123,23 +126,6 @@ struct AssetEntry {
     source_path: String,
     /// per-platform 链接状态(4 平台键都存在)。
     states: std::collections::HashMap<PlatformId, LinkState>,
-}
-
-#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum LinkState {
-    /// 链接存在且指向 src（本工具纳管）
-    Linked,
-    /// 内容一致但非本工具下发
-    Synced,
-    /// dest 不存在
-    Unlinked,
-    /// dest 存在但不是链接,或源丢了(破损)
-    Broken,
-    /// 资产源文件不存在(本工具之前的链接成 dangling)— W9 暂未产出,
-    /// 留给 W10 store 引入 targets 表后产出(W9 走 fs 推断暂只 3 态)
-    #[allow(dead_code)]
-    Missing,
 }
 
 #[derive(Debug, Serialize)]
@@ -255,6 +241,9 @@ async fn cmd_list(
             entries.push((AssetKind::Agent, name, p.clone()));
         }
     }
+    for item in &scan.hooks {
+        entries.push((AssetKind::Hook, item.script_filename.clone(), item.script_path.clone()));
+    }
 
     // 4. 对每条 × 4 平台算 dest + 状态
     let mut out: Vec<AssetEntry> = Vec::with_capacity(entries.len());
@@ -266,6 +255,24 @@ async fn cmd_list(
                 .ok()
                 .flatten()
                 .map(|cfg| mcp_json::server_transport_summary(&cfg))
+                .unwrap_or_default()
+        } else if kind == AssetKind::Hook {
+            hook::load_spec(&asset_root, &name)
+                .ok()
+                .map(|s| {
+                    let mut desc = s.description;
+                    if let Some(item) = scan
+                        .hooks
+                        .iter()
+                        .find(|i| i.script_filename == name && i.script_path == src)
+                    {
+                        if !desc.is_empty() {
+                            desc.push_str(" · ");
+                        }
+                        desc.push_str(&item.lifecycle);
+                    }
+                    desc
+                })
                 .unwrap_or_default()
         } else {
             parse_description(kind, &src)
@@ -284,6 +291,12 @@ async fn cmd_list(
             let st = if kind == AssetKind::Mcp {
                 let asset_root = src.parent().unwrap_or(&src);
                 mcp_link_state(plat, asset_root, &name, &deploy_base)
+            } else if kind == AssetKind::Hook {
+                if hook_adapter::is_deployed(&deploy_base, plat, &name) {
+                    LinkState::Linked
+                } else {
+                    LinkState::Missing
+                }
             } else {
                 let dest = match compute_dest(plat, kind, &name, &src, &deploy_base) {
                     Some(d) => d,
@@ -346,6 +359,7 @@ async fn cmd_list_platform(
             AssetKind::Mcp,
             AssetKind::Agent,
             AssetKind::Command,
+            AssetKind::Hook,
         ],
     };
 
@@ -599,6 +613,67 @@ async fn cmd_mcp_import(
     Ok(format!("mcp `{name_for_msg}` 已导入到 {dest}"))
 }
 
+#[tauri::command]
+async fn cmd_hook_import(
+    state: State<'_, AppState>,
+    name: String,
+    project: Option<String>,
+    from_platform: String,
+) -> Result<String, String> {
+    let plat = parse_plat(&from_platform)?;
+    if plat == PlatformId::AiConfig {
+        return Err("不能从 ai-config 源导入到自身".into());
+    }
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    let name_for_msg = name.clone();
+    let dest = tokio::task::spawn_blocking(move || {
+        platform_scan::import_hook_from_platform(
+            &name,
+            plat,
+            &default_root,
+            &asset_root,
+            &deploy_base,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+    .map_err(|e| e.to_string())?;
+    Ok(format!("hook `{name_for_msg}` 已导入到 {dest}"))
+}
+
+#[tauri::command]
+async fn cmd_hook_toggle_lifecycle(
+    state: State<'_, AppState>,
+    name: String,
+    lifecycle: String,
+    enabled: bool,
+    project: Option<String>,
+    platform: String,
+) -> Result<String, String> {
+    let browse_plat = parse_plat(&platform)?;
+    let (_default_root, asset_root, deploy_base) =
+        resolve_scope(&state, project.as_deref()).await?;
+    let name_for_msg = name.clone();
+    let lifecycle_for_msg = lifecycle.clone();
+    tokio::task::spawn_blocking(move || {
+        hook_lifecycle::toggle_lifecycle(
+            &asset_root,
+            &deploy_base,
+            browse_plat,
+            &name,
+            &lifecycle,
+            enabled,
+        )
+    })
+    .await
+    .map_err(|e| format!("spawn_blocking join: {e}"))?
+    .map_err(|e| e.to_string())?;
+  let action = if enabled { "启用" } else { "关闭" };
+    Ok(format!(
+        "hook `{name_for_msg}` 已{action}生命周期 `{lifecycle_for_msg}`"
+    ))
+}
+
 /// 从平台已下发路径只读预览（无 ai-config 源时供详情抽屉使用）。
 #[tauri::command]
 async fn cmd_read_platform_asset(
@@ -750,6 +825,19 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
             .ok()
             .map(|c| parse_skill_meta(&c).1)
             .unwrap_or_default(),
+        AssetKind::Hook => {
+            let filename = src.file_name().unwrap_or("");
+            let asset_root = src.parent().and_then(|p| p.parent()).unwrap_or(src);
+            hook::load_spec(asset_root, filename)
+                .ok()
+                .map(|s| s.description)
+                .unwrap_or_else(|| {
+                    std::fs::read_to_string(src)
+                        .ok()
+                        .map(|c| hook::parse_script_description(&c))
+                        .unwrap_or_default()
+                })
+        }
     }
 }
 
@@ -918,6 +1006,14 @@ asset_delete_cmd!(cmd_agent_delete, AssetKind::Agent);
 asset_retract_source_cmd!(cmd_agent_retract_source, AssetKind::Agent);
 asset_retract_cmd!(cmd_agent_retract, AssetKind::Agent);
 
+asset_deploy_cmd!(cmd_hook_deploy, AssetKind::Hook);
+asset_deploy_from_platform_cmd!(cmd_hook_deploy_from_platform, AssetKind::Hook);
+asset_get_cmd!(cmd_hook_get, AssetKind::Hook);
+asset_save_cmd!(cmd_hook_save, AssetKind::Hook);
+asset_delete_cmd!(cmd_hook_delete, AssetKind::Hook);
+asset_retract_source_cmd!(cmd_hook_retract_source, AssetKind::Hook);
+asset_retract_cmd!(cmd_hook_retract, AssetKind::Hook);
+
 #[tauri::command]
 async fn cmd_command_import(
     state: State<'_, AppState>,
@@ -1080,6 +1176,7 @@ async fn cmd_assets_transfer(
     let (from_def, from_root, _) = resolve_scope(&state, Some(&from_project)).await?;
     let (to_def, to_root, _) = resolve_scope(&state, Some(&to_project)).await?;
     let count = items.len();
+    let dest_display = to_root.to_string();
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         for item in &items {
             let kind = parse_kind(&item.kind)?;
@@ -1093,7 +1190,7 @@ async fn cmd_assets_transfer(
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))??;
     restart_asset_watcher(&app, &state).await?;
-    Ok(format!("已复制 {count} 项到目标项目"))
+    Ok(format!("已复制 {count} 项到 {dest_display}"))
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────
@@ -1418,6 +1515,8 @@ pub fn run() {
             cmd_command_import,
             cmd_agent_import,
             cmd_mcp_import,
+            cmd_hook_import,
+            cmd_hook_toggle_lifecycle,
             cmd_skill_get,
             cmd_skill_save,
             cmd_skill_delete,
@@ -1453,6 +1552,13 @@ pub fn run() {
             cmd_agent_deploy,
             cmd_agent_deploy_from_platform,
             cmd_agent_retract,
+            cmd_hook_get,
+            cmd_hook_save,
+            cmd_hook_delete,
+            cmd_hook_retract_source,
+            cmd_hook_deploy,
+            cmd_hook_deploy_from_platform,
+            cmd_hook_retract,
             cmd_projects_list,
             cmd_projects_add,
             cmd_projects_remove,

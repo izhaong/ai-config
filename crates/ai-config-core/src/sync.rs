@@ -82,6 +82,11 @@ pub fn asset_dest_for_at_base(
         AssetKind::Rule => format!("{name}.mdc"),
         AssetKind::Command => format!("{name}.md"),
         AssetKind::Mcp => return None,
+        AssetKind::Hook => {
+            return Some(crate::hook_adapter::platform_scripts_dir(
+                deploy_base, plat, name,
+            ))
+        }
         AssetKind::Agent => {
             if src.is_dir() {
                 return Some(plat_root.join(name));
@@ -109,7 +114,7 @@ pub fn link_src_for_create(kind: AssetKind, src: &Utf8Path) -> camino::Utf8PathB
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| src.to_path_buf()),
         AssetKind::Agent => agent_link_src(src),
-        AssetKind::Rule | AssetKind::Command | AssetKind::Mcp => src.to_path_buf(),
+        AssetKind::Rule | AssetKind::Command | AssetKind::Mcp | AssetKind::Hook => src.to_path_buf(),
     }
 }
 
@@ -138,6 +143,13 @@ fn platform_dest_root(
         AssetKind::Command => adapter.commands_dir(),
         AssetKind::Agent => adapter.agents_dir(),
         AssetKind::Mcp => return None,
+        AssetKind::Hook => match plat {
+            PlatformId::Cursor => deploy_base.join(".cursor/hooks"),
+            PlatformId::Codex => deploy_base.join(".codex/hooks"),
+            PlatformId::Claude => deploy_base.join(".claude/hooks"),
+            PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
+            PlatformId::AiConfig => deploy_base.join("hooks"),
+        },
     })
 }
 
@@ -173,6 +185,7 @@ pub fn compute_for_project(
         AssetKind::Mcp,
         AssetKind::Agent,
         AssetKind::Command,
+        AssetKind::Hook,
     ] {
         // 从合并后的路径列表抽取 (name, src) 对(name = 资产名,与 source 内部判定一致)
         let entries: Vec<(String, camino::Utf8PathBuf)> = match kind {
@@ -213,6 +226,19 @@ pub fn compute_for_project(
                 .iter()
                 .filter_map(|p| p.file_stem().map(|n| (n.to_string(), p.clone())))
                 .collect(),
+            AssetKind::Hook => {
+                let mut seen = std::collections::HashSet::new();
+                merged
+                    .hooks
+                    .iter()
+                    .filter_map(|item| {
+                        if !seen.insert(item.script_filename.clone()) {
+                            return None;
+                        }
+                        Some((item.script_filename.clone(), item.script_path.clone()))
+                    })
+                    .collect()
+            }
         };
 
         for (name, src) in entries {
@@ -221,7 +247,25 @@ pub fn compute_for_project(
                 if !platform::supports_at_scope(*plat, kind, &deploy_base) {
                     continue;
                 }
-                match kind {
+                if kind == AssetKind::Hook {
+                    let spec = match crate::hook::load_spec(&asset_root, &name) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    if !crate::hook::enabled_on_platform(&spec, *plat) {
+                        continue;
+                    }
+                    out.push(SyncAction::DeployHook {
+                        item_id,
+                        platform: *plat,
+                        name: name.clone(),
+                        src: src.clone(),
+                        asset_root: asset_root.clone(),
+                        deploy_base: deploy_base.clone(),
+                    });
+                    continue;
+                }
+                    match kind {
                     AssetKind::Mcp => {
                         out.push(SyncAction::RenderMcp {
                             project_id: project.id,
@@ -277,6 +321,7 @@ pub fn compute_global(
                     item_id, platform, ..
                 } => (3, *item_id, *platform),
                 SyncAction::Unlink { item_id, platform } => (4, *item_id, *platform),
+                SyncAction::DeployHook { item_id, platform, .. } => (5, *item_id, *platform),
             };
             if seen.insert(key) {
                 out.push(action);

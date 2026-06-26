@@ -90,7 +90,8 @@
     "rule": "Rules",
     "mcp": "MCP",
     "agent": "Agents",
-    "command": "Commands"
+    "command": "Commands",
+    "hook": "Hooks"
   },
   "linkState": {
     "linked": "Synced",
@@ -213,9 +214,66 @@
     "preview": "Selected: {{names}}",
     "previewMore": "Selected: {{names}} and {{rest}} more",
     "targetLabel": "Target project",
+    "destPath": "Destination: {{path}}",
+    "hintHook": "Hooks copy to {{path}}/hooks/<script> and merge into {{path}}/hooks.json",
     "hint": "Creates independent copies; fails if the target already has the same name.",
     "submit": "Copy",
     "noTargets": "No other projects available. Register another project in the sidebar first."
+  },
+  "hookLifecycle": {
+    "panelTitle": "Lifecycles",
+    "enabledBadge": "{{active}}/{{total}} on",
+    "pairBadge": "{{active}}/{{total}} groups",
+    "enabledSummary": "{{active}} enabled of {{total}} supported",
+    "unsupportedShort": "n/a",
+    "clickEnablePair": "Click to enable the whole group",
+    "clickDisablePair": "Click to disable the whole group",
+    "groupAgent": "Agent",
+    "groupTab": "Tab inline",
+    "groupWorkspace": "Workspace",
+    "clickEnable": "Enable {lifecycle}",
+    "clickDisable": "Disable {lifecycle}",
+    "unsupported": "{lifecycle} is not supported on this platform",
+    "unsupportedOnPlatformWithList": "{lifecycle} is not supported here (available on: {platforms})",
+    "toggleFailed": "Lifecycle toggle failed: {error}",
+    "pairs": {
+      "session": "Session",
+      "tool": "Tool",
+      "toolFail": "Tool fail",
+      "subagent": "Subagent",
+      "shell": "Shell",
+      "mcp": "MCP",
+      "file": "File",
+      "prompt": "Prompt",
+      "compact": "Compact",
+      "stop": "Stop",
+      "agentOut": "Output",
+      "tab": "Tab",
+      "workspace": "Workspace"
+    },
+    "chips": {
+      "sessionStart": "Start",
+      "sessionEnd": "End",
+      "preToolUse": "Pre tool",
+      "postToolUse": "Post tool",
+      "postToolUseFailure": "Tool fail",
+      "subagentStart": "Sub +",
+      "subagentStop": "Sub −",
+      "beforeShellExecution": "Shell −",
+      "afterShellExecution": "Shell +",
+      "beforeMCPExecution": "MCP −",
+      "afterMCPExecution": "MCP +",
+      "beforeReadFile": "Read −",
+      "afterFileEdit": "Edit +",
+      "beforeSubmitPrompt": "Prompt −",
+      "preCompact": "Compact",
+      "stop": "Stop",
+      "afterAgentResponse": "Reply +",
+      "afterAgentThought": "Think +",
+      "beforeTabFileRead": "Tab read",
+      "afterTabFileEdit": "Tab edit",
+      "workspaceOpen": "Workspace"
+    }
   },
   "registerProject": {
     "title": "Register project",
@@ -341,6 +399,7 @@
     "rule": "rules",
     "mcp": "mcp",
     "agent": "agents",
-    "command": "commands"
+    "command": "commands",
+    "hook": "hooks"
   }
 }

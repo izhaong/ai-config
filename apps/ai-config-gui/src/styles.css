@@ -902,6 +902,44 @@ button.danger:disabled {
   line-height: 1.35;
 }
 
+.asset-row--hook {
+  min-height: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.asset-row--hook .desc.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.hook-lifecycle-panel {
+  max-width: 100%;
+}
+
+.hook-lifecycle-chip:disabled {
+  pointer-events: none;
+}
+
+.hook-lifecycle-split [data-slot="lifecycle-segment"] {
+  border-radius: 0;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.hook-lifecycle-split [data-slot="lifecycle-segment"]:disabled {
+  opacity: 1;
+  cursor: not-allowed;
+}
+
 .platform-actions {
   display: flex;
   gap: 5px;

@@ -1,9 +1,22 @@
-export type AssetKind = "skill" | "rule" | "mcp" | "agent" | "command";
+export type AssetKind = "skill" | "rule" | "mcp" | "agent" | "command" | "hook";
 /** 5 平台：ai-config 为资产源，其余为 IDE 下发目标 */
 export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
 /** 可向 IDE deploy / retract 的 4 个目标 */
 export type DeployPlatform = Exclude<Platform, "aiconfig">;
 export type LinkState = "linked" | "synced" | "unlinked" | "broken" | "missing";
+
+export type HookLifecycleGroup = "agent" | "tab" | "workspace";
+
+export interface HookLifecycleView {
+  lifecycle: string;
+  group: HookLifecycleGroup;
+  label: string;
+  short_label: string;
+  active: boolean;
+  supported: boolean;
+  /** 支持该生命周期的 IDE 平台（全平台并集） */
+  supported_platforms?: Platform[];
+}
 
 export interface PlatformAssetEntry {
   name: string;
@@ -11,6 +24,9 @@ export interface PlatformAssetEntry {
   description: string;
   platform_path: string;
   states: Record<Platform, LinkState>;
+  hook_lifecycles?: HookLifecycleView[];
+  /** Hook 条目类型：`command` | `prompt` */
+  hook_type?: "command" | "prompt";
 }
 
 export interface PlatformAssetList {
@@ -132,6 +148,7 @@ export const ASSET_KINDS: AssetKind[] = [
   "mcp",
   "agent",
   "command",
+  "hook",
 ];
 
 export function isSourcePlatform(platform: Platform): boolean {

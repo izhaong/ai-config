@@ -8,12 +8,26 @@ import {
 } from "@/components/ui/animated";
 import type { ProjectItem } from "../../types";
 
+function targetAssetRoot(
+  toProject: string,
+  projects: ProjectItem[],
+  globalAssetRoot: string,
+): string {
+  if (toProject === "user-global") {
+    return globalAssetRoot;
+  }
+  const project = projects.find((p) => p.name === toProject);
+  return project ? `${project.root_path}/.ai-config` : "";
+}
+
 interface CopyToProjectModalProps {
   busy?: boolean;
   activeProject: string;
   projects: ProjectItem[];
+  globalAssetRoot: string;
   selectedCount: number;
   selectedNames: string[];
+  selectedKinds: string[];
   onCancel: () => void;
   onSubmit: (toProject: string) => void;
 }
@@ -22,8 +36,10 @@ export function CopyToProjectModal({
   busy = false,
   activeProject,
   projects,
+  globalAssetRoot,
   selectedCount,
   selectedNames,
+  selectedKinds,
   onCancel,
   onSubmit,
 }: CopyToProjectModalProps) {
@@ -43,6 +59,13 @@ export function CopyToProjectModal({
   }, [activeProject, projects, t]);
 
   const [toProject, setToProject] = useState(() => targets[0]?.id ?? "");
+
+  const destAssetRoot = useMemo(
+    () => targetAssetRoot(toProject, projects, globalAssetRoot),
+    [toProject, projects, globalAssetRoot],
+  );
+
+  const hasHooks = selectedKinds.includes("hook");
 
   const preview = useMemo(() => {
     const shown = selectedNames.slice(0, 5);
@@ -102,6 +125,16 @@ export function CopyToProjectModal({
                 ))}
               </select>
             </div>
+            {destAssetRoot ? (
+              <p className="copy-to-project-dest" title={destAssetRoot}>
+                {t("copyToProject.destPath", { path: destAssetRoot })}
+              </p>
+            ) : null}
+            {hasHooks ? (
+              <p className="copy-to-project-hint">
+                {t("copyToProject.hintHook", { path: destAssetRoot || "…" })}
+              </p>
+            ) : null}
             <p className="copy-to-project-hint">{t("copyToProject.hint")}</p>
             <div className="confirm-actions">
               <Button

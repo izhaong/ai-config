@@ -135,6 +135,22 @@ export function importAsset(
   });
 }
 
+export function toggleHookLifecycle(
+  name: string,
+  lifecycle: string,
+  enabled: boolean,
+  project: string,
+  platform: Platform,
+): Promise<string> {
+  return invoke<string>("cmd_hook_toggle_lifecycle", {
+    name,
+    lifecycle,
+    enabled,
+    project,
+    platform,
+  });
+}
+
 export function addSkillFromRemote(
   source: string,
   skillName: string | undefined,

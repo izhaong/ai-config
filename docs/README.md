@@ -2,12 +2,12 @@
 
 ## 产品与设计（桌面端工具）
 
-| 文档                                         | 说明                                   |
-| -------------------------------------------- | -------------------------------------- |
+| 文档                                         | 说明                                                      |
+| -------------------------------------------- | --------------------------------------------------------- |
 | [PRD.md](./product/PRD.md)                   | 产品需求 v0.5：五平台对等、硬拷贝下发、icon/更新/删除语义 |
-| [ARCHITECTURE.md](./product/ARCHITECTURE.md) | 技术架构：crate 边界、materialize、数据流 |
-| [DESIGN.md](./product/DESIGN.md)             | GUI 信息架构 + §19 已实现交互附录 |
-| [SCHEDULE.md](./product/SCHEDULE.md)         | 里程碑与排期                           |
+| [ARCHITECTURE.md](./product/ARCHITECTURE.md) | 技术架构：crate 边界、materialize、数据流                 |
+| [DESIGN.md](./product/DESIGN.md)             | GUI 信息架构 + §19 已实现交互附录                         |
+| [SCHEDULE.md](./product/SCHEDULE.md)         | 里程碑与排期                                              |
 
 ## 参考资料
 
@@ -15,6 +15,7 @@
 | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | [claudemarketplace-skills-top100.md](./reference/claudemarketplace-skills-top100.md) | [Claude Code Marketplace](https://www.claudemarketplace.net/skills) 下载量 / Stars Top 100                 |
 | [vercel-skills-agent-paths.md](./reference/vercel-skills-agent-paths.md)             | [vercel-labs/skills](https://github.com/vercel-labs/skills) 各平台 skill 下发路径（`npx skills add` 上游） |
+| [hooks-compatibility-matrix.md](./reference/hooks-compatibility-matrix.md)           | Hooks 在 Cursor / Claude / Codex 的事件映射、路径和 matcher 兼容策略                                       |
 
 ## 资产与配置
 

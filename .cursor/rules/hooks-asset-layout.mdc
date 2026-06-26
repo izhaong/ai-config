@@ -1,0 +1,104 @@
+---
+description: Hook 资产物理布局——仅允许「单文件」或「单目录整包」，便于备份与跨平台同步
+globs: "**/{hooks,hooks.json,.ai-config/hooks/**,.cursor/hooks/**,.codex/hooks/**,.claude/hooks/**}/*"
+alwaysApply: false
+---
+
+# Hook 资产布局（可同步单元）
+
+编写或修改 Hook **之前**先选定形态；**禁止**文件散落在多个路径、多个仓库目录或「源 / 平台」各维护一份正文。
+
+## 资产根（唯一源）
+
+与 skill/rule 相同，Hook 正文只在资产根：
+
+| 作用域 | 路径                                                        |
+| ------ | ----------------------------------------------------------- |
+| 全局   | `~/.ai-config/hooks.json` + `~/.ai-config/hooks/`           |
+| 项目   | `<repo>/.ai-config/hooks.json` + `<repo>/.ai-config/hooks/` |
+
+**禁止**把可同步的 Hook 源放在 `<repo>/hooks/`、仓库根散落脚本、或仅存在于 `.cursor/` / `.codex/` 而无 `.ai-config` 对应项。
+
+平台目录（`.cursor/hooks.json`、`.codex/hooks.json` 等）由 **deploy / sync / 拷贝** 生成；手工改平台侧后应 **import 回** `.ai-config`，不得长期分叉。
+
+---
+
+## 两种合法形态（二选一）
+
+### 形态 A — 单文件资产
+
+**适用**：一个自包含脚本即可（如单 `.py` / `.sh`），无同包附属文件。
+
+```
+<asset_root>/
+  hooks.json
+  hooks/<entry>.py          # 或 .sh；仅此一个脚本文件
+```
+
+- `hooks.json` 里 `command` 使用 `./hooks/<entry>.py [事件参数…]`（canonical）。
+- 单文件脚本的可调参数（开关、音色等）**写在脚本顶部常量**，不另建 `tts.env` / `tts.enabled` 等旁路文件。
+- **禁止**在 `hooks/` 下再挂第二个相关脚本或 `lib/`；一旦需要第二个文件 → 改形态 B。
+
+### 形态 B — 目录整包资产
+
+**适用**：入口脚本 + 配置 / 依赖 / 子脚本 / 本地状态模板等 **任意多个文件**。
+
+```
+<asset_root>/
+  hooks.json
+  hooks/<bundle-name>/
+    hook.yaml               # 或 HOOK.md + hook.yaml（canonical 元数据）
+    scripts/<entry>.sh      # 或根级入口脚本（由 hook.yaml 指定）
+    ...                     # 所有附属文件只能在此目录树下
+```
+
+- **一个 bundle 目录 = 一个可备份、可 deploy、可跨平台拷贝的单元**；同步时整目录移动，不得只拷入口脚本而漏配置。
+- 运行时生成的状态（如 `.tts-state/`）可在平台侧产生；源仓库不提交缓存，但脚本应把状态写在入口同目录或子目录，勿写到资产根外。
+
+---
+
+## 禁止的布局
+
+| 反模式                                                         | 原因                                 |
+| -------------------------------------------------------------- | ------------------------------------ |
+| `hooks/a.py` 依赖 `hooks/b.py` 或 `../lib/`                    | 不是单文件，却未收入同一 bundle 目录 |
+| 脚本在 `.ai-config/hooks/`，配置只在 `.cursor/hooks/` 旁路文件 | 平台侧独有，无法备份同步             |
+| 同一逻辑在 `.ai-config` 与 `.cursor` 各改一版                  | 源分裂                               |
+| 多个无关联脚本平铺在 `hooks/` 且互相引用                       | 应拆成多个形态 A，或合并为一个形态 B |
+| 在 `hooks.json` 引用仓库外绝对路径作为主交付物                 | deploy 到其他机器失败                |
+
+---
+
+## 平台下发（由 core adapter 负责）
+
+源保持 **Cursor canonical** `hooks.json` + `hooks/`；下发时由 `ai-config-core` 转为各平台原生路径，语义不变：
+
+| 平台   | 配置                      | 脚本                                              |
+| ------ | ------------------------- | ------------------------------------------------- |
+| Cursor | `.cursor/hooks.json`      | `.cursor/hooks/`（扁平或子目录，与 adapter 一致） |
+| Codex  | `.codex/hooks.json`       | `.codex/hooks/`                                   |
+| Claude | `settings.json` → `hooks` | `.claude/hooks/`                                  |
+| Hermes | `~/.hermes/config.yaml`   | `~/.hermes/agent-hooks/`                          |
+
+Agent **不得**手写各平台不同目录结构；新平台兼容只改 core adapter。
+
+---
+
+## Agent 编写检查清单
+
+1. 新 Hook：先选 **形态 A** 还是 **形态 B**（文件数 ≥ 2 → 必须 B）。
+2. 所有可同步正文写入 **`.ai-config/hooks/`**（或 `~/.ai-config/hooks/`）。
+3. `hooks.json` 绑定使用 canonical 生命周期键名；带事件参数时保留在 `command` 末尾。
+4. 单文件 Hook：可调参数写脚本内常量；多文件 bundle 的配置写在 bundle 目录内源码中。
+5. 完成 deploy 后验证：`ai-config status` / GUI Hook 行生命周期与平台一致。
+
+---
+
+## 本仓示例
+
+| 资产              | 形态        | 路径                                                 |
+| ----------------- | ----------- | ---------------------------------------------------- |
+| `speak-lifecycle` | A（单脚本） | `.ai-config/hooks/speak-lifecycle.py` + `hooks.json` |
+| `lifecycle-tts`   | B（目录包） | `.ai-config/hooks/lifecycle-tts/`                    |
+
+迁移方向：历史「扁平脚本 + 散落配置」应收敛为 A 或 B，不得新增第三种布局。

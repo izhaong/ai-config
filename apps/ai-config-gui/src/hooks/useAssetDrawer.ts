@@ -52,6 +52,8 @@ export function useAssetDrawer({
 }: UseAssetDrawerOptions) {
   const { t } = useTranslation();
   const [drawerName, setDrawerName] = useState<string | null>(null);
+  const [drawerHookEntry, setDrawerHookEntry] =
+    useState<PlatformAssetEntry | null>(null);
   const [drawerDetail, setDrawerDetail] = useState<AssetDetail | null>(null);
   const [drawerEditing, setDrawerEditing] = useState(false);
   const [drawerDraft, setDrawerDraft] = useState("");
@@ -64,6 +66,7 @@ export function useAssetDrawer({
 
   const closeDrawer = useMemoizedFn(() => {
     setDrawerName(null);
+    setDrawerHookEntry(null);
     setDrawerDetail(null);
     setDrawerEditing(false);
     setDrawerDraft("");
@@ -72,6 +75,7 @@ export function useAssetDrawer({
 
   const resetDrawer = useMemoizedFn(() => {
     setDrawerName(null);
+    setDrawerHookEntry(null);
     setDrawerDetail(null);
     setDrawerEditing(false);
     setDrawerDraft("");
@@ -97,6 +101,7 @@ export function useAssetDrawer({
 
       const fromSource = shouldLoadFromSource(entry, activePlatform);
       setDrawerReadOnly(!fromSource);
+      setDrawerHookEntry(entry.kind === "hook" ? entry : null);
 
       try {
         const d = fromSource
@@ -126,11 +131,23 @@ export function useAssetDrawer({
   const openAsset = useMemoizedFn(async (entry: PlatformAssetEntry) => {
     const fromSource = shouldLoadFromSource(entry, activePlatform);
     setDrawerName(entry.name);
+    setDrawerHookEntry(entry.kind === "hook" ? entry : null);
     setDrawerReadOnly(!fromSource);
     setDrawerEditing(false);
     setDrawerDetail(null);
     setDrawerLoading(true);
     try {
+      if (entry.kind === "hook" && entry.hook_type === "prompt") {
+        setDrawerDetail({
+          name: entry.name,
+          description: "",
+          content: "",
+          source_path: entry.platform_path,
+          parent_path: "",
+        });
+        setDrawerDraft("");
+        return;
+      }
       const d = fromSource
         ? await fetchAsset(entry.kind, entry.name, activeProject)
         : await readPlatformAsset(entry.platform_path, entry.kind, entry.name);
@@ -250,6 +267,7 @@ export function useAssetDrawer({
     setDrawerDraft,
     drawerLoading,
     drawerReadOnly,
+    drawerHookEntry,
     closeDrawer,
     resetDrawer,
     openAsset,

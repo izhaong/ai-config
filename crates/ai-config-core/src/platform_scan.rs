@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 
 use crate::asset_ops::parse_skill_description;
 use crate::error::CoreError;
+use crate::hook_lifecycle::{self, HookLifecycleView};
 use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId};
 use crate::platform::{self, PlatformAdapter};
@@ -43,6 +44,12 @@ pub struct PlatformAssetEntry {
     pub source_state: SourceState,
     /// 5 平台同步状态（含 ai-config 源）
     pub states: std::collections::HashMap<PlatformId, LinkState>,
+    /// Hook 专用：各生命周期开关状态（仅 `kind == Hook` 时有值）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_lifecycles: Option<Vec<HookLifecycleView>>,
+    /// Hook 专用：`command` | `prompt`（仅 `kind == Hook` 时有值）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_type: Option<String>,
 }
 
 /// 平台链接状态（与 GUI `LinkState` 对齐）
@@ -85,11 +92,16 @@ pub fn scan_platform_assets(
     let raw = scan_platform_raw(adapter.as_ref(), kind)?;
 
     let mut out = Vec::with_capacity(raw.len());
-    for (name, platform_path, description) in raw {
+    for (name, platform_path, description, hook_type, binding_key) in raw {
+        let state_key = if kind == AssetKind::Hook {
+            binding_key.as_str()
+        } else {
+            name.as_str()
+        };
         let states = compute_entry_states(
             plat,
             kind,
-            &name,
+            state_key,
             &platform_path,
             deploy_base,
             asset_root,
@@ -100,6 +112,8 @@ pub fn scan_platform_assets(
         } else {
             SourceState::Unmanaged
         };
+        let hook_lifecycles =
+            hook_lifecycle_views(kind, plat, state_key, asset_root, deploy_base);
         out.push(PlatformAssetEntry {
             name,
             kind,
@@ -107,6 +121,8 @@ pub fn scan_platform_assets(
             platform_path: platform_path.to_string(),
             source_state,
             states,
+            hook_lifecycles,
+            hook_type,
         });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -129,18 +145,48 @@ fn scan_aiconfig_assets(
     };
     let adapter = platform::aiconfig_adapter(asset_root);
     let source_scan = scan_source_for_scope(default_root, asset_root)?;
-    let raw = scan_platform_raw(adapter.as_ref(), kind)?;
+    let raw = if kind == AssetKind::Hook {
+        crate::hook::list_hook_catalog(asset_root)?
+            .into_iter()
+            .map(|item| {
+                (
+                    item.name,
+                    item.source_path,
+                    item.description,
+                    Some(match item.hook_type {
+                        crate::hook::HookEntryType::Command => "command".to_string(),
+                        crate::hook::HookEntryType::Prompt => "prompt".to_string(),
+                    }),
+                    item.binding_key,
+                )
+            })
+            .collect()
+    } else {
+        scan_platform_raw(adapter.as_ref(), kind)?
+    };
     let mut out: Vec<PlatformAssetEntry> = raw
         .into_iter()
-        .map(|(name, platform_path, description)| {
+        .map(|(name, platform_path, description, hook_type, binding_key)| {
+            let state_key = if kind == AssetKind::Hook {
+                binding_key.as_str()
+            } else {
+                name.as_str()
+            };
             let states = compute_entry_states(
                 PlatformId::AiConfig,
                 kind,
-                &name,
+                state_key,
                 &platform_path,
                 &deploy_base,
                 asset_root,
                 &source_scan,
+            );
+            let hook_lifecycles = hook_lifecycle_views(
+                kind,
+                PlatformId::AiConfig,
+                state_key,
+                asset_root,
+                &deploy_base,
             );
             PlatformAssetEntry {
                 name,
@@ -149,11 +195,31 @@ fn scan_aiconfig_assets(
                 platform_path: platform_path.to_string(),
                 source_state: SourceState::Managed,
                 states,
+                hook_lifecycles,
+                hook_type,
             }
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+fn hook_lifecycle_views(
+    kind: AssetKind,
+    browse_plat: PlatformId,
+    script_filename: &str,
+    asset_root: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Option<Vec<HookLifecycleView>> {
+    if kind != AssetKind::Hook {
+        return None;
+    }
+    Some(hook_lifecycle::list_lifecycle_views(
+        asset_root,
+        deploy_base,
+        browse_plat,
+        script_filename,
+    ))
 }
 
 pub fn scan_source_for_scope(
@@ -169,7 +235,7 @@ pub fn scan_source_for_scope(
     source::scan_project_root(asset_root)
 }
 
-type RawEntry = (String, Utf8PathBuf, String);
+type RawEntry = (String, Utf8PathBuf, String, Option<String>, String);
 
 fn scan_platform_raw(
     adapter: &dyn PlatformAdapter,
@@ -180,6 +246,7 @@ fn scan_platform_raw(
         AssetKind::Rule => scan_platform_rules(adapter),
         AssetKind::Agent => scan_platform_agents(adapter),
         AssetKind::Command => scan_platform_commands(adapter),
+        AssetKind::Hook => scan_platform_hooks(adapter),
         AssetKind::Mcp => scan_platform_mcp(adapter),
     }
 }
@@ -193,6 +260,166 @@ fn is_noise_entry_name(name: &str) -> bool {
         || name.ends_with(".orig")
         || name.ends_with('~')
         || is_readme
+}
+
+fn platform_asset_key_from_command(command: &str, hooks_dir: &Utf8Path) -> Option<String> {
+    let executable = command.split_whitespace().next()?.trim();
+    if executable.is_empty() {
+        return None;
+    }
+    let rel = executable.strip_prefix("./").unwrap_or(executable);
+    let path = Utf8Path::new(rel);
+    let components: Vec<_> = path.iter().collect();
+    if let Some(i) = components.iter().position(|c| *c == "hooks") {
+        let rest = &components[i + 1..];
+        if rest.is_empty() {
+            return None;
+        }
+        if rest.len() >= 2 && hooks_dir.join(rest[0]).is_dir() {
+            return Some(rest[0].to_string());
+        }
+        return rest.last().map(|s| s.to_string());
+    }
+    path.file_name().map(str::to_string)
+}
+
+fn scan_platform_hooks(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, CoreError> {
+    let plat = adapter.id();
+    if plat == PlatformId::AiConfig {
+        return Ok(Vec::new());
+    }
+    let deploy_base = adapter.skills_dir();
+    let deploy_base = deploy_base
+        .parent()
+        .and_then(|p| p.parent())
+        .unwrap_or(&deploy_base)
+        .to_path_buf();
+    let config_path = crate::hook_adapter::platform_config_path_for(&deploy_base, plat);
+    let hooks_root = crate::hook_adapter::platform_hooks_dir(&deploy_base, plat);
+    let mut by_key: std::collections::HashMap<String, RawEntry> = std::collections::HashMap::new();
+
+    if hooks_root.is_dir() {
+        for entry in fs::read_dir(hooks_root.as_std_path()).map_err(CoreError::Io)? {
+            let entry = entry.map_err(CoreError::Io)?;
+            let path = Utf8PathBuf::from_path_buf(entry.path()).unwrap_or_default();
+            let Some(name) = path.file_name().map(str::to_string) else {
+                continue;
+            };
+            if name.starts_with('.') || is_noise_entry_name(&name) {
+                continue;
+            }
+            if path.is_file() {
+                if !crate::hook::is_hook_script_file(&name) {
+                    continue;
+                }
+                let description = fs::read_to_string(path.as_std_path())
+                    .ok()
+                    .map(|c| crate::hook::parse_script_description(&c))
+                    .unwrap_or_default();
+                by_key.insert(
+                    name.clone(),
+                    (name.clone(), path, description, Some("command".into()), name),
+                );
+            } else if path.is_dir() {
+                by_key.insert(
+                    name.clone(),
+                    (
+                        name.clone(),
+                        path,
+                        String::new(),
+                        Some("command".into()),
+                        name,
+                    ),
+                );
+            }
+        }
+    }
+
+    if config_path.is_file() {
+        let raw = fs::read_to_string(config_path.as_std_path()).map_err(CoreError::Io)?;
+        let doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+            template: config_path.as_str().to_owned(),
+            reason: e.to_string(),
+            hint: "hooks.json 解析失败".into(),
+        })?;
+        if let Some(hooks) = doc.get("hooks").and_then(|v| v.as_object()) {
+            for (lifecycle, entries) in hooks {
+                let Some(arr) = entries.as_array() else {
+                    continue;
+                };
+                for (index, entry) in arr.iter().enumerate() {
+                    let entry_type = entry
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("command")
+                        .to_ascii_lowercase();
+                    let prompt = entry
+                        .get("prompt")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                    if entry_type == "prompt" || (entry.get("command").is_none() && prompt.is_some())
+                    {
+                        let key = format!("prompt:{lifecycle}:{index}");
+                        let title = prompt
+                            .as_deref()
+                            .filter(|p| !p.is_empty())
+                            .map(crate::hook::prompt_entry_title)
+                            .unwrap_or_else(|| format!("prompt@{lifecycle}"));
+                        by_key.insert(
+                            key.clone(),
+                            (
+                                title,
+                                config_path.clone(),
+                                String::new(),
+                                Some("prompt".into()),
+                                key,
+                            ),
+                        );
+                        continue;
+                    }
+                    let Some(command) = entry.get("command").and_then(|v| v.as_str()) else {
+                        continue;
+                    };
+                    let Some(key) = platform_asset_key_from_command(command, &hooks_root) else {
+                        continue;
+                    };
+                    if is_noise_entry_name(&key) {
+                        continue;
+                    }
+                    let path = hooks_root.join(&key);
+                    let resolved = if path.is_file() || path.is_dir() {
+                        path
+                    } else {
+                        hooks_root.join(
+                            crate::hook::filename_from_command(command).unwrap_or(key.clone()),
+                        )
+                    };
+                    let description = if resolved.is_file() {
+                        fs::read_to_string(resolved.as_std_path())
+                            .ok()
+                            .map(|c| crate::hook::parse_script_description(&c))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    by_key.insert(
+                        key.clone(),
+                        (
+                            key.clone(),
+                            resolved,
+                            description,
+                            Some("command".into()),
+                            key,
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<RawEntry> = by_key.into_values().collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
 }
 
 fn scan_platform_skills(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, CoreError> {
@@ -220,7 +447,7 @@ fn scan_platform_skills(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, 
             .ok()
             .map(|c| parse_skill_description(&c))
             .unwrap_or_default();
-        out.push((name.clone(), entry_path, description));
+            out.push((name.clone(), entry_path, description, None, name));
     }
     Ok(out)
 }
@@ -251,7 +478,7 @@ fn scan_platform_rules(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, C
             .ok()
             .map(|c| parse_skill_description(&c))
             .unwrap_or_default();
-        out.push((stem, path, description));
+        out.push((stem.clone(), path, description, None, stem));
     }
     Ok(out)
 }
@@ -279,7 +506,7 @@ fn scan_platform_commands(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>
             .ok()
             .map(|c| parse_skill_description(&c))
             .unwrap_or_default();
-        out.push((stem, path, description));
+        out.push((stem.clone(), path, description, None, stem));
     }
     Ok(out)
 }
@@ -309,7 +536,7 @@ fn scan_platform_agents(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, 
         };
         let Some(name) = name else { continue };
         let description = agent_description_at(&path);
-        out.push((name, path, description));
+        out.push((name.clone(), path, description, None, name));
     }
     Ok(out)
 }
@@ -365,7 +592,7 @@ fn scan_platform_mcp(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, Cor
                 .cloned()
                 .unwrap_or_default();
             let description = mcp_json::server_transport_summary(&cfg);
-            (name, path.clone(), description)
+            (name.clone(), path.clone(), description, None, name)
         })
         .collect())
 }
@@ -401,7 +628,13 @@ fn scan_hermes_mcp_servers(config_path: &Utf8Path) -> Result<Vec<RawEntry>, Core
                 .unwrap_or(serde_yaml::Value::Null);
             let cfg: serde_json::Value = serde_json::to_value(cfg_yaml).unwrap_or_default();
             let description = mcp_json::server_transport_summary(&cfg);
-            (name, config_path.to_path_buf(), description)
+            (
+                name.clone(),
+                config_path.to_path_buf(),
+                description,
+                None,
+                name,
+            )
         })
         .collect())
 }
@@ -417,11 +650,12 @@ pub fn find_source_path(
                 .and_then(|p| p.file_name())
                 .map(|n| n == name)
                 .unwrap_or(false)
-        }),
+        }).cloned(),
         AssetKind::Rule => source_scan
             .rules
             .iter()
-            .find(|p| p.file_stem().map(|n| n == name).unwrap_or(false)),
+            .find(|p| p.file_stem().map(|n| n == name).unwrap_or(false))
+            .cloned(),
         AssetKind::Agent => source_scan.agents.iter().find(|p| {
             let candidate = if p.is_dir() {
                 p.file_name().map(|s| s.to_string())
@@ -429,20 +663,25 @@ pub fn find_source_path(
                 p.file_stem().map(|s| s.to_string())
             };
             candidate.as_deref() == Some(name)
-        }),
+        }).cloned(),
         AssetKind::Command => source_scan
             .commands
             .iter()
-            .find(|p| p.file_stem().map(|n| n == name).unwrap_or(false)),
+            .find(|p| p.file_stem().map(|n| n == name).unwrap_or(false))
+            .cloned(),
         AssetKind::Mcp => {
             let asset_root = source_scan.mcp_json.as_ref()?.parent()?;
             mcp_json::get_server_config(asset_root, name)
                 .ok()
                 .flatten()?;
-            source_scan.mcp_json.as_ref()
+            source_scan.mcp_json.as_ref().cloned()
         }
+        AssetKind::Hook => source_scan
+            .hooks
+            .iter()
+            .find(|item| item.script_filename == name)
+            .map(|item| item.script_path.clone()),
     }
-    .cloned()
 }
 
 fn compute_entry_states(
@@ -472,6 +711,10 @@ fn compute_entry_states(
             // IDE 视图下，ai-config icon 仅反映源是否存在该资产（避免被平台副本元数据干扰）
             if src.as_ref().is_some_and(|s| s.exists()) {
                 LinkState::Linked
+            } else if browse_plat != PlatformId::AiConfig
+                && std::fs::symlink_metadata(platform_path.as_std_path()).is_ok()
+            {
+                LinkState::Missing
             } else {
                 LinkState::Unlinked
             }
@@ -591,6 +834,13 @@ fn platform_mirror_link_state(
                 | crate::template::McpSyncState::Broken => LinkState::Unlinked,
             };
         }
+        AssetKind::Hook => {
+            return if crate::hook_adapter::is_deployed(deploy_base, dest_plat, name) {
+                LinkState::Synced
+            } else {
+                LinkState::Missing
+            };
+        }
     };
     if fs::symlink_metadata(dest.as_std_path()).is_err() {
         return LinkState::Missing;
@@ -604,6 +854,7 @@ fn platform_mirror_link_state(
             crate::materialize::content_matches_source(kind, mirror_platform_path, &dest)
         }
         AssetKind::Mcp => false,
+        AssetKind::Hook => unreachable!("handled above"),
     };
     if !matches {
         return LinkState::Unlinked;
@@ -658,6 +909,13 @@ fn ide_asset_link_state(
     src: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> LinkState {
+    if kind == AssetKind::Hook {
+        return if crate::hook_adapter::is_deployed(deploy_base, plat, name) {
+            LinkState::Linked
+        } else {
+            LinkState::Unlinked
+        };
+    }
     let dest = match asset_dest_for_at_base(plat, kind, name, src, deploy_base) {
         Some(d) => d,
         None => return LinkState::Unlinked,
@@ -879,6 +1137,46 @@ pub fn import_mcp_from_platform(
     Ok(mcp_json::mcp_json_path(asset_root))
 }
 
+/// 将平台 hook 脚本与 `hooks.json` 绑定导入到 `asset_root`。
+pub fn import_hook_from_platform(
+    script_filename: &str,
+    plat: PlatformId,
+    default_root: &Utf8Path,
+    asset_root: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Result<Utf8PathBuf, CoreError> {
+    if plat == PlatformId::AiConfig {
+        return Err(CoreError::InvalidPath(
+            "ai-config 为资产源，不能从自身导入".into(),
+        ));
+    }
+    let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
+    if !adapter.supports(AssetKind::Hook) {
+        return Err(CoreError::UnsupportedAsset {
+            platform: plat,
+            asset: AssetKind::Hook,
+            hint: "该平台不支持 hooks".into(),
+        });
+    }
+    if !crate::hook_adapter::platform_script_path(deploy_base, plat, script_filename).is_file() {
+        return Err(CoreError::AssetNotFound {
+            kind: AssetKind::Hook,
+            name: script_filename.into(),
+            hint: format!(
+                "平台 `{}` 上找不到 hook `{script_filename}`",
+                plat_label(plat)
+            ),
+        });
+    }
+    let source_scan = scan_source_for_scope(default_root, asset_root)?;
+    if find_source_path(AssetKind::Hook, script_filename, &source_scan).is_some() {
+        return Err(CoreError::InvalidPath(format!(
+            "源中已存在 hook `{script_filename}`，请先删除或重命名"
+        )));
+    }
+    crate::hook_adapter::import_to_source(asset_root, deploy_base, script_filename, plat)
+}
+
 /// 将已纳管资产从 `from_root` 复制到 `to_root`（跨项目粘贴）。
 pub fn copy_asset_to_asset_root(
     kind: AssetKind,
@@ -962,6 +1260,42 @@ pub fn copy_asset_to_asset_root(
             mcp_json::ensure_mcp_json(to_root)?;
             mcp_json::upsert_server_in_document(to_root, name, config)?;
             mcp_json::mcp_json_path(to_root)
+        }
+        AssetKind::Hook => {
+            let script_filename = src
+                .file_name()
+                .map(str::to_string)
+                .unwrap_or_else(|| name.to_string());
+            let dest_script = to_root.join("hooks").join(&script_filename);
+            if dest_script.is_file() {
+                return Err(CoreError::InvalidPath(format!(
+                    "目标已存在 hook `{script_filename}`"
+                )));
+            }
+            crate::paths::ensure_parent_dir(&dest_script)?;
+            std::fs::copy(src.as_std_path(), dest_script.as_std_path()).map_err(CoreError::Io)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = std::fs::metadata(dest_script.as_std_path()) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(0o755);
+                    let _ = std::fs::set_permissions(dest_script.as_std_path(), perms);
+                }
+            }
+            let spec = crate::hook::load_spec(from_root, &script_filename)?;
+            let from_deploy = crate::hook::deploy_base_for_asset_root(from_root);
+            let bindings = if spec.bindings.is_empty() {
+                crate::hook::collect_bindings_for_script(
+                    from_root,
+                    &from_deploy,
+                    &script_filename,
+                )?
+            } else {
+                spec.bindings
+            };
+            crate::hook::merge_bindings_into_manifest(to_root, &script_filename, &bindings)?;
+            dest_script
         }
     };
     Ok(dest)
@@ -1556,6 +1890,85 @@ mod tests {
     }
 
     #[test]
+    fn copy_hook_pulls_bindings_from_source_platform_when_manifest_empty() {
+        let global = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let global_root = Utf8Path::from_path(global.path()).unwrap();
+        let project_root = Utf8Path::from_path(project.path()).unwrap();
+        let global_asset = global_root.join(".ai-config");
+        fs::create_dir_all(global_asset.join("hooks")).unwrap();
+        fs::write(global_asset.join("hooks.json"), r#"{"version":1,"hooks":{}}"#).unwrap();
+        fs::write(
+            global_asset.join("hooks/speak-lifecycle.py"),
+            "#!/usr/bin/env python3\n\"\"\"TTS\"\"\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(global_root.join(".cursor/hooks")).unwrap();
+        fs::write(
+            global_root.join(".cursor/hooks.json"),
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":".cursor/hooks/speak-lifecycle.py sessionStart"}]}}"#,
+        )
+        .unwrap();
+        fs::write(
+            global_root.join(".cursor/hooks/speak-lifecycle.py"),
+            "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
+
+        let project_asset = project_root.join(".ai-config");
+        fs::create_dir_all(&project_asset).unwrap();
+
+        let dest = copy_asset_to_asset_root(
+            AssetKind::Hook,
+            "speak-lifecycle.py",
+            global_root,
+            &global_asset,
+            project_root,
+            &project_asset,
+        )
+        .unwrap();
+
+        assert_eq!(dest, project_asset.join("hooks/speak-lifecycle.py"));
+        let manifest =
+            fs::read_to_string(project_asset.join("hooks.json").as_std_path()).unwrap();
+        assert!(manifest.contains("sessionStart"));
+        assert!(manifest.contains("./hooks/speak-lifecycle.py sessionStart"));
+    }
+
+    #[test]
+    fn copy_hook_to_other_project_asset_root() {
+        let global = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let global_root = Utf8Path::from_path(global.path()).unwrap();
+        let project_root = Utf8Path::from_path(project.path()).unwrap();
+        touch(
+            &global_root.join("hooks.json"),
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":"./hooks/speak-lifecycle.py"}]}}"#,
+        );
+        touch(
+            &global_root.join("hooks/speak-lifecycle.py"),
+            "#!/usr/bin/env python3\n\"\"\"TTS\"\"\"\n",
+        );
+
+        let dest = copy_asset_to_asset_root(
+            AssetKind::Hook,
+            "speak-lifecycle.py",
+            global_root,
+            global_root,
+            project_root,
+            project_root,
+        )
+        .unwrap();
+
+        assert_eq!(dest, project_root.join("hooks/speak-lifecycle.py"));
+        assert!(dest.is_file());
+        assert!(project_root.join("hooks.json").is_file());
+        let manifest =
+            fs::read_to_string(project_root.join("hooks.json").as_std_path()).unwrap();
+        assert!(manifest.contains("speak-lifecycle.py"));
+    }
+
+    #[test]
     fn copy_asset_rejects_same_project() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(tmp.path()).unwrap();
@@ -1591,5 +2004,97 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("已存在"));
+    }
+
+    #[test]
+    fn import_hook_from_cursor_project_scope() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Utf8Path::from_path(tmp.path()).unwrap();
+        let asset_root = repo.join(".ai-config");
+        fs::create_dir_all(asset_root.join("hooks")).unwrap();
+        mcp_json::ensure_mcp_json(&asset_root).unwrap();
+
+        let hooks_json = repo.join(".cursor/hooks.json");
+        touch(
+            &hooks_json,
+            r#"{"version":1,"hooks":{"afterAgentResponse":[{"command":"./hooks/lifecycle-tts.sh","matcher":"*"}]}}"#,
+        );
+        touch(
+            &repo.join(".cursor/hooks/lifecycle-tts.sh"),
+            "#!/bin/sh\n\"\"\"生命周期 TTS\"\"\"\n",
+        );
+
+        let dest = import_hook_from_platform(
+            "lifecycle-tts.sh",
+            PlatformId::Cursor,
+            &asset_root,
+            &asset_root,
+            repo,
+        )
+        .unwrap();
+
+        assert_eq!(dest, asset_root.join("hooks/lifecycle-tts.sh"));
+        assert!(dest.is_file());
+        assert!(asset_root.join("hooks.json").is_file());
+
+        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
+        let cursor_path = repo.join(".cursor/hooks/lifecycle-tts.sh");
+        let states = compute_entry_states(
+            PlatformId::Cursor,
+            AssetKind::Hook,
+            "lifecycle-tts.sh",
+            &cursor_path,
+            repo,
+            &asset_root,
+            &source_scan,
+        );
+        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Synced));
+    }
+
+    #[test]
+    fn scan_platform_hooks_cursor_path_with_args() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Utf8Path::from_path(tmp.path()).unwrap();
+        touch(
+            &repo.join(".cursor/hooks.json"),
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":".cursor/hooks/speak-lifecycle.py sessionStart"}]}}"#,
+        );
+        touch(
+            &repo.join(".cursor/hooks/speak-lifecycle.py"),
+            "#!/usr/bin/env python3\n\"\"\"生命周期 TTS\"\"\"\n",
+        );
+
+        struct CursorAdapter {
+            base: Utf8PathBuf,
+        }
+        impl PlatformAdapter for CursorAdapter {
+            fn id(&self) -> PlatformId {
+                PlatformId::Cursor
+            }
+            fn skills_dir(&self) -> Utf8PathBuf {
+                self.base.join(".cursor/skills")
+            }
+            fn rules_dir(&self) -> Utf8PathBuf {
+                self.base.join(".cursor/rules")
+            }
+            fn agents_dir(&self) -> Utf8PathBuf {
+                self.base.join(".cursor/agents")
+            }
+            fn commands_dir(&self) -> Utf8PathBuf {
+                self.base.join(".cursor/commands")
+            }
+            fn mcp_json_path(&self) -> Utf8PathBuf {
+                self.base.join(".cursor/mcp.json")
+            }
+        }
+
+        let entries = scan_platform_hooks(&CursorAdapter {
+            base: repo.to_path_buf(),
+        })
+        .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "speak-lifecycle.py");
+        assert_eq!(entries[0].2, "生命周期 TTS");
     }
 }

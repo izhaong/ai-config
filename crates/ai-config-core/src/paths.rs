@@ -18,7 +18,7 @@ pub const USER_ASSET_DIR_NAME: &str = ".ai-config";
 pub const BUNDLE_SEED_DIR_NAMES: &[&str] = &[".ai-config", "seed"];
 
 /// 子目录(相对资产根)。
-pub const ASSET_SUBDIRS: &[&str] = &["skills", "rules", "agents", "commands"];
+pub const ASSET_SUBDIRS: &[&str] = &["skills", "rules", "agents", "commands", "hooks"];
 
 /// 读 home:`$HOME` / `$USERPROFILE`,失败时退回 `.`(单测稳定)。
 pub fn home_dir() -> Utf8PathBuf {
@@ -146,6 +146,7 @@ pub fn user_assets_need_seed(root: &Utf8Path) -> bool {
         && !mcp_has_content(root)
         && !dir_has_user_content(&root.join("agents"))
         && !dir_has_user_content(&root.join("commands"))
+        && !dir_has_user_content(&root.join("hooks"))
 }
 
 fn mcp_has_content(root: &Utf8Path) -> bool {
@@ -174,7 +175,41 @@ pub fn collect_seed_sources() -> Vec<Utf8PathBuf> {
         out.push(p);
     }
 
+    if let Some(p) = dev_repo_asset_seed() {
+        out.push(p);
+    }
+
     out
+}
+
+/// 开发态:当前工作目录或二进制旁的 ai-config 仓库 `.ai-config/`。
+fn dev_repo_asset_seed() -> Option<Utf8PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.to_path_buf());
+            if let Some(grand) = parent.parent() {
+                candidates.push(grand.to_path_buf());
+            }
+        }
+    }
+    for base in candidates {
+        let utf = Utf8PathBuf::from_path_buf(base).ok()?;
+        if !is_ai_config_repo(&utf) {
+            continue;
+        }
+        let asset = utf.join(USER_ASSET_DIR_NAME);
+        if asset.join("hooks.json").is_file()
+            || asset.join("hooks").join("hooks.json").is_file()
+            || asset.join("skills").is_dir()
+        {
+            return Some(asset);
+        }
+    }
+    None
 }
 
 /// 安装包内 Resources 或二进制旁的种子路径。
@@ -200,12 +235,20 @@ fn bundled_seed_next_to_exe() -> Option<Utf8PathBuf> {
 
 /// 将种子目录的 `skills|rules|mcp|agents` 合并拷贝到目标(已存在文件不覆盖)。
 pub fn copy_seed_into(seed: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
-    for top in ["skills", "rules", "mcp", "agents", "commands"] {
+    for top in ["skills", "rules", "mcp", "agents", "commands", "hooks"] {
         let src_top = seed.join(top);
         if !src_top.is_dir() {
             continue;
         }
         copy_dir_merge(&src_top, &dest.join(top))?;
+    }
+    let seed_manifest = seed.join("hooks.json");
+    let dest_manifest = dest.join("hooks.json");
+    if seed_manifest.is_file() && !dest_manifest.exists() {
+        if let Some(parent) = dest_manifest.parent() {
+            std::fs::create_dir_all(parent.as_std_path())?;
+        }
+        std::fs::copy(seed_manifest.as_std_path(), dest_manifest.as_std_path()).map_err(CoreError::Io)?;
     }
     Ok(())
 }
@@ -252,7 +295,33 @@ pub fn init_user_asset_root() -> Result<Utf8PathBuf, CoreError> {
             }
         }
     }
+    seed_hooks_if_missing(&root)?;
     Ok(root)
+}
+
+/// `~/.ai-config/hooks.json` 缺失时,从种子目录合并 hooks 清单与脚本。
+fn seed_hooks_if_missing(root: &Utf8Path) -> Result<(), CoreError> {
+    if root.join("hooks.json").is_file() {
+        return Ok(());
+    }
+    for seed in collect_seed_sources() {
+        let seed_manifest = seed.join("hooks.json");
+        if !seed_manifest.is_file() {
+            continue;
+        }
+        tracing::info!("hooks 种子合并: {seed_manifest} → {}", root.join("hooks.json"));
+        if let Some(parent) = root.parent() {
+            std::fs::create_dir_all(parent.as_std_path()).map_err(CoreError::Io)?;
+        }
+        std::fs::copy(seed_manifest.as_std_path(), root.join("hooks.json").as_std_path())
+            .map_err(CoreError::Io)?;
+        let seed_hooks = seed.join("hooks");
+        if seed_hooks.is_dir() {
+            copy_dir_merge(&seed_hooks, &root.join("hooks"))?;
+        }
+        break;
+    }
+    Ok(())
 }
 
 fn effective_global_asset_root() -> Utf8PathBuf {
@@ -331,6 +400,33 @@ mod tests {
             fs::read_to_string(dest.join("skills/b/SKILL.md")).unwrap(),
             "KEEP"
         );
+    }
+
+    #[test]
+    fn seed_hooks_if_missing_merges_when_skills_already_exist() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+        let seed = base.join("seed");
+        let dest = base.join("dest");
+        fs::create_dir_all(seed.join("hooks")).unwrap();
+        fs::write(
+            seed.join("hooks.json"),
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/a.sh"}]}}"#,
+        )
+        .unwrap();
+        fs::write(seed.join("hooks/a.sh"), "#!/bin/sh\n").unwrap();
+        fs::create_dir_all(dest.join("skills/foo")).unwrap();
+        fs::write(dest.join("skills/foo/SKILL.md"), "# x").unwrap();
+        ensure_user_asset_layout(&Utf8PathBuf::from_path_buf(dest.clone()).unwrap()).unwrap();
+        assert!(!user_assets_need_seed(&Utf8PathBuf::from_path_buf(dest.clone()).unwrap()));
+        let seed_u = Utf8PathBuf::from_path_buf(seed).unwrap();
+        let dest_u = Utf8PathBuf::from_path_buf(dest.clone()).unwrap();
+        std::env::set_var("AI_CONFIG_SEED", seed_u.as_str());
+        seed_hooks_if_missing(&dest_u).unwrap();
+        std::env::remove_var("AI_CONFIG_SEED");
+        assert!(dest.join("hooks.json").is_file());
+        assert!(dest.join("hooks/a.sh").is_file());
+        assert!(dest.join("skills/foo/SKILL.md").is_file());
     }
 
     #[test]

@@ -15,6 +15,7 @@ import {
   ListRowShell,
 } from "./ListRowShell";
 import { RowSyncActions } from "./RowSyncActions";
+import { HookTypeBadge } from "./HookTypeBadge";
 
 interface AssetRowProps {
   entry: PlatformAssetEntry;
@@ -49,6 +50,10 @@ function AssetRowInner({
 }: AssetRowProps) {
   const { t } = useTranslation();
   const canOpen = !!onOpenAsset && canOpenEntry(entry, activePlatform);
+  const isHook = entry.kind === "hook";
+  const hookType = entry.hook_type ?? "command";
+  const showHookDesc =
+    isHook && hookType === "command" && sanitizeListDescription(entry.description);
 
   const handleOpen = useCallback(() => {
     onOpenAsset?.(entry);
@@ -78,6 +83,7 @@ function AssetRowInner({
     <ListRowShell
       className={cn(
         "asset-row",
+        isHook && "asset-row--hook",
         selected && "selected",
         checked && "checked",
       )}
@@ -106,14 +112,21 @@ function AssetRowInner({
         role={canOpen ? "button" : undefined}
         tabIndex={canOpen ? 0 : undefined}
       >
-        <div className="name">{entry.name}</div>
-        <div className="desc">
-          {sanitizeListDescription(entry.description) ||
-            t("drawer.noDescription")}
+        <div className="name flex min-w-0 items-center gap-2">
+          {isHook ? <HookTypeBadge hookType={hookType} /> : null}
+          <span className="min-w-0 truncate">{entry.name}</span>
         </div>
+        {showHookDesc ? (
+          <div className="desc line-clamp-1">{showHookDesc}</div>
+        ) : !isHook ? (
+          <div className="desc">
+            {sanitizeListDescription(entry.description) ||
+              t("drawer.noDescription")}
+          </div>
+        ) : null}
       </ListColMain>
 
-      <ListColActions>
+      <ListColActions className={isHook ? "self-start pt-0.5" : undefined}>
         <RowSyncActions
           leadSlot={leadSlot}
           loading={loading}

@@ -22,6 +22,7 @@ use std::sync::OnceLock;
 
 use crate::error::CoreError;
 use crate::model::{AssetKind, PlatformId};
+use crate::paths;
 
 /// 平台适配器唯一 trait(ARCHITECTURE §5)。
 pub trait PlatformAdapter: Send + Sync {
@@ -42,7 +43,7 @@ pub trait PlatformAdapter: Send + Sync {
     /// 默认实现:Skill / Mcp / Agent 全平台支持;Rule 在 Codex 上**不**直接消费。
     fn supports(&self, asset: AssetKind) -> bool {
         match asset {
-            AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent => true,
+            AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent | AssetKind::Hook => true,
             AssetKind::Rule => self.id() != PlatformId::Codex,
             AssetKind::Command => matches!(self.id(), PlatformId::Cursor | PlatformId::Claude),
         }
@@ -233,6 +234,7 @@ impl PlatformAdapter for HermesAdapter {
     fn supports(&self, asset: AssetKind) -> bool {
         match asset {
             AssetKind::Skill | AssetKind::Mcp => true,
+            AssetKind::Hook => true,
             // Hermes 仅在项目 CWD 读 `.cursor/rules/*.mdc`（与 Cursor 项目级路径一致）
             AssetKind::Rule => self.deploy_base != home(),
             // 无 `~/.hermes/agents`；子代理为运行时 delegate_task
@@ -335,6 +337,13 @@ pub fn kind_asset_path(
         AssetKind::Agent => Some(adapter.agents_dir()),
         AssetKind::Command => Some(adapter.commands_dir()),
         AssetKind::Mcp => Some(adapter.mcp_deploy_path()),
+        AssetKind::Hook => Some(match plat {
+            PlatformId::Cursor => deploy_base.join(".cursor/hooks"),
+            PlatformId::Codex => deploy_base.join(".codex/hooks"),
+            PlatformId::Claude => deploy_base.join(".claude/hooks"),
+            PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
+            PlatformId::AiConfig => asset_root.join("hooks"),
+        }),
     }
 }
 
@@ -407,6 +416,7 @@ pub fn asset_kind_label(kind: AssetKind) -> &'static str {
         AssetKind::Mcp => "mcp",
         AssetKind::Agent => "agent",
         AssetKind::Command => "command",
+        AssetKind::Hook => "hook",
     }
 }
 
@@ -468,6 +478,7 @@ pub fn collect_capability_issues(deploy_base: &camino::Utf8Path) -> Vec<Capabili
             AssetKind::Mcp,
             AssetKind::Agent,
             AssetKind::Command,
+            AssetKind::Hook,
         ] {
             if supports_at_scope(plat, kind, deploy_base) {
                 continue;

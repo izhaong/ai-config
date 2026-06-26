@@ -163,6 +163,16 @@ fn import_to_source(
             scope.asset_root,
             scope.deploy_base,
         )?,
+        AssetKind::Hook => {
+            let path = platform_scan::import_hook_from_platform(
+                name,
+                from_plat,
+                scope.default_root,
+                scope.asset_root,
+                scope.deploy_base,
+            )?;
+            return Ok(format!("Hook `{name}` 已导入到 {path}"));
+        }
     };
     Ok(format!(
         "{kind:?} `{name}` 已从 {} 导入到 {dest}",
@@ -223,6 +233,13 @@ fn resolve_platform_asset(
             }
             deploy_path
         }
+        AssetKind::Hook => {
+            let path = crate::hook_adapter::platform_script_path(scope.deploy_base, plat, name);
+            if !path.is_file() {
+                return Ok(None);
+            }
+            path
+        }
     };
 
     let normalized = normalized_asset_fingerprint(scope, kind, name, plat, &preview_path)?;
@@ -275,6 +292,7 @@ fn normalized_asset_fingerprint(
                 read_file_normalized(preview_path)
             }
         }
+        AssetKind::Hook => read_file_normalized(preview_path),
     }
 }
 

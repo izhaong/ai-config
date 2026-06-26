@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **资产同步 Hooks（第六类）+ 生命周期 TTS**：源资产为 Cursor 格式 `hooks/hooks.json` + 扁平脚本（如 `hooks/lifecycle-tts.sh`）；列表项对应 manifest 中各生命周期下的 hook 对象，**title = command 路径中的文件名**，**description = 脚本开头 `"""..."""`**；唯一性按文件名 + 脚本内容。`install` / `sync` 按脚本 merge 下发四平台（adapter 兼容 Codex / Claude / Hermes）。默认 `lifecycle-tts` TTS 播报；`AI_CONFIG_TTS=0` 可关闭。
+
 ### Changed
 
 - **GUI 主题默认跟随系统**：首次打开或未设置时主题为 `system`，随系统深浅色切换。

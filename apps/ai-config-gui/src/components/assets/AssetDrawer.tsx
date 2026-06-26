@@ -7,6 +7,8 @@ import {
 import type { AssetDetail, AssetKind } from "../../types";
 import { assetKindLabel } from "../../i18n/labels";
 import { sanitizeListDescription } from "../../utils/sanitizeListDescription";
+import { HookLifecycleButtons } from "./HookLifecycleButtons";
+import type { PlatformAssetEntry } from "../../types";
 
 interface AssetDrawerProps {
   open: boolean;
@@ -18,6 +20,12 @@ interface AssetDrawerProps {
   draft: string;
   /** 仅平台预览、无 ai-config 源时隐藏编辑/删除 */
   readOnly?: boolean;
+  hookEntry?: PlatformAssetEntry | null;
+  hookLifecycleLoading?: boolean;
+  onHookLifecyclePairToggle?: (
+    entry: PlatformAssetEntry,
+    plan: Array<{ lifecycle: string; enabled: boolean }>,
+  ) => void;
   onClose: () => void;
   onDraftChange: (value: string) => void;
   onEdit: () => void;
@@ -35,6 +43,9 @@ export function AssetDrawer({
   editing,
   draft,
   readOnly = false,
+  hookEntry = null,
+  hookLifecycleLoading = false,
+  onHookLifecyclePairToggle,
   onClose,
   onDraftChange,
   onEdit,
@@ -68,6 +79,17 @@ export function AssetDrawer({
         </header>
 
         <div className="skill-drawer-body">
+          {kind === "hook" && hookEntry?.hook_lifecycles?.length ? (
+            <div className="hook-drawer-lifecycles mb-4">
+              <HookLifecycleButtons
+                loading={hookLifecycleLoading}
+                lifecycles={hookEntry.hook_lifecycles}
+                onTogglePair={(plan) =>
+                  onHookLifecyclePairToggle?.(hookEntry, plan)
+                }
+              />
+            </div>
+          ) : null}
           {loading && !detail ? (
             <div className="empty">{t("drawer.loading")}</div>
           ) : editing ? (

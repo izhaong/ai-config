@@ -13,6 +13,7 @@ import {
   revealPath,
   saveAsset,
   transferAssets,
+  toggleHookLifecycle,
 } from "../api/tauriAssets";
 import { PLATFORM_NAME } from "../platformIcons";
 import type { ConfirmRequest } from "./useConfirm";
@@ -143,13 +144,24 @@ export function useAssetOperations({
         if (isSourcePlatform(activePlatform)) {
           return { action: "skip" };
         }
-        const message = await importAsset(
-          entry.kind,
-          entry.name,
-          activeProject,
-          activePlatform,
-        );
-        return { action, message };
+        try {
+          const message = await importAsset(
+            entry.kind,
+            entry.name,
+            activeProject,
+            activePlatform,
+          );
+          return { action, message };
+        } catch (e) {
+          const msg = String(e);
+          if (msg.includes("源中已存在")) {
+            return {
+              action: "import",
+              message: t("platformView.importManaged"),
+            };
+          }
+          throw e;
+        }
       }
 
       if (action === "platform_copy") {
@@ -180,12 +192,18 @@ export function useAssetOperations({
         activePlatform === deployPlat &&
         !hasSourceEntry(entry)
       ) {
-        await importAsset(
-          entry.kind,
-          entry.name,
-          activeProject,
-          activePlatform,
-        );
+        try {
+          await importAsset(
+            entry.kind,
+            entry.name,
+            activeProject,
+            activePlatform,
+          );
+        } catch (e) {
+          if (!String(e).includes("源中已存在")) {
+            throw e;
+          }
+        }
       }
 
       const message = await deployAsset(
@@ -295,6 +313,13 @@ export function useAssetOperations({
         toggleContext(),
       );
       if (planned === "skip" || planned === "unsupported") {
+        if (
+          planned === "skip" &&
+          plat === "aiconfig" &&
+          hasSourceEntry(entry)
+        ) {
+          showToast("ok", t("platformView.importManaged"));
+        }
         return;
       }
 
@@ -809,8 +834,37 @@ export function useAssetOperations({
     showToast("err", message);
   });
 
+  const handleHookLifecyclePairToggle = useMemoizedFn(
+    async (
+      entry: PlatformAssetEntry,
+      plan: Array<{ lifecycle: string; enabled: boolean }>,
+    ) => {
+      if (entry.kind !== "hook" || plan.length === 0) return;
+      setBusy(true);
+      try {
+        let lastMsg = "";
+        for (const { lifecycle, enabled } of plan) {
+          lastMsg = await toggleHookLifecycle(
+            entry.name,
+            lifecycle,
+            enabled,
+            activeProject,
+            activePlatform,
+          );
+        }
+        showToast("ok", lastMsg);
+        await refreshView(false);
+      } catch (e) {
+        showToast("err", t("hookLifecycle.toggleFailed", { error: String(e) }));
+      } finally {
+        setBusy(false);
+      }
+    },
+  );
+
   return {
     handlePlatformToggle,
+    handleHookLifecyclePairToggle,
     syncConflict,
     dismissSyncConflict,
     confirmSyncConflict,
