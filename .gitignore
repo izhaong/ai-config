@@ -44,3 +44,6 @@ apps/ai-config-gui/gen/
 # Playwright e2e 产物
 apps/ai-config-gui/test-results/
 apps/ai-config-gui/e2e/output/
+
+# Hook 本地测试状态
+**/.test-state/
