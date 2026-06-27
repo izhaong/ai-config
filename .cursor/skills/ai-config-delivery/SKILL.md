@@ -9,12 +9,12 @@ description: ai-config 交付（贴合 Cursor）：用户下发任务 → Agent 
 
 ## Cursor ↔ 本 skill
 
-| 步骤 | Cursor | 落盘 |
-| ---- | ------ | ---- |
-| 需求 | 用户消息 | `spec.md` |
+| 步骤       | Cursor       | 落盘                   |
+| ---------- | ------------ | ---------------------- |
+| 需求       | 用户消息     | `spec.md`              |
 | 方案与步骤 | Plan + Todos | `plan.md` + `## Todos` |
-| 执行 | 按 Todo 写码 | 同步勾选 `plan.md` |
-| 收尾 | verify | constitution §5 |
+| 执行       | 按 Todo 写码 | 同步勾选 `plan.md`     |
+| 收尾       | verify       | constitution §5        |
 
 ## 触发
 
@@ -32,12 +32,14 @@ description: ai-config 交付（贴合 Cursor）：用户下发任务 → Agent 
 
 ### 2. spec + plan（含 Todos）
 
-| 文件 | 内容 |
-| ---- | ---- |
-| `spec.md` | 场景、可测需求、成功标准 |
-| `plan.md` | 技术方案（core/CLI/GUI、回滚）+ **`## Todos`** |
+| 文件      | 内容                                                                            |
+| --------- | ------------------------------------------------------------------------------- |
+| `spec.md` | 场景、可测需求、成功标准                                                        |
+| `plan.md` | **详细**技术方案 + **`## Todos`**（模板 `.specify/templates/plan-template.md`） |
 
-Todos：`- [ ] T001 …（验证：…）`；末项 verify。
+**plan 详细度（必达）**：写码前先读相关源码。plan 须含：Summary、根因（文件/函数级）、Technical Context、Constitution Check、影响面（含 FR→实现表）、方案设计（含全局/项目对比表若适用）、边界表、测试策略、回滚。禁止仅模块表 + 笼统 Todo。
+
+Todos：`- [ ] T001 [scope] …（验证：具体 test 或命令）`；粒度可独立 review；末项 verify。
 
 ### 3. 实现
 

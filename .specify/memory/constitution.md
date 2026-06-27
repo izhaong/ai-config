@@ -54,4 +54,6 @@ specs/N-feature/spec.md → plan.md（含 ## Todos）→ 按 Todos 实现 → §
 
 `plan.md` 的 Todos = Cursor Plan 的执行清单；**不维护 `tasks.md`**。
 
+**plan 详细度**：非平凡功能的 `plan.md` 须按 `.specify/templates/plan-template.md` 写全各节（根因到函数级、FR 追溯、边界表、测试策略）；Agent 生成 plan 时**尽量详细**，使未参与 spec 的开发者可直接实现。
+
 **例外**（可跳过完整 spec 周期）：单行 typo、明显 bug 一行修复、纯格式化、用户明示 spike。

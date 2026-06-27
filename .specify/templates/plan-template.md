@@ -1,113 +1,103 @@
 # Implementation Plan: [FEATURE]
 
-**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
-**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [spec.md](./spec.md)
 
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
+> Agent 生成 plan 时须**尽量详细**：让未参与 spec 的开发者仅凭本文即可实现与验收。禁止仅列模块名或一句概括。
 
 ## Summary
 
-[Extract from feature spec: primary requirement + technical approach from research]
+[1–2 段：从 spec 提炼的核心目标、技术路线、不做什么]
+
+## 背景与根因
+
+[问题如何复现；涉及的错误行为；**具体文件/函数**与调用链；为何现有实现不足]
+
+```text
+[可选：调用链或数据流 ASCII / mermaid]
+```
 
 ## Technical Context
 
-<!--
-  ACTION REQUIRED: Replace the content in this section with the technical details
-  for the project. The structure here is presented in advisory capacity to guide
-  the iteration process.
--->
-
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]  
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
+| 项         | 值                                                   |
+| ---------- | ---------------------------------------------------- |
+| Language   | Rust (workspace edition)                             |
+| 主要 Crate | `ai-config-core` / `ai-config-cli` / `ai-config-gui` |
+| 依赖模块   | [如 `paths`, `source`, `hook_adapter`, `sync`]       |
+| 测试       | `cargo test -p …`；[具体 test 模块名]                |
+| 平台矩阵   | Cursor / Codex / Claude / Hermes（勾选本功能涉及者） |
 
 ## Constitution Check
 
-_GATE: Must pass before Phase 0 research. Re-check after Phase 1 design._
+- [ ] 业务逻辑仅在 `ai-config-core`
+- [ ] CLI/GUI 薄封装，无重复实现
+- [ ] 平台差异收敛在 `platform` / adapter
+- [ ] 幂等、可重复 install/sync
+- [ ] 验证项对齐 constitution §5
 
-[Gates determined based on constitution file]
+## 影响面
 
-## Project Structure
+### Crate / 文件
 
-### Documentation (this feature)
+| Crate            | 文件       | 变更类型  | 说明         |
+| ---------------- | ---------- | --------- | ------------ |
+| `ai-config-core` | `src/….rs` | 新增/修改 | [职责一句话] |
+| `ai-config-cli`  | `src/….rs` | 修改      | [仅当涉及]   |
 
-```text
-specs/[###-feature]/
-├── spec.md              # 需求（/speckit.specify）
-├── plan.md              # 本文件：方案 + ## Todos（/speckit.plan）
-├── research.md          # 可选：调研
-├── data-model.md        # 可选：数据模型
-├── quickstart.md        # 可选
-└── contracts/           # 可选
+### API / 类型（新增或签名变更须写明）
+
+```rust
+// 示例：pub fn foo(…) -> Result<…>
 ```
 
-### Source Code (repository root)
+### 需求追溯（FR → 实现）
 
-<!--
-  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
-  for this feature. Delete unused options and expand the chosen structure with
-  real paths (e.g., apps/admin, packages/something). The delivered plan must
-  not include Option labels.
--->
+| FR     | 实现位置   | 验收方式 |
+| ------ | ---------- | -------- |
+| FR-001 | `paths::…` | `test_…` |
+| FR-002 | …          | …        |
 
-```text
-# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
-src/
-├── models/
-├── services/
-├── cli/
-└── lib/
+## 方案设计
 
-tests/
-├── contract/
-├── integration/
-└── unit/
+### [子系统 1 标题]
 
-# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
-backend/
-├── src/
-│   ├── models/
-│   ├── services/
-│   └── api/
-└── tests/
+[行为说明、算法步骤、与周边模块的交互]
 
-frontend/
-├── src/
-│   ├── components/
-│   ├── pages/
-│   └── services/
-└── tests/
+**全局 install** vs **项目 install**（若适用）：
 
-# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
-api/
-└── [same as backend above]
+| 维度           | 全局 | 项目 (`AI_CONFIG_ROOT=<repo>`) |
+| -------------- | ---- | ------------------------------ |
+| 资产扫描根     | …    | …                              |
+| default 合并源 | …    | …                              |
+| deploy_base    | …    | …                              |
 
-ios/ or android/
-└── [platform-specific structure: feature modules, UI flows, platform tests]
-```
+### [子系统 2 标题]
 
-**Structure Decision**: [Document the selected structure and reference the real
-directories captured above]
+[合并策略、跳过条件、`managedBy` 语义等]
 
-## Complexity Tracking
+## 边界与风险
 
-> **Fill ONLY if Constitution Check has violations that must be justified**
+| 场景     | 期望行为 | 测试名（计划） |
+| -------- | -------- | -------------- |
+| [边界 1] | …        | `test_…`       |
+| [边界 2] | …        | …              |
 
-| Violation                  | Why Needed         | Simpler Alternative Rejected Because |
-| -------------------------- | ------------------ | ------------------------------------ |
-| [e.g., 4th project]        | [current need]     | [why 3 projects insufficient]        |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient]  |
+**非目标 / 不做**：…
+
+## 测试策略
+
+1. **单元测试**（`ai-config-core`）：[列举用例与断言要点]
+2. **CLI / lifecycle**（若涉及）：[列举]
+3. **回归**：`cargo test -p ai-config-core -p ai-config-cli`
+4. **手工**（可选）：`ai-config doctor`、项目 install 冒烟步骤
+
+## 回滚
+
+[如何 revert；是否有数据迁移；用户侧影响]
 
 ## Todos
 
-<!-- 与 Cursor Plan/Todo 一体：执行清单写在本节，不单独维护 tasks.md -->
+<!-- 与 Cursor Plan/Todo 一体；每项可独立交付并带验证 -->
 
-- [ ] T001 [core] …（验证：…）
+- [ ] T001 [core] …（验证：`cargo test …::test_name`）
 - [ ] T002 [cli] …（验证：…）
-- [ ] T003 运行 ai-config-verify（cargo test + gui build + doctor）
+- [ ] T00N 运行 ai-config-verify（`cargo test` + GUI build + doctor）

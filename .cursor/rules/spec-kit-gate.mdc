@@ -9,13 +9,13 @@ alwaysApply: true
 
 ## Cursor ↔ Spec Kit 映射
 
-| Cursor（会话内） | Spec Kit（`specs/`，落盘） |
-| ---------------- | -------------------------- |
-| 用户一句话       | `spec.md` — 要什么、怎么验收 |
-| Plan             | `plan.md` 正文 — 技术方案 |
+| Cursor（会话内） | Spec Kit（`specs/`，落盘）                      |
+| ---------------- | ----------------------------------------------- |
+| 用户一句话       | `spec.md` — 要什么、怎么验收                    |
+| Plan             | `plan.md` 正文 — 技术方案                       |
 | Todo 列表        | `plan.md` → **`## Todos`**（`- [ ]` / `- [x]`） |
-| 按 Todo 实现     | 读 `plan.md ## Todos` 顺序写码 |
-| 会话结束         | `spec.md` + `plan.md` 留在 git |
+| 按 Todo 实现     | 读 `plan.md ## Todos` 顺序写码                  |
+| 会话结束         | `spec.md` + `plan.md` 留在 git                  |
 
 **不维护 `tasks.md`**。执行清单只在 `plan.md ## Todos`。
 
@@ -41,7 +41,8 @@ alwaysApply: true
 2. **FEATURE_DIR** — 下文「自动解析」
 3. **规格**（`.specify/templates/`、`constitution.md`）：
    - 无 `spec.md` → 用户场景 + 可测需求
-   - 无 `plan.md` 或无 `## Todos` → 技术方案 + Todos（`- [ ] T00n …（验证：…）`）；末项 verify
+   - 无 `plan.md` 或无 `## Todos` → **详细**技术方案 + Todos（`- [ ] T00n …（验证：…）`）；末项 verify
+   - **plan 详细度**（模板见 `plan-template.md`、命令见 `speckit.plan`）：须含 Summary、根因（文件/函数级）、影响面与 FR 追溯、方案设计、边界表、测试策略、回滚；禁止仅模块表 + 笼统 Todo
 4. **实现** — 按 Todos 顺序；每项完成 → `plan.md` 勾 `- [x]`
 5. **验证** — [ai-config-verify](../skills/ai-config-verify/SKILL.md)
 
@@ -51,12 +52,12 @@ alwaysApply: true
 
 用户无需 `export SPECIFY_FEATURE`。Agent 自用 `export SPECIFY_FEATURE=<目录名>`：
 
-| 优先级 | 条件 | FEATURE_DIR |
-| ------ | ---- | ----------- |
-| 1 | 已设 `SPECIFY_FEATURE` | `specs/$SPECIFY_FEATURE` |
-| 2 | 分支 `NNN-*` | `specs/` 下唯一 `NNN-*` 目录 |
-| 3 | `feat/*` / `fix/*` | 按 slug / 关键词 / 最近修改匹配 `specs/` |
-| 4 | 无匹配 | `create-new-feature.sh --json --short-name <slug> '<摘要>'` |
+| 优先级 | 条件                   | FEATURE_DIR                                                 |
+| ------ | ---------------------- | ----------------------------------------------------------- |
+| 1      | 已设 `SPECIFY_FEATURE` | `specs/$SPECIFY_FEATURE`                                    |
+| 2      | 分支 `NNN-*`           | `specs/` 下唯一 `NNN-*` 目录                                |
+| 3      | `feat/*` / `fix/*`     | 按 slug / 关键词 / 最近修改匹配 `specs/`                    |
+| 4      | 无匹配                 | `create-new-feature.sh --json --short-name <slug> '<摘要>'` |
 
 逻辑见 `.specify/scripts/bash/common.sh`。
 
