@@ -11,7 +11,7 @@ const platButtonVariants = cva(
         active:
           "border-[var(--ok)] bg-[rgba(78,201,168,0.14)] opacity-100 shadow-[0_0_0_1px_rgba(78,201,168,0.35)] [filter:none] hover:border-[var(--err)] hover:bg-[rgba(229,116,116,0.12)] hover:shadow-[0_0_0_1px_rgba(229,116,116,0.35)]",
         inactive:
-          "opacity-[0.42] [filter:grayscale(0.75)] hover:border-[var(--accent)] hover:bg-[rgba(94,155,255,0.1)] hover:opacity-100 hover:[filter:none]",
+          "border-dashed border-[var(--border)] opacity-[0.3] [filter:grayscale(0.85)] hover:border-[var(--accent)] hover:border-solid hover:bg-[rgba(94,155,255,0.1)] hover:opacity-100 hover:[filter:none]",
         partial:
           "border-[var(--accent)] bg-[rgba(94,155,255,0.08)] opacity-[0.88] shadow-[0_0_0_1px_rgba(94,155,255,0.22)] [filter:none] hover:bg-[rgba(94,155,255,0.14)] hover:opacity-100",
       },
