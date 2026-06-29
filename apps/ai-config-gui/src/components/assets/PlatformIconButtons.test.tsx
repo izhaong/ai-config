@@ -67,6 +67,23 @@ describe("PlatformIconButtons", () => {
     expect(cursorBtn.className).not.toContain("border-dashed");
   });
 
+  it("unlinked 状态为虚线低饱和（border-dashed + opacity 降低）", () => {
+    render(
+      <PlatformIconButtons
+        loading={false}
+        activePlatform="codex"
+        linkStateFor={(plat) => states({ cursor: "unlinked" })[plat]}
+        onPlatformClick={vi.fn()}
+      />,
+    );
+
+    const cursorImg = screen.getByAltText("Cursor");
+    const cursorBtn = cursorImg.closest("button")!;
+    expect(cursorBtn.className).toContain("border-dashed");
+    expect(cursorBtn.className).not.toContain("border-[var(--ok)]");
+    expect(cursorBtn.className).toContain("opacity-[0.3]");
+  });
+
   it("当前浏览平台 icon 不可点击，其它平台可点击", () => {
     const onPlatformClick = vi.fn();
     render(
