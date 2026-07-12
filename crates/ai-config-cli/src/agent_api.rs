@@ -24,11 +24,54 @@ pub struct EnvSummary {
     pub mcp_json: Option<String>,
 }
 
-/// 解析可选 root；空则使用 `~/.ai-config`。
+/// 解析可选 root；空则使用 `~/.ai-config`，但不创建目录或播种资产。
 pub fn resolve_scope_root(root: Option<&str>) -> Utf8PathBuf {
     match root.filter(|s| !s.is_empty()) {
         Some(s) => paths::resolve_asset_root(Utf8Path::new(s)),
-        None => paths::discover_global_asset_root(),
+        None => paths::discover_global_asset_root_read_only(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    static HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn default_scope_resolution_does_not_initialize_asset_root() {
+        let _lock = HOME_TEST_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let previous_home = std::env::var("HOME").ok();
+        let previous_root = std::env::var("AI_CONFIG_ROOT").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("AI_CONFIG_ROOT");
+
+        let root = resolve_scope_root(None);
+
+        assert_eq!(
+            root,
+            Utf8PathBuf::from_path_buf(home.join(".ai-config")).unwrap()
+        );
+        assert!(
+            !root.exists(),
+            "read-only API routing must not create assets"
+        );
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = previous_root {
+            std::env::set_var("AI_CONFIG_ROOT", value);
+        } else {
+            std::env::remove_var("AI_CONFIG_ROOT");
+        }
     }
 }
 

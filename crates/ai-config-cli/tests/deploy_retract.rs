@@ -61,7 +61,7 @@ fn deploy_copies_mcp_json_to_platform() {
 }
 
 #[test]
-fn retract_removes_platform_mcp_json() {
+fn retract_preserves_platform_mcp_without_ownership_evidence() {
     let (home, root) = setup();
     let cursor_mcp = home.path().join(".cursor").join("mcp.json");
 
@@ -74,16 +74,94 @@ fn retract_removes_platform_mcp_json() {
     cmd(home.path(), root.path())
         .args(["mcp", "retract", "minio", "cursor"])
         .assert()
+        .failure();
+
+    let raw = fs::read_to_string(&cursor_mcp).expect("platform mcp.json preserved");
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
+    assert!(v["mcpServers"].get("minio").is_some());
+}
+
+#[test]
+fn uninstall_preserves_platform_mcp_file_and_foreign_servers() {
+    let (home, root) = setup();
+    let cursor_mcp = home.path().join(".cursor").join("mcp.json");
+    fs::write(
+        &cursor_mcp,
+        r#"{"mcpServers":{"minio":{"command":"docker"},"foreign":{"command":"echo"}},"extra":true}"#,
+    )
+    .unwrap();
+
+    cmd(home.path(), root.path())
+        .arg("uninstall")
+        .assert()
+        .success();
+
+    let doc: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&cursor_mcp).unwrap()).unwrap();
+    assert!(doc["mcpServers"].get("minio").is_some());
+    assert!(doc["mcpServers"].get("foreign").is_some());
+    assert_eq!(doc["extra"], true);
+}
+
+#[test]
+fn status_does_not_initialize_global_asset_root() {
+    let home = TempDir::new().unwrap();
+    let mut command = Command::cargo_bin(BIN).unwrap();
+    command
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("AI_CONFIG_ROOT")
+        .arg("status")
+        .assert()
         .success();
 
     assert!(
-        !cursor_mcp.exists() || {
-            let raw = fs::read_to_string(&cursor_mcp).unwrap_or_default();
-            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
-            v.get("mcpServers").and_then(|m| m.get("minio")).is_none()
-        },
-        "retract should remove minio server entry from platform mcp.json"
+        !home.path().join(".ai-config").exists(),
+        "status must not create or seed the global asset root"
     );
+}
+
+#[test]
+fn project_sync_writes_mcp_under_project_deploy_base() {
+    let home = TempDir::new().unwrap();
+    let repo = TempDir::new().unwrap();
+    let asset_root = repo.path().join(".ai-config");
+    fs::create_dir_all(asset_root.join("skills")).unwrap();
+    fs::write(
+        asset_root.join("mcp.json"),
+        r#"{"mcpServers":{"project-only":{"command":"echo"}}}"#,
+    )
+    .unwrap();
+
+    cmd(home.path(), repo.path()).arg("sync").assert().success();
+
+    assert!(
+        repo.path().join(".cursor/mcp.json").is_file(),
+        "project sync must render MCP into the project platform directory"
+    );
+    assert!(
+        !home.path().join(".cursor/mcp.json").exists(),
+        "project sync must not write MCP into HOME"
+    );
+}
+
+#[test]
+fn doctor_materialize_is_rejected_without_writing() {
+    let (home, root) = setup();
+    let cursor_mcp = home.path().join(".cursor").join("mcp.json");
+    fs::write(
+        &cursor_mcp,
+        r#"{"mcpServers":{"foreign":{"command":"echo"}}}"#,
+    )
+    .unwrap();
+
+    cmd(home.path(), root.path())
+        .args(["doctor", "--materialize"])
+        .assert()
+        .failure();
+
+    assert!(cursor_mcp.is_file());
+    assert!(fs::read_to_string(cursor_mcp).unwrap().contains("foreign"));
 }
 
 #[test]
@@ -154,7 +232,7 @@ fn deploy_hermes_writes_config_yaml_preserving_other_keys() {
 }
 
 #[test]
-fn retract_hermes_removes_server_only() {
+fn retract_hermes_preserves_server_without_ownership_evidence() {
     let (home, root) = setup();
     let hermes_dir = home.path().join(".hermes");
     fs::create_dir_all(&hermes_dir).unwrap();
@@ -169,11 +247,11 @@ fn retract_hermes_removes_server_only() {
     cmd(home.path(), root.path())
         .args(["mcp", "retract", "minio", "hermes"])
         .assert()
-        .success();
+        .failure();
 
     let content = fs::read_to_string(&config_yaml).expect("config.yaml still exists");
     assert!(content.contains("model: gpt-test"));
-    assert!(!content.contains("minio:"));
+    assert!(content.contains("minio:"));
 }
 
 #[test]
