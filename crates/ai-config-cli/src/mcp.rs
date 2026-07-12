@@ -518,7 +518,7 @@ fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -
     }
 }
 
-fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
+fn run_retract(mode: OutputMode, _root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
     let adapter = match platform::for_id(plat) {
         Ok(a) => a,
         Err(e) => {
@@ -527,42 +527,15 @@ fn run_retract(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) 
         }
     };
     let dest = adapter.mcp_deploy_path();
-    let src_mcp = match mcp_json_path_for_root(root) {
-        Ok(p) => p,
-        Err(e) => {
-            emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
-            return ExitCode::from(exit_code::FS_ERROR);
-        }
+    let error = CoreError::LinkFailed {
+        src: "ai-config MCP ownership record".to_owned(),
+        dest: dest.to_string(),
+        reason: format!("尚不能证明 MCP server `{name}` 由 ai-config 管理"),
+        hint: "当前版本不会收回平台 MCP；请等待 source-first 迁移计划生成可验证的所有权记录"
+            .to_owned(),
     };
-    let result = mcp_json::remove_server_on_platform(plat, &dest, name, Some(&src_mcp));
-    match result {
-        Ok(()) => {
-            if mode.is_json() {
-                emit_json(
-                    mode,
-                    &serde_json::json!({
-                        "ok": true,
-                        "action": "retract",
-                        "name": name,
-                        "from": plat,
-                        "dest": dest.to_string(),
-                    }),
-                );
-            } else if plat == PlatformId::Hermes {
-                emit_line(
-                    mode,
-                    format!("mcp `{name}` 已从 Hermes config.yaml 移除 ({dest})"),
-                );
-            } else {
-                emit_line(mode, format!("mcp.json 已 retract 从 {plat:?}"));
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            ExitCode::from(e.exit_code())
-        }
-    }
+    emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
+    ExitCode::from(error.exit_code())
 }
 
 fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {

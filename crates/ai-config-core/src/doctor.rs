@@ -24,6 +24,10 @@ pub struct DoctorReport {
     pub missing_secrets: Vec<MissingSecret>,
     pub unregistered_projects: Vec<String>,
     pub platform_capability_issues: Vec<PlatformCapabilityIssue>,
+    /// 仅统计 MCP env/header 中未使用 `${NAME}` 引用的字面量；绝不保留原值。
+    pub literal_mcp_secret_values: usize,
+    /// 资产根下遗留 mcp-secrets.env* 文件的相对路径与权限，不读取文件内容。
+    pub legacy_mcp_secret_files: Vec<LegacyMcpSecretFile>,
     pub exit_code: u8,
 }
 
@@ -40,6 +44,12 @@ pub struct PlatformCapabilityIssue {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LegacyMcpSecretFile {
+    pub path: String,
+    pub mode: String,
+}
+
 /// 对默认资产根做一次完整健康检查。
 pub fn compute_report(default_root: &Utf8Path) -> Result<DoctorReport, CoreError> {
     let scan = source::scan_project_root(default_root)?;
@@ -52,6 +62,11 @@ pub fn compute_report(default_root: &Utf8Path) -> Result<DoctorReport, CoreError
         missing_secrets: Vec::new(),
         unregistered_projects: Vec::new(),
         platform_capability_issues: Vec::new(),
+        literal_mcp_secret_values: scan
+            .mcp_json
+            .as_ref()
+            .map_or(0, |path| count_literal_mcp_secret_values(path)),
+        legacy_mcp_secret_files: legacy_mcp_secret_files(default_root),
         exit_code: 0,
     };
 
@@ -85,6 +100,74 @@ pub fn compute_report(default_root: &Utf8Path) -> Result<DoctorReport, CoreError
 
     report.exit_code = 0;
     Ok(report)
+}
+
+fn count_literal_mcp_secret_values(path: &Utf8Path) -> usize {
+    let Ok(raw) = std::fs::read_to_string(path.as_std_path()) else {
+        return 0;
+    };
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return 0;
+    };
+    let Some(servers) = document
+        .get("mcpServers")
+        .and_then(|value| value.as_object())
+    else {
+        return 0;
+    };
+
+    servers
+        .values()
+        .filter_map(|server| server.as_object())
+        .flat_map(|server| [server.get("env"), server.get("headers")])
+        .filter_map(|section| section.and_then(|value| value.as_object()))
+        .flat_map(|section| section.values())
+        .filter(|value| {
+            value
+                .as_str()
+                .is_some_and(|value| !is_secret_reference(value))
+        })
+        .count()
+}
+
+fn is_secret_reference(value: &str) -> bool {
+    value.starts_with("${") && value.ends_with('}') && value.len() > 3
+}
+
+fn legacy_mcp_secret_files(root: &Utf8Path) -> Vec<LegacyMcpSecretFile> {
+    let mut files = std::fs::read_dir(root.as_std_path())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.starts_with("mcp-secrets.env") {
+                return None;
+            }
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            Some(LegacyMcpSecretFile {
+                path: name,
+                mode: file_mode(&metadata),
+            })
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    files
+}
+
+#[cfg(unix)]
+fn file_mode(metadata: &std::fs::Metadata) -> String {
+    use std::os::unix::fs::PermissionsExt;
+
+    format!("{:04o}", metadata.permissions().mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn file_mode(_metadata: &std::fs::Metadata) -> String {
+    "unavailable".to_owned()
 }
 
 fn dest_is_symlink(path: &Utf8Path) -> bool {
@@ -243,7 +326,11 @@ fn flat_assets(scan: &source::ScanResult) -> Vec<(AssetKind, String, Utf8PathBuf
         }
     }
     for item in &scan.hooks {
-        out.push((AssetKind::Hook, item.script_filename.clone(), item.script_path.clone()));
+        out.push((
+            AssetKind::Hook,
+            item.script_filename.clone(),
+            item.script_path.clone(),
+        ));
     }
     out
 }
@@ -373,5 +460,36 @@ mod tests {
 
         let r = compute_report(&root).unwrap();
         assert_eq!(r.wrong_source, 0, "平台自有 mcp.json 差异不计入异常");
+    }
+
+    #[test]
+    fn doctor_reports_literal_mcp_secret_metadata_without_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().join(".ai-config")).unwrap();
+        crate::paths::ensure_user_asset_layout(&root).unwrap();
+        let sentinel = "T001_SECRET_SENTINEL_DO_NOT_LEAK";
+        fs::write(
+            root.join("mcp.json"),
+            format!(
+                r#"{{"mcpServers":{{"demo":{{"env":{{"TOKEN":"{sentinel}","SAFE":"${{SAFE}}"}},"headers":{{"Authorization":"{sentinel}"}}}}}}}}"#
+            ),
+        )
+        .unwrap();
+        fs::write(root.join("mcp-secrets.env.legacy"), "LEGACY=value\n").unwrap();
+
+        let report = compute_report(&root).unwrap();
+        let json = serde_json::to_string(&report).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["literal_mcp_secret_values"], 2);
+        assert_eq!(
+            value["legacy_mcp_secret_files"][0]["path"],
+            "mcp-secrets.env.legacy"
+        );
+        assert!(value["legacy_mcp_secret_files"][0]["mode"].is_string());
+        assert!(
+            !json.contains(sentinel),
+            "doctor diagnostics must never serialize literal secret values"
+        );
     }
 }

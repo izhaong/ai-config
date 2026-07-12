@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **source-first T001 安全止血**：`retract` / `uninstall` 在缺少 marker、精确 legacy link 或 MCP 具名所有权记录时 fail-closed，不再删除普通平台副本或整份 MCP 配置；`status` / `doctor` / scope 解析不再初始化资产根或回写 Hook。项目 MCP 渲染使用项目 deploy base；doctor 仅报告字面 MCP secret 的计数及遗留 secret 文件元数据，不输出值。
 - **install 项目级增量合并**（Gitea #22）：`AI_CONFIG_ROOT=<repo>` 时正确解析 `<repo>/.ai-config` + `~/.ai-config` 合并源并下发到仓库根；hook merge 仅移除 `managedBy: ai-config` 条目；项目作用域跳过覆盖非托管文件。
 
 ### Added

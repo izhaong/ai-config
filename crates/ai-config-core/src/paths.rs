@@ -97,7 +97,7 @@ pub struct SyncRoots {
 /// - 全局：`~/.ai-config` 或纯资产根 → 下发到 `$HOME`，合并源为自身。
 /// - 项目：仓库根 → 资产 `<repo>/.ai-config`，default 合并 `~/.ai-config`，下发到 `<repo>`。
 pub fn resolve_sync_roots(candidate: &Utf8Path) -> SyncRoots {
-    let user_global = discover_global_asset_root();
+    let user_global = discover_global_asset_root_read_only();
     let normalized = resolve_asset_root(candidate);
     let (repo_root, asset_root) = resolve_project_roots(&normalized);
 
@@ -299,7 +299,8 @@ pub fn copy_seed_into(seed: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError>
         if let Some(parent) = dest_manifest.parent() {
             std::fs::create_dir_all(parent.as_std_path())?;
         }
-        std::fs::copy(seed_manifest.as_std_path(), dest_manifest.as_std_path()).map_err(CoreError::Io)?;
+        std::fs::copy(seed_manifest.as_std_path(), dest_manifest.as_std_path())
+            .map_err(CoreError::Io)?;
     }
     Ok(())
 }
@@ -360,12 +361,18 @@ fn seed_hooks_if_missing(root: &Utf8Path) -> Result<(), CoreError> {
         if !seed_manifest.is_file() {
             continue;
         }
-        tracing::info!("hooks 种子合并: {seed_manifest} → {}", root.join("hooks.json"));
+        tracing::info!(
+            "hooks 种子合并: {seed_manifest} → {}",
+            root.join("hooks.json")
+        );
         if let Some(parent) = root.parent() {
             std::fs::create_dir_all(parent.as_std_path()).map_err(CoreError::Io)?;
         }
-        std::fs::copy(seed_manifest.as_std_path(), root.join("hooks.json").as_std_path())
-            .map_err(CoreError::Io)?;
+        std::fs::copy(
+            seed_manifest.as_std_path(),
+            root.join("hooks.json").as_std_path(),
+        )
+        .map_err(CoreError::Io)?;
         let seed_hooks = seed.join("hooks");
         if seed_hooks.is_dir() {
             copy_dir_merge(&seed_hooks, &root.join("hooks"))?;
@@ -382,6 +389,11 @@ fn effective_global_asset_root() -> Utf8PathBuf {
         }
     }
     user_home_asset_root()
+}
+
+/// 只读发现全局资产根：只解析环境与路径，绝不创建目录、迁移或播种资产。
+pub fn discover_global_asset_root_read_only() -> Utf8PathBuf {
+    effective_global_asset_root()
 }
 
 /// 自动发现全局资产根(对外统一入口):默认 `~/.ai-config` 并保证目录存在。
@@ -472,7 +484,9 @@ mod tests {
         fs::create_dir_all(dest.join("skills/foo")).unwrap();
         fs::write(dest.join("skills/foo/SKILL.md"), "# x").unwrap();
         ensure_user_asset_layout(&Utf8PathBuf::from_path_buf(dest.clone()).unwrap()).unwrap();
-        assert!(!user_assets_need_seed(&Utf8PathBuf::from_path_buf(dest.clone()).unwrap()));
+        assert!(!user_assets_need_seed(
+            &Utf8PathBuf::from_path_buf(dest.clone()).unwrap()
+        ));
         let seed_u = Utf8PathBuf::from_path_buf(seed).unwrap();
         let dest_u = Utf8PathBuf::from_path_buf(dest.clone()).unwrap();
         std::env::set_var("AI_CONFIG_SEED", seed_u.as_str());
@@ -582,6 +596,30 @@ mod tests {
         assert_eq!(roots.asset_root, asset);
         assert_eq!(roots.global_default, asset);
         assert_eq!(roots.deploy_base, home);
+        if let Some(p) = prev {
+            std::env::set_var("HOME", p);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn resolve_sync_roots_does_not_initialize_global_asset_root() {
+        let _lock = HOME_TEST_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8PathBuf::from_path_buf(tmp.path().join("home")).unwrap();
+        let repo = Utf8PathBuf::from_path_buf(tmp.path().join("repo")).unwrap();
+        fs::create_dir_all(repo.as_std_path()).unwrap();
+        let prev = std::env::var("HOME").ok();
+        std::env::set_var("HOME", home.as_str());
+        std::env::remove_var("AI_CONFIG_ROOT");
+
+        let _ = resolve_sync_roots(&repo);
+
+        assert!(
+            !home.join(".ai-config").exists(),
+            "scope resolution is read-only and must not seed the global asset root"
+        );
         if let Some(p) = prev {
             std::env::set_var("HOME", p);
         } else {

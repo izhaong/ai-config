@@ -323,14 +323,15 @@ fn main() -> ExitCode {
     }
 }
 
-/// 解析资产根目录:优先级 `--root` > `AI_CONFIG_ROOT` > `~/.ai-config`(自动创建)。
+/// 解析资产根目录:优先级 `--root` > `AI_CONFIG_ROOT` > `~/.ai-config`。
+/// 命令入口只解析路径；初始化/播种必须由显式写操作负责。
 fn resolve_root(flag: Option<&str>) -> Utf8PathBuf {
     let raw = match flag {
         Some(s) => s.to_string(),
         None => std::env::var("AI_CONFIG_ROOT").unwrap_or_else(|_| String::new()),
     };
     if raw.is_empty() {
-        return paths::discover_global_asset_root();
+        return paths::discover_global_asset_root_read_only();
     }
     paths::resolve_asset_root(Utf8Path::new(&raw))
 }

@@ -204,15 +204,12 @@ pub fn retract(dest: &Utf8Path) -> Result<(), CoreError> {
         return fs::remove_dir_all(dest.as_std_path()).map_err(CoreError::Io);
     }
 
-    if fs::symlink_metadata(dest.as_std_path()).is_ok() {
-        if dest.is_dir() {
-            fs::remove_dir_all(dest.as_std_path()).map_err(CoreError::Io)
-        } else {
-            fs::remove_file(dest.as_std_path()).map_err(CoreError::Io)
-        }
-    } else {
-        Ok(())
-    }
+    Err(CoreError::LinkFailed {
+        src: "ai-config managed deploy".to_owned(),
+        dest: dest.to_string(),
+        reason: "目标不是本工具下发：没有 ai-config marker 或可验证的 legacy symlink".to_owned(),
+        hint: "保留该外部资产；如需接管，请先通过显式迁移生成计划".to_owned(),
+    })
 }
 
 /// 导入到源后，将平台上**已存在**的同名资产纳管为从 `src` 下发（写标记，不覆盖内容）。
@@ -406,7 +403,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn deploy_copy_and_retract_skill_dir() {
+    fn retract_preserves_unmarked_deployed_skill_copy() {
         let tmp = TempDir::new().unwrap();
         let src_root = Utf8PathBuf::from_path_buf(tmp.path().join("src")).unwrap();
         let plat_root = Utf8PathBuf::from_path_buf(tmp.path().join("plat")).unwrap();
@@ -428,8 +425,22 @@ mod tests {
             }
         );
 
-        retract(&dest).unwrap();
-        assert!(!dest.exists());
+        assert!(retract(&dest).is_err());
+        assert!(dest.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn retract_refuses_unowned_regular_directory() {
+        let tmp = TempDir::new().unwrap();
+        let dest = Utf8PathBuf::from_path_buf(tmp.path().join("platform/skills/foreign")).unwrap();
+        fs::create_dir_all(dest.as_std_path()).unwrap();
+        fs::write(dest.join("SKILL.md").as_std_path(), "# foreign").unwrap();
+
+        assert!(retract(&dest).is_err());
+        assert_eq!(
+            fs::read_to_string(dest.join("SKILL.md").as_std_path()).unwrap(),
+            "# foreign"
+        );
     }
 
     #[test]

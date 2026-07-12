@@ -54,12 +54,7 @@ pub fn deploy_from_platform(
         return deploy_mcp_from_platform(scope, name, from_plat, to_plat);
     }
     if kind == AssetKind::Hook {
-        return hook_adapter::deploy_between_platforms(
-            scope.deploy_base,
-            name,
-            from_plat,
-            to_plat,
-        );
+        return hook_adapter::deploy_between_platforms(scope.deploy_base, name, from_plat, to_plat);
     }
 
     let from_adapter =
@@ -259,63 +254,19 @@ pub fn delete_source(
 }
 
 fn retract_aiconfig_platform(
-    scope: &ScopeRoots<'_>,
-    kind: AssetKind,
-    name: &str,
+    _scope: &ScopeRoots<'_>,
+    _kind: AssetKind,
+    _name: &str,
 ) -> Result<String, CoreError> {
-    let label = platform::platform_label(PlatformId::AiConfig);
-    match kind {
-        AssetKind::Mcp => {
-            let mcp_path = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root)?;
-            let doc_root = mcp_asset_root(&mcp_path)?;
-            mcp_json::remove_server_from_document(doc_root, name)?;
-            Ok(format!("mcp `{name}` ← {label} OK ({mcp_path})"))
-        }
-        AssetKind::Skill => {
-            let adapter = platform::aiconfig_adapter(scope.asset_root);
-            let dest = adapter.skills_dir().join(name);
-            remove_native_platform_copy(&dest)?;
-            Ok(format!("skill `{name}` ← {label} OK ({dest})"))
-        }
-        AssetKind::Rule => {
-            let adapter = platform::aiconfig_adapter(scope.asset_root);
-            let dest = adapter.rules_dir().join(format!("{name}.mdc"));
-            remove_native_platform_copy(&dest)?;
-            Ok(format!("rule `{name}` ← {label} OK ({dest})"))
-        }
-        AssetKind::Command => {
-            let adapter = platform::aiconfig_adapter(scope.asset_root);
-            let dest = adapter.commands_dir().join(format!("{name}.md"));
-            remove_native_platform_copy(&dest)?;
-            Ok(format!("command `{name}` ← {label} OK ({dest})"))
-        }
-        AssetKind::Agent => {
-            let src = locate_source(scope.default_root, scope.asset_root, kind, name)?;
-            remove_native_platform_copy(&src)?;
-            Ok(format!("agent `{name}` ← {label} OK ({src})"))
-        }
-        AssetKind::Hook => {
-            let path = hook::source_entry_path(scope.asset_root, name);
-            hook::remove_bindings_for_script(scope.asset_root, name)?;
-            remove_native_platform_copy(&path)?;
-            Ok(format!("hook `{name}` ← {label} OK ({path})"))
-        }
-    }
+    Err(CoreError::InvalidPath(
+        "ai-config 是资产源，不能通过平台 retract 删除；请使用显式 delete/import 迁移流程"
+            .to_owned(),
+    ))
 }
 
-/// 收回平台副本：优先走 marker / legacy symlink；无标记的本机副本直接删除。
+/// 收回平台副本：仅允许收回 marker 或 legacy symlink 可证明管理的目标。
 fn remove_native_platform_copy(dest: &Utf8Path) -> Result<(), CoreError> {
-    if materialize::retract(dest).is_ok() {
-        return Ok(());
-    }
-    if fs::symlink_metadata(dest.as_std_path()).is_err() {
-        return Ok(());
-    }
-    if dest.is_dir() {
-        fs::remove_dir_all(dest.as_std_path()).map_err(CoreError::Io)
-    } else {
-        fs::remove_file(dest.as_std_path()).map_err(CoreError::Io)
-    }
+    materialize::retract(dest)
 }
 
 /// 计算平台收回路径：有源时按源映射；无源时按平台目录（外部 / synced 安装）。
@@ -596,25 +547,14 @@ fn deploy_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<St
 }
 
 fn retract_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
-    let source_mcp = asset_scope::locate_mcp_json(scope.default_root, scope.asset_root).ok();
-    let in_source = source_mcp.as_ref().is_some_and(|mcp_path| {
-        mcp_asset_root(mcp_path)
-            .ok()
-            .and_then(|root| mcp_json::get_server_config(root, name).ok().flatten())
-            .is_some()
-    });
     let dest = platform::for_scope(plat, scope.deploy_base)?.mcp_deploy_path();
-    mcp_json::remove_server_on_platform(
-        plat,
-        &dest,
-        name,
-        if in_source {
-            source_mcp.as_deref()
-        } else {
-            None
-        },
-    )?;
-    Ok(format!("mcp `{name}` ← {plat:?} 已移除 ({dest})"))
+    Err(CoreError::LinkFailed {
+        src: "ai-config MCP ownership record".to_owned(),
+        dest: dest.to_string(),
+        reason: format!("尚不能证明 MCP server `{name}` 由 ai-config 管理"),
+        hint: "当前版本不会收回平台 MCP；请等待 source-first 迁移计划生成可验证的所有权记录"
+            .to_owned(),
+    })
 }
 
 fn get_mcp_detail(scope: &ScopeRoots<'_>, name: &str) -> Result<AssetFileDetail, CoreError> {
@@ -940,7 +880,7 @@ mod deploy_from_platform_tests {
         );
     }
     #[test]
-    fn retract_aiconfig_keeps_other_platform_copy() {
+    fn retract_aiconfig_source_is_not_retractable_from_platform_action() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
@@ -960,29 +900,27 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: home,
         };
-        let msg = retract(&scope, AssetKind::Skill, "keep-me", PlatformId::AiConfig).unwrap();
-        assert!(
-            msg.contains("← aiconfig"),
-            "expected platform retract message, got: {msg}"
-        );
-        assert!(!msg.contains("已从源收回"));
-
-        assert!(!skill_dir.exists());
+        assert!(retract(&scope, AssetKind::Skill, "keep-me", PlatformId::AiConfig).is_err());
+        assert!(skill_dir.join("SKILL.md").is_file());
         assert!(
             claude_skill.join("SKILL.md").is_file(),
-            "收回 ai-config 平台副本不应删除 Claude 侧 skill"
+            "拒绝源侧 retract 不应删除 Claude 侧 skill"
         );
     }
 
     #[test]
-    fn retract_aiconfig_hook_removes_bindings_from_manifest() {
+    fn retract_aiconfig_hook_does_not_mutate_source_manifest() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
         let asset_root = home.join(".ai-config");
         fs::create_dir_all(asset_root.join("hooks")).unwrap();
-        fs::write(asset_root.join("hooks/speak-lifecycle.py"), "#!/usr/bin/env python3\n").unwrap();
+        fs::write(
+            asset_root.join("hooks/speak-lifecycle.py"),
+            "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
         fs::write(
             asset_root.join("hooks.json"),
             r#"{"version":1,"hooks":{"postToolUse":[{"command":"./hooks/speak-lifecycle.py postToolUse"}]}}"#,
@@ -995,23 +933,22 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: home,
         };
-        retract(
+        assert!(retract(
             &scope,
             AssetKind::Hook,
             "speak-lifecycle.py",
             PlatformId::AiConfig,
         )
-        .unwrap();
+        .is_err());
 
         let doc: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(asset_root.join("hooks.json")).unwrap())
                 .unwrap();
-        let hooks = doc["hooks"].as_object().expect("hooks should remain object");
-        assert!(
-            hooks.get("postToolUse").is_none(),
-            "retract ai-config hook 应删除 hooks.json 对应绑定"
-        );
-        assert!(!asset_root.join("hooks/speak-lifecycle.py").exists());
+        let hooks = doc["hooks"]
+            .as_object()
+            .expect("hooks should remain object");
+        assert!(hooks.get("postToolUse").is_some());
+        assert!(asset_root.join("hooks/speak-lifecycle.py").exists());
     }
 
     #[test]
@@ -1048,7 +985,7 @@ mod deploy_from_platform_tests {
     }
 
     #[test]
-    fn retract_hermes_skill_without_aiconfig_source() {
+    fn retract_preserves_unmanaged_platform_skill_without_aiconfig_source() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
@@ -1066,10 +1003,10 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: home,
         };
-        retract(&scope, AssetKind::Skill, "npx-only", PlatformId::Hermes).unwrap();
+        assert!(retract(&scope, AssetKind::Skill, "npx-only", PlatformId::Hermes).is_err());
         assert!(
-            !hermes_skill.exists(),
-            "应能删除无 ai-config 源的外部 Hermes skill"
+            hermes_skill.join("SKILL.md").is_file(),
+            "无 ai-config 所有权证据的外部 Hermes skill 必须保留"
         );
     }
 
@@ -1129,7 +1066,7 @@ mod deploy_from_platform_tests {
     }
 
     #[test]
-    fn retract_mcp_platform_only_without_source_entry() {
+    fn retract_preserves_platform_mcp_without_ownership_evidence() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
@@ -1150,17 +1087,17 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: home,
         };
-        retract(&scope, AssetKind::Mcp, "only-cursor", PlatformId::Cursor).unwrap();
+        assert!(retract(&scope, AssetKind::Mcp, "only-cursor", PlatformId::Cursor).is_err());
 
         let doc: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&cursor_mcp).unwrap()).unwrap();
-        assert!(doc["mcpServers"].get("only-cursor").is_none());
+        assert!(doc["mcpServers"].get("only-cursor").is_some());
         let source_doc = mcp_json::load_mcp_document(&asset_root).unwrap().unwrap();
         assert!(source_doc["mcpServers"].as_object().unwrap().is_empty());
     }
 
     #[test]
-    fn retract_aiconfig_mcp_removes_server_from_source_document() {
+    fn retract_aiconfig_mcp_does_not_delete_source_server() {
         let tmp = TempDir::new().unwrap();
         let asset_root = Utf8Path::from_path(tmp.path()).unwrap().join(".ai-config");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
@@ -1176,10 +1113,10 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: &asset_root,
         };
-        retract(&scope, AssetKind::Mcp, "ai-config", PlatformId::AiConfig).unwrap();
+        assert!(retract(&scope, AssetKind::Mcp, "ai-config", PlatformId::AiConfig).is_err());
         assert!(mcp_json::get_server_config(&asset_root, "ai-config")
             .unwrap()
-            .is_none());
+            .is_some());
     }
 
     #[test]

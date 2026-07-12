@@ -259,9 +259,6 @@ pub fn scan_project_root(root: &Utf8Path) -> Result<ScanResult, CoreError> {
         return Err(CoreError::InvalidPath(format!("资产根目录不存在: {root}")));
     }
 
-    let deploy_base = crate::hook::deploy_base_for_asset_root(root);
-    let _ = crate::hook::reconcile_orphan_hook_scripts(root, &deploy_base);
-
     Ok(ScanResult {
         skills: scan_skills(root)?,
         rules: scan_rules(root)?,
@@ -334,9 +331,7 @@ fn merge_hook_items(
             out.push(item.clone());
         }
     }
-    out.sort_by(|a, b| {
-        (&a.lifecycle, &a.script_filename).cmp(&(&b.lifecycle, &b.script_filename))
-    });
+    out.sort_by(|a, b| (&a.lifecycle, &a.script_filename).cmp(&(&b.lifecycle, &b.script_filename)));
     out
 }
 
@@ -701,5 +696,26 @@ mod tests {
 
         let r = scan_rules(root).expect("scan ok");
         assert_eq!(r.len(), 1, "only 根 rules/<name>.mdc 进清单, got {:?}", r);
+    }
+
+    #[test]
+    fn scan_project_root_does_not_reconcile_orphan_hooks() {
+        let tmp = TempDir::new().unwrap();
+        let repo = Utf8Path::from_path(tmp.path()).unwrap().join("repo");
+        let asset_root = repo.join(".ai-config");
+        touch(&asset_root.join("hooks").join("speak.py"));
+        touch(&repo.join(".cursor").join("hooks").join("speak.py"));
+        fs::write(
+            repo.join(".cursor/hooks.json").as_std_path(),
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":".cursor/hooks/speak.py"}]}}"#,
+        )
+        .unwrap();
+
+        scan_project_root(&asset_root).expect("scan succeeds");
+
+        assert!(
+            !asset_root.join("hooks.json").exists(),
+            "read-only scan must not register hooks from platform configuration"
+        );
     }
 }

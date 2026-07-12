@@ -257,7 +257,7 @@ fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
                         continue;
                     };
                     let label = format!("RenderMcp {}", platform_label(*platform));
-                    let adapter = match platform::for_id(*platform) {
+                    let adapter = match platform::for_scope(*platform, &ctx.deploy_base) {
                         Ok(a) => a,
                         Err(e) => {
                             out.push(Outcome::failed(label, *platform, "mcp", &e));
@@ -400,7 +400,7 @@ pub fn run_install(default_root: &Utf8Path, workspace: bool, mode: OutputMode) -
     };
 
     // 4. 执行 SyncAction
-    let mut outcomes = execute_all_actions(&ctx);
+    let outcomes = execute_all_actions(&ctx);
     let ok_count = outcomes
         .iter()
         .filter(|o| o.result == "ok" || o.result == "skipped")
@@ -509,12 +509,7 @@ fn run_install_workspace(workspace_root: &Utf8Path, mode: OutputMode) -> ExitCod
         if !mode.is_quiet() && !mode.is_json() {
             emit_line(
                 mode,
-                format!(
-                    "==> {} ({} ok, {} failed)",
-                    member,
-                    ok,
-                    failed
-                ),
+                format!("==> {} ({} ok, {} failed)", member, ok, failed),
             );
         }
         member_reports.push(WorkspaceMemberReport {
@@ -614,39 +609,16 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
         }
     }
 
-    // 2. 收回各平台 mcp.json(整文件删除)
+    // 2. T001: 在具名 ownership ledger 落地前，不收回任何平台 MCP。
+    // 平台聚合配置可能同时包含 ai-config 与用户手工条目，整文件删除不可证明安全。
     for plat in all_platforms() {
         let label = format!("RetractMcp {}", platform_label(plat));
-        let adapter = match platform::for_id(plat) {
-            Ok(a) => a,
-            Err(e) => {
-                outcomes.push(Outcome::failed(label, plat, "mcp", &e));
-                continue;
-            }
-        };
-        let mcp_path = adapter.mcp_deploy_path();
-        if plat == PlatformId::Hermes {
-            outcomes.push(Outcome::skipped(
-                label,
-                plat,
-                "mcp",
-                "Hermes MCP 在 config.yaml 中 per-server 管理,请用 mcp retract <name> hermes",
-            ));
-            continue;
-        }
-        if !mcp_path.exists() {
-            outcomes.push(Outcome::skipped(
-                label,
-                plat,
-                "mcp",
-                "目标平台没有 mcp.json,无需收回",
-            ));
-            continue;
-        }
-        match mcp_json::retract_platform_mcp_json(&mcp_path, plat) {
-            Ok(()) => outcomes.push(Outcome::ok(label, plat, "mcp")),
-            Err(e) => outcomes.push(Outcome::failed(label, plat, "mcp", &e)),
-        }
+        outcomes.push(Outcome::skipped(
+            label,
+            plat,
+            "mcp",
+            "缺少可验证的 MCP 所有权记录；平台聚合配置保持不变",
+        ));
     }
 
     let retracted = outcomes
@@ -1127,37 +1099,11 @@ pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCo
 /// `ai-config doctor`(PRD §6.2 / §10 A-10)
 pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode, materialize: bool) -> ExitCode {
     if materialize {
-        match ai_config_core::doctor::materialize_legacy_symlink_deploys(default_root) {
-            Ok(repaired) => {
-                if mode.is_json() {
-                    emit_json(
-                        mode,
-                        &serde_json::json!({
-                            "ok": true,
-                            "action": "materialize_legacy_deploys",
-                            "repaired": repaired,
-                            "count": repaired.len(),
-                        }),
-                    );
-                } else if !mode.is_quiet() {
-                    emit_line(
-                        mode,
-                        format!(
-                            "doctor --materialize: 已迁移 {} 条 symlink/同 inode 下发为实体硬拷贝",
-                            repaired.len()
-                        ),
-                    );
-                    for line in &repaired {
-                        emit_line(mode, format!("  - {line}"));
-                    }
-                }
-                return ExitCode::SUCCESS;
-            }
-            Err(e) => {
-                emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-                return ExitCode::from(e.exit_code());
-            }
-        }
+        let error = CoreError::InvalidPath(
+            "doctor 是只读命令；--materialize 已禁用，请使用显式迁移计划".to_owned(),
+        );
+        emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
+        return ExitCode::from(error.exit_code());
     }
 
     let report = match ai_config_core::doctor::compute_report(default_root) {
@@ -1258,7 +1204,11 @@ fn flat_assets(scan: &source::ScanResult) -> Vec<(AssetKind, String, camino::Utf
         }
     }
     for item in &scan.hooks {
-        out.push((AssetKind::Hook, item.script_filename.clone(), item.script_path.clone()));
+        out.push((
+            AssetKind::Hook,
+            item.script_filename.clone(),
+            item.script_path.clone(),
+        ));
     }
     out
 }
@@ -1335,9 +1285,7 @@ mod tests {
 
     // ── 共享测试:install → uninstall → install 幂等(PRD §10 A-3) ─
 
-    /// PRD §10 A-3:跑 N 次 == 跑 1 次。
-    /// 这里验证 install → uninstall → install 三步都成功(exit 0),且第 2 次 install
-    /// 不会因为已存在的旧链接而崩溃。
+    /// 安全收回后，未带 marker 的 legacy copy 只能跳过；重复 install 仍须幂等。
     #[test]
     fn install_uninstall_install_is_idempotent() {
         let (root_tmp, root) = make_project();
@@ -1371,11 +1319,15 @@ mod tests {
             "uninstall should succeed; stderr={}",
             String::from_utf8_lossy(&out.stderr)
         );
-        // 确认 mcp.json 至少被备份了 1 次(看 stdout JSON 里的 mcp_backups)
+        // T001 不再删除整份平台 MCP，未证明 ownership 的历史副本也不得删除。
         let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json out");
+        assert_eq!(v["mcp_backups"].as_u64(), Some(0), "got {v:?}");
         assert!(
-            v["mcp_backups"].as_u64().unwrap_or(0) > 0,
-            "uninstall 应至少备份 1 份 mcp.json(本工具产物);got {v:?}"
+            home_tmp
+                .path()
+                .join(".cursor/skills/foo/SKILL.md")
+                .is_file(),
+            "没有 marker 的旧平台副本必须保留"
         );
 
         // 2nd install — 应当幂等(链接已撤回,从头开始)
