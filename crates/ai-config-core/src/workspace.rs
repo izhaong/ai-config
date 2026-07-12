@@ -50,10 +50,7 @@ pub fn effective_asset_root_for_member(
 }
 
 /// 解析单成员 install/sync 作用域（下发到成员仓库根）。
-pub fn resolve_member_sync_roots(
-    member_repo: &Utf8Path,
-    workspace_root: &Utf8Path,
-) -> SyncRoots {
+pub fn resolve_member_sync_roots(member_repo: &Utf8Path, workspace_root: &Utf8Path) -> SyncRoots {
     let global_default = paths::discover_global_asset_root();
     let (repo_root, _) = paths::resolve_project_roots(member_repo);
     let asset_root = effective_asset_root_for_member(&repo_root, workspace_root);
@@ -155,18 +152,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ws = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         fs::create_dir_all(ws.join(".ai-config/skills/global")).unwrap();
-        fs::write(
-            ws.join(".ai-config/skills/global/SKILL.md"),
-            "g",
-        )
-        .unwrap();
+        fs::write(ws.join(".ai-config/skills/global/SKILL.md"), "g").unwrap();
         let member = ws.join("child");
         fs::create_dir_all(member.join(".ai-config/skills/local")).unwrap();
-        fs::write(
-            member.join(".ai-config/skills/local/SKILL.md"),
-            "l",
-        )
-        .unwrap();
+        fs::write(member.join(".ai-config/skills/local/SKILL.md"), "l").unwrap();
         let asset = effective_asset_root_for_member(&member, &ws);
         assert_eq!(asset, member.join(".ai-config"));
     }

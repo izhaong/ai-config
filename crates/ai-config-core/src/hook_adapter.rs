@@ -202,16 +202,18 @@ pub fn read_platform_bindings(
     script_filename: &str,
 ) -> Result<Vec<hook::HookBinding>, CoreError> {
     match plat {
-        PlatformId::AiConfig => {
-            return Ok(hook::load_spec(deploy_base, script_filename)?.bindings);
-        }
+        PlatformId::AiConfig => Ok(hook::load_spec(deploy_base, script_filename)?.bindings),
         PlatformId::Cursor | PlatformId::Codex => {
             let path = platform_config_path(deploy_base, plat);
             if !path.is_file() {
                 return Ok(Vec::new());
             }
             let doc = read_json(&path)?;
-            Ok(extract_json_bindings(&doc, script_filename, plat == PlatformId::Cursor))
+            Ok(extract_json_bindings(
+                &doc,
+                script_filename,
+                plat == PlatformId::Cursor,
+            ))
         }
         PlatformId::Claude => {
             let path = platform_config_path(deploy_base, plat);
@@ -324,7 +326,8 @@ pub fn toggle_platform_lifecycle(
     if enabled {
         let spec = hook::load_spec(asset_root, script_filename)?;
         copy_script(&spec, deploy_base, plat)?;
-        let source_command = hook::infer_binding_command(script_filename, lifecycle, &spec.bindings);
+        let source_command =
+            hook::infer_binding_command(script_filename, lifecycle, &spec.bindings);
         let platform_lifecycle = platform_lifecycle_key(plat, lifecycle);
         let binding = hook::HookBinding {
             lifecycle: platform_lifecycle,
@@ -332,11 +335,8 @@ pub fn toggle_platform_lifecycle(
                 .bindings
                 .iter()
                 .find(|b| {
-                    hook::canonical_lifecycle_id(
-                        &b.lifecycle,
-                        b.matcher.as_deref(),
-                        plat,
-                    ) == lifecycle
+                    hook::canonical_lifecycle_id(&b.lifecycle, b.matcher.as_deref(), plat)
+                        == lifecycle
                 })
                 .and_then(|b| b.matcher.clone())
                 .or_else(|| default_matcher(plat, canonical_event_key(lifecycle))),
@@ -452,7 +452,9 @@ fn upsert_platform_binding(
             });
             let mut item = json!({ "command": binding.command });
             if let Some(m) = &binding.matcher {
-                item.as_object_mut().unwrap().insert("matcher".into(), json!(m));
+                item.as_object_mut()
+                    .unwrap()
+                    .insert("matcher".into(), json!(m));
             }
             items.push(item);
             write_json_atomic(&path, &doc)?;
@@ -481,7 +483,9 @@ fn remove_platform_binding(
             let Some(hooks) = doc.get_mut("hooks").and_then(|v| v.as_object_mut()) else {
                 return Ok(());
             };
-            let Some(items) = hooks.get_mut(&platform_lifecycle).and_then(|v| v.as_array_mut())
+            let Some(items) = hooks
+                .get_mut(&platform_lifecycle)
+                .and_then(|v| v.as_array_mut())
             else {
                 return Ok(());
             };
@@ -497,7 +501,9 @@ fn remove_platform_binding(
             }
             write_json_atomic(&path, &doc)?;
         }
-        PlatformId::Claude => remove_claude_binding(deploy_base, script_filename, &platform_lifecycle)?,
+        PlatformId::Claude => {
+            remove_claude_binding(deploy_base, script_filename, &platform_lifecycle)?
+        }
         PlatformId::Hermes => remove_hermes_binding(script_filename, &platform_lifecycle)?,
         PlatformId::AiConfig => {}
     }
@@ -612,7 +618,7 @@ fn merge_hermes_single_binding(
             return true;
         };
         let cmd = m
-            .get(&YamlValue::String("command".into()))
+            .get(YamlValue::String("command".into()))
             .and_then(|v| v.as_str())
             .unwrap_or("");
         hook::filename_from_command(cmd).as_deref() != Some(script_filename)
@@ -640,12 +646,12 @@ fn remove_hermes_binding(script_filename: &str, lifecycle: &str) -> Result<(), C
     let YamlValue::Mapping(ref mut root) = doc else {
         return Ok(());
     };
-    let Some(YamlValue::Mapping(ref mut hooks)) = root.get_mut(&YamlValue::String("hooks".into()))
+    let Some(YamlValue::Mapping(ref mut hooks)) = root.get_mut(YamlValue::String("hooks".into()))
     else {
         return Ok(());
     };
     let Some(YamlValue::Sequence(ref mut seq)) =
-        hooks.get_mut(&YamlValue::String(lifecycle.to_string()))
+        hooks.get_mut(YamlValue::String(lifecycle.to_string()))
     else {
         return Ok(());
     };
@@ -654,13 +660,13 @@ fn remove_hermes_binding(script_filename: &str, lifecycle: &str) -> Result<(), C
             return true;
         };
         let cmd = m
-            .get(&YamlValue::String("command".into()))
+            .get(YamlValue::String("command".into()))
             .and_then(|v| v.as_str())
             .unwrap_or("");
         hook::filename_from_command(cmd).as_deref() != Some(script_filename)
     });
     if seq.is_empty() {
-        hooks.remove(&YamlValue::String(lifecycle.to_string()));
+        hooks.remove(YamlValue::String(lifecycle.to_string()));
     }
     write_yaml_atomic(&path, &doc)
 }
@@ -737,7 +743,7 @@ fn read_hermes_bindings(script_filename: &str) -> Result<Vec<hook::HookBinding>,
     let YamlValue::Mapping(root) = doc else {
         return Ok(Vec::new());
     };
-    let Some(YamlValue::Mapping(hooks)) = root.get(&YamlValue::String("hooks".into())) else {
+    let Some(YamlValue::Mapping(hooks)) = root.get(YamlValue::String("hooks".into())) else {
         return Ok(Vec::new());
     };
     let mut out = Vec::new();
@@ -753,14 +759,14 @@ fn read_hermes_bindings(script_filename: &str) -> Result<Vec<hook::HookBinding>,
                 continue;
             };
             let cmd = m
-                .get(&YamlValue::String("command".into()))
+                .get(YamlValue::String("command".into()))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if hook::filename_from_command(cmd).as_deref() != Some(script_filename) {
                 continue;
             }
             let matcher = m
-                .get(&YamlValue::String("matcher".into()))
+                .get(YamlValue::String("matcher".into()))
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
             out.push(hook::HookBinding {
@@ -791,10 +797,9 @@ fn config_contains_token(path: &Utf8Path, token: &str) -> bool {
     }
     if let Some(hooks) = existing.get("hooks").and_then(|v| v.as_object()) {
         return hooks.values().any(|entries| {
-            entries.as_array().is_some_and(|arr| {
-                arr.iter()
-                    .any(|e| entry_matches_token(e, token, false))
-            })
+            entries
+                .as_array()
+                .is_some_and(|arr| arr.iter().any(|e| entry_matches_token(e, token, false)))
         });
     }
     let _ = script;
@@ -809,7 +814,7 @@ fn hermes_contains_hook(hook_name: &str) -> bool {
     let YamlValue::Mapping(root) = &doc else {
         return false;
     };
-    let Some(YamlValue::Mapping(hooks)) = root.get(&YamlValue::String("hooks".into())) else {
+    let Some(YamlValue::Mapping(hooks)) = root.get(YamlValue::String("hooks".into())) else {
         return false;
     };
     hooks.values().any(|v| {
@@ -818,7 +823,11 @@ fn hermes_contains_hook(hook_name: &str) -> bool {
     })
 }
 
-fn copy_script(spec: &HookScriptSpec, deploy_base: &Utf8Path, plat: PlatformId) -> Result<(), CoreError> {
+fn copy_script(
+    spec: &HookScriptSpec,
+    deploy_base: &Utf8Path,
+    plat: PlatformId,
+) -> Result<(), CoreError> {
     let dest = platform_script_path(deploy_base, plat, &spec.filename);
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent.as_std_path()).map_err(CoreError::Io)?;
@@ -872,7 +881,11 @@ fn claude_command_path(deploy_base: &Utf8Path, script_filename: &str) -> String 
     }
 }
 
-fn absolute_command_path(deploy_base: &Utf8Path, plat: PlatformId, script_filename: &str) -> String {
+fn absolute_command_path(
+    deploy_base: &Utf8Path,
+    plat: PlatformId,
+    script_filename: &str,
+) -> String {
     platform_script_path(deploy_base, plat, script_filename)
         .as_str()
         .to_string()
@@ -914,7 +927,9 @@ fn platform_event(plat: PlatformId, canonical: &str) -> &'static str {
         (PlatformId::Cursor, "postToolUse") => "postToolUse",
         (PlatformId::Cursor, "preToolUse") => "preToolUse",
         (PlatformId::Cursor, "postToolUseFailure") => "postToolUseFailure",
-        (PlatformId::Codex, "sessionStart") | (PlatformId::Claude, "sessionStart") => "SessionStart",
+        (PlatformId::Codex, "sessionStart") | (PlatformId::Claude, "sessionStart") => {
+            "SessionStart"
+        }
         (PlatformId::Codex, "sessionEnd") | (PlatformId::Claude, "sessionEnd") => "SessionEnd",
         (PlatformId::Codex, "beforeSubmitPrompt") | (PlatformId::Claude, "beforeSubmitPrompt") => {
             "UserPromptSubmit"
@@ -954,9 +969,10 @@ fn default_matcher(plat: PlatformId, canonical: &str) -> Option<String> {
         (PlatformId::Codex | PlatformId::Claude, "beforeMCPExecution" | "afterMCPExecution") => {
             Some("mcp__.*".into())
         }
-        (PlatformId::Codex | PlatformId::Claude, "afterShellExecution" | "beforeShellExecution") => {
-            Some("Bash".into())
-        }
+        (
+            PlatformId::Codex | PlatformId::Claude,
+            "afterShellExecution" | "beforeShellExecution",
+        ) => Some("Bash".into()),
         (PlatformId::Hermes, _) => Some("terminal".into()),
         _ => None,
     }
@@ -973,17 +989,18 @@ fn build_cursor_entries(deploy_base: &Utf8Path, spec: &HookScriptSpec) -> Map<St
             &binding.lifecycle,
             &binding.command,
         );
-        let matcher = binding
-            .matcher
-            .clone()
-            .or_else(|| default_matcher(PlatformId::Cursor, canonical_event_key(&binding.lifecycle)));
+        let matcher = binding.matcher.clone().or_else(|| {
+            default_matcher(PlatformId::Cursor, canonical_event_key(&binding.lifecycle))
+        });
         let mut item = json!({
             "command": cmd,
             "managedBy": MANAGED_BY,
             "hook": spec.filename,
         });
         if let Some(m) = matcher {
-            item.as_object_mut().unwrap().insert("matcher".into(), json!(m));
+            item.as_object_mut()
+                .unwrap()
+                .insert("matcher".into(), json!(m));
         }
         out.entry(event)
             .or_insert_with(|| Value::Array(vec![]))
@@ -1029,7 +1046,10 @@ fn build_codex_claude_group(
         }
         let mut group = json!({ "hooks": [inner] });
         if let Some(m) = matcher {
-            group.as_object_mut().unwrap().insert("matcher".into(), json!(m));
+            group
+                .as_object_mut()
+                .unwrap()
+                .insert("matcher".into(), json!(m));
         }
         out.entry(event)
             .or_insert_with(|| Value::Array(vec![]))
@@ -1072,7 +1092,9 @@ fn merge_json_hook_events(
 ) -> Result<Value, CoreError> {
     let mut base = existing.unwrap_or_else(|| json!({ "version": 1, "hooks": {} }));
     if base.get("hooks").is_none() {
-        base.as_object_mut().unwrap().insert("hooks".into(), json!({}));
+        base.as_object_mut()
+            .unwrap()
+            .insert("hooks".into(), json!({}));
     }
     let hooks = base
         .as_object_mut()
@@ -1097,14 +1119,14 @@ fn merge_json_hook_events(
     }
 
     for (event, new_items) in src_entries {
-        let arr = hooks
-            .entry(event)
-            .or_insert_with(|| Value::Array(vec![]));
+        let arr = hooks.entry(event).or_insert_with(|| Value::Array(vec![]));
         let dest_arr = arr.as_array_mut().unwrap();
         dest_arr.extend(new_items.as_array().cloned().unwrap_or_default());
     }
     if base.get("version").is_none() {
-        base.as_object_mut().unwrap().insert("version".into(), json!(1));
+        base.as_object_mut()
+            .unwrap()
+            .insert("version".into(), json!(1));
     }
     Ok(base)
 }
@@ -1149,10 +1171,7 @@ fn merge_claude_settings(deploy_base: &Utf8Path, spec: &HookScriptSpec) -> Resul
     } else {
         None
     };
-    let mcp_servers = existing
-        .as_ref()
-        .and_then(|e| e.get("mcpServers"))
-        .cloned();
+    let mcp_servers = existing.as_ref().and_then(|e| e.get("mcpServers")).cloned();
     let token = hook::managed_command_token(&spec.filename);
     let src = build_codex_claude_group(spec, deploy_base, PlatformId::Claude);
     let mut merged = merge_json_hook_events(existing, &token, src, false)?;
@@ -1183,15 +1202,19 @@ fn merge_hermes_config(spec: &HookScriptSpec) -> Result<(), CoreError> {
         }
     };
     let hooks_key = YamlValue::String("hooks".into());
-    let hooks_map = match mapping.entry(hooks_key).or_insert_with(|| {
-        YamlValue::Mapping(Mapping::new())
-    }) {
+    let hooks_map = match mapping
+        .entry(hooks_key)
+        .or_insert_with(|| YamlValue::Mapping(Mapping::new()))
+    {
         YamlValue::Mapping(m) => m,
         _ => {
             let m = Mapping::new();
-            mapping.insert(YamlValue::String("hooks".into()), YamlValue::Mapping(m.clone()));
+            mapping.insert(
+                YamlValue::String("hooks".into()),
+                YamlValue::Mapping(m.clone()),
+            );
             mapping
-                .get_mut(&YamlValue::String("hooks".into()))
+                .get_mut(YamlValue::String("hooks".into()))
                 .unwrap()
                 .as_mapping_mut()
                 .unwrap()
@@ -1203,13 +1226,18 @@ fn merge_hermes_config(spec: &HookScriptSpec) -> Result<(), CoreError> {
     let managed_key = YamlValue::String(format!("{MANAGED_BY}:{filename}"));
 
     for binding in &spec.bindings {
-        let event_key = YamlValue::String(platform_event_from_binding(PlatformId::Hermes, &binding.lifecycle));
-        let matcher = binding
-            .matcher
-            .clone()
-            .or_else(|| default_matcher(PlatformId::Hermes, canonical_event_key(&binding.lifecycle)));
+        let event_key = YamlValue::String(platform_event_from_binding(
+            PlatformId::Hermes,
+            &binding.lifecycle,
+        ));
+        let matcher = binding.matcher.clone().or_else(|| {
+            default_matcher(PlatformId::Hermes, canonical_event_key(&binding.lifecycle))
+        });
         let mut item = Mapping::new();
-        item.insert(YamlValue::String("command".into()), YamlValue::String(cmd.clone()));
+        item.insert(
+            YamlValue::String("command".into()),
+            YamlValue::String(cmd.clone()),
+        );
         item.insert(
             YamlValue::String("managedBy".into()),
             YamlValue::String(MANAGED_BY.into()),
@@ -1237,7 +1265,7 @@ fn yaml_entry_is_managed(entry: &YamlValue, script_filename: &str) -> bool {
     let Some(m) = entry.as_mapping() else {
         return false;
     };
-    m.get(&YamlValue::String("hook".into()))
+    m.get(YamlValue::String("hook".into()))
         .and_then(|v| v.as_str())
         == Some(script_filename)
 }
@@ -1250,7 +1278,7 @@ fn remove_hermes_managed(script_filename: &str) -> Result<(), CoreError> {
     let YamlValue::Mapping(ref mut mapping) = root else {
         return Ok(());
     };
-    let Some(YamlValue::Mapping(hooks)) = mapping.get_mut(&YamlValue::String("hooks".into())) else {
+    let Some(YamlValue::Mapping(hooks)) = mapping.get_mut(YamlValue::String("hooks".into())) else {
         return Ok(());
     };
     for (_k, v) in hooks.iter_mut() {
@@ -1311,8 +1339,8 @@ fn write_yaml_atomic(path: &Utf8Path, doc: &YamlValue) -> Result<(), CoreError> 
 
 #[cfg(test)]
 mod tests {
-    use crate::test_env::EnvGuard;
     use super::*;
+    use crate::test_env::EnvGuard;
     use std::fs;
     use tempfile::TempDir;
 
@@ -1361,9 +1389,13 @@ mod tests {
                 ]
             }
         });
-        let merged =
-            merge_json_hook_events(Some(existing), "/hooks/test-prompt-hook.sh", Map::new(), true)
-                .unwrap();
+        let merged = merge_json_hook_events(
+            Some(existing),
+            "/hooks/test-prompt-hook.sh",
+            Map::new(),
+            true,
+        )
+        .unwrap();
         let arr = merged["hooks"]["beforeSubmitPrompt"].as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["hook"], "speak-lifecycle.py");
@@ -1413,10 +1445,9 @@ mod tests {
         let repo_u = Utf8PathBuf::from_path_buf(repo).unwrap();
         let asset_u = Utf8PathBuf::from_path_buf(asset).unwrap();
         deploy(&asset_u, &repo_u, "run.py", PlatformId::Cursor).unwrap();
-        let doc: serde_json::Value = serde_json::from_str(
-            &fs::read_to_string(repo_u.join(".cursor/hooks.json")).unwrap(),
-        )
-        .unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(repo_u.join(".cursor/hooks.json")).unwrap())
+                .unwrap();
         assert_eq!(
             doc["hooks"]["sessionStart"][0]["command"],
             ".cursor/hooks/run.py sessionStart"
@@ -1454,10 +1485,7 @@ mod tests {
         assert_eq!(arr.len(), 1);
         let group = &arr[0];
         let inner = &group["hooks"][0];
-        assert_eq!(
-            inner["command"].as_str().unwrap(),
-            ".codex/hooks/run.sh"
-        );
+        assert_eq!(inner["command"].as_str().unwrap(), ".codex/hooks/run.sh");
         assert_eq!(inner["managedBy"], MANAGED_BY);
         assert_eq!(inner["hook"], "run.sh");
     }
@@ -1524,13 +1552,7 @@ mod tests {
         let asset_u = Utf8PathBuf::from_path_buf(asset).unwrap();
         let home_u = Utf8PathBuf::from_path_buf(home).unwrap();
 
-        deploy(
-            &asset_u,
-            &home_u,
-            "speak-lifecycle.py",
-            PlatformId::Claude,
-        )
-        .unwrap();
+        deploy(&asset_u, &home_u, "speak-lifecycle.py", PlatformId::Claude).unwrap();
 
         let settings = home_u.join(".claude/settings.json");
         let doc: serde_json::Value =
@@ -1580,11 +1602,11 @@ mod tests {
             panic!("root not mapping");
         };
         let hooks = root
-            .get(&YamlValue::String("hooks".into()))
+            .get(YamlValue::String("hooks".into()))
             .and_then(|v| v.as_mapping())
             .expect("hooks entry");
         let list = hooks
-            .get(&YamlValue::String("post_tool_call".into()))
+            .get(YamlValue::String("post_tool_call".into()))
             .and_then(|v| v.as_sequence())
             .expect("post_tool_call list");
         assert_eq!(list.len(), 1);
@@ -1592,18 +1614,17 @@ mod tests {
             panic!("item not mapping");
         };
         assert_eq!(
-            item.get(&YamlValue::String("command".into()))
+            item.get(YamlValue::String("command".into()))
                 .and_then(|v| v.as_str())
                 .unwrap(),
             absolute_command_path(&home_u, PlatformId::Hermes, "run.sh")
         );
         assert_eq!(
-            item.get(&YamlValue::String("hook".into()))
+            item.get(YamlValue::String("hook".into()))
                 .and_then(|v| v.as_str())
                 .unwrap(),
             "run.sh"
         );
-
     }
 
     #[test]
@@ -1625,10 +1646,7 @@ mod tests {
         let arr = merged["hooks"]["PostToolUse"].as_array().unwrap();
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["hooks"][0]["command"], "/tmp/other.sh");
-        assert_eq!(
-            arr[1]["hooks"][0]["command"],
-            ".codex/hooks/run.sh"
-        );
+        assert_eq!(arr[1]["hooks"][0]["command"], ".codex/hooks/run.sh");
     }
 
     #[test]
@@ -1744,11 +1762,17 @@ mod tests {
             Some("Edit|Write".into())
         );
         assert_eq!(
-            default_matcher(PlatformId::Claude, canonical_event_key("beforeMCPExecution")),
+            default_matcher(
+                PlatformId::Claude,
+                canonical_event_key("beforeMCPExecution")
+            ),
             Some("mcp__.*".into())
         );
         assert_eq!(
-            default_matcher(PlatformId::Codex, canonical_event_key("afterShellExecution")),
+            default_matcher(
+                PlatformId::Codex,
+                canonical_event_key("afterShellExecution")
+            ),
             Some("Bash".into())
         );
     }
@@ -1774,7 +1798,10 @@ mod tests {
     fn canonical_event_key_keeps_posttooluse_separate_from_shell() {
         assert_eq!(canonical_event_key("postToolUse"), "postToolUse");
         assert_eq!(canonical_event_key("preToolUse"), "preToolUse");
-        assert_eq!(canonical_event_key("postToolUseFailure"), "postToolUseFailure");
+        assert_eq!(
+            canonical_event_key("postToolUseFailure"),
+            "postToolUseFailure"
+        );
         assert_eq!(
             canonical_event_key("PostToolUse"),
             "postToolUse",
@@ -1823,10 +1850,7 @@ mod tests {
             None,
             "Codex PostToolUse 不应默认 Bash"
         );
-        assert_eq!(
-            default_matcher(PlatformId::Claude, "preToolUse"),
-            None
-        );
+        assert_eq!(default_matcher(PlatformId::Claude, "preToolUse"), None);
         assert_eq!(
             default_matcher(PlatformId::Codex, "afterShellExecution"),
             Some("Bash".into())
@@ -1943,7 +1967,10 @@ mod tests {
         }
         // Shell 事件应当出现在 PreToolUse 下而非 SessionStart；source 里指定的 matcher
         // （这里是 `ai-config`）应被原样保留（不会被默认 Bash 覆盖）。
-        let pre_tool_use = hooks_obj.get("PreToolUse").and_then(|v| v.as_array()).unwrap();
+        let pre_tool_use = hooks_obj
+            .get("PreToolUse")
+            .and_then(|v| v.as_array())
+            .unwrap();
         let has_speak = pre_tool_use.iter().any(|group| {
             group
                 .get("hooks")
@@ -2054,11 +2081,7 @@ mod tests {
 }"#,
         )
         .unwrap();
-        std::fs::write(
-            hooks.join("speak-lifecycle.py"),
-            "#!/usr/bin/env python3\n",
-        )
-        .unwrap();
+        std::fs::write(hooks.join("speak-lifecycle.py"), "#!/usr/bin/env python3\n").unwrap();
 
         let repo = tmp.path().join("repo");
         std::fs::create_dir_all(repo.join(".cursor/hooks")).unwrap();
@@ -2085,18 +2108,17 @@ mod tests {
         let repo_u = Utf8PathBuf::from_path_buf(repo.clone()).unwrap();
         deploy(&asset_u, &repo_u, "speak-lifecycle.py", PlatformId::Cursor).unwrap();
 
-        let doc: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(repo.join(".cursor/hooks.json")).unwrap())
-                .unwrap();
+        let doc: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(repo.join(".cursor/hooks.json")).unwrap(),
+        )
+        .unwrap();
         let hooks_obj = doc["hooks"].as_object().unwrap();
         assert!(hooks_obj.contains_key("preToolUse"));
         assert!(hooks_obj.contains_key("beforeShellExecution"));
         let pre = hooks_obj["preToolUse"].as_array().unwrap();
-        assert!(
-            pre.iter().any(|e| e["command"]
-                .as_str()
-                .is_some_and(|c| c.contains("block-edit-protected-branch.py")))
-        );
+        assert!(pre.iter().any(|e| e["command"]
+            .as_str()
+            .is_some_and(|c| c.contains("block-edit-protected-branch.py"))));
     }
 
     #[test]
@@ -2153,4 +2175,3 @@ mod tests {
         );
     }
 }
-

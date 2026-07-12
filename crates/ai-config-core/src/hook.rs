@@ -259,16 +259,20 @@ fn extract_triple_quote(content: &str) -> String {
 }
 
 /// 解析 `hooks.json`，列出每个生命周期下的对象。
-pub fn list_from_manifest(manifest: &Utf8Path, asset_root: &Utf8Path) -> Result<Vec<HookListItem>, CoreError> {
+pub fn list_from_manifest(
+    manifest: &Utf8Path,
+    asset_root: &Utf8Path,
+) -> Result<Vec<HookListItem>, CoreError> {
     if !manifest.is_file() {
         return Ok(Vec::new());
     }
     let raw = fs::read_to_string(manifest.as_std_path()).map_err(CoreError::Io)?;
-    let doc: HooksManifestFile = serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-        template: manifest.as_str().to_owned(),
-        reason: e.to_string(),
-        hint: "hooks.json 格式无效".into(),
-    })?;
+    let doc: HooksManifestFile =
+        serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+            template: manifest.as_str().to_owned(),
+            reason: e.to_string(),
+            hint: "hooks.json 格式无效".into(),
+        })?;
 
     let mut out = Vec::new();
     for (lifecycle, entries) in &doc.hooks {
@@ -291,9 +295,7 @@ pub fn list_from_manifest(manifest: &Utf8Path, asset_root: &Utf8Path) -> Result<
             });
         }
     }
-    out.sort_by(|a, b| {
-        (&a.lifecycle, &a.script_filename).cmp(&(&b.lifecycle, &b.script_filename))
-    });
+    out.sort_by(|a, b| (&a.lifecycle, &a.script_filename).cmp(&(&b.lifecycle, &b.script_filename)));
     Ok(out)
 }
 
@@ -302,7 +304,10 @@ fn resolve_script_path(asset_root: &Utf8Path, command: &str) -> Result<Utf8PathB
         .split_whitespace()
         .next()
         .ok_or_else(|| CoreError::InvalidPath(format!("空 command: {command}")))?;
-    let rel = executable.trim().strip_prefix("./").unwrap_or(executable.trim());
+    let rel = executable
+        .trim()
+        .strip_prefix("./")
+        .unwrap_or(executable.trim());
     let path = Utf8Path::new(rel);
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -419,11 +424,12 @@ pub fn list_hook_catalog(asset_root: &Utf8Path) -> Result<Vec<HookCatalogItem>, 
 
     if manifest.is_file() {
         let raw = fs::read_to_string(manifest.as_std_path()).map_err(CoreError::Io)?;
-        let doc: HooksManifestFile = serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-            template: manifest.as_str().to_owned(),
-            reason: e.to_string(),
-            hint: "hooks.json 格式无效".into(),
-        })?;
+        let doc: HooksManifestFile =
+            serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+                template: manifest.as_str().to_owned(),
+                reason: e.to_string(),
+                hint: "hooks.json 格式无效".into(),
+            })?;
         for (lifecycle, entries) in &doc.hooks {
             for (index, entry) in entries.iter().enumerate() {
                 let entry_type = entry
@@ -493,7 +499,10 @@ pub fn list_hook_catalog(asset_root: &Utf8Path) -> Result<Vec<HookCatalogItem>, 
 }
 
 /// 按脚本文件名加载 spec（manifest 中凡指向该文件名的绑定一并纳入）。
-pub fn load_spec(asset_root: &Utf8Path, script_filename: &str) -> Result<HookScriptSpec, CoreError> {
+pub fn load_spec(
+    asset_root: &Utf8Path,
+    script_filename: &str,
+) -> Result<HookScriptSpec, CoreError> {
     let script_path = script_path(asset_root, script_filename);
     if !script_path.is_file() {
         return Err(CoreError::AssetNotFound {
@@ -508,11 +517,12 @@ pub fn load_spec(asset_root: &Utf8Path, script_filename: &str) -> Result<HookScr
     let mut bindings = Vec::new();
     if manifest.is_file() {
         let raw = fs::read_to_string(manifest.as_std_path()).map_err(CoreError::Io)?;
-        let doc: HooksManifestFile = serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-            template: manifest.as_str().to_owned(),
-            reason: e.to_string(),
-            hint: "hooks.json 格式无效".into(),
-        })?;
+        let doc: HooksManifestFile =
+            serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+                template: manifest.as_str().to_owned(),
+                reason: e.to_string(),
+                hint: "hooks.json 格式无效".into(),
+            })?;
         for (lifecycle, entries) in &doc.hooks {
             for entry in entries {
                 if filename_from_command(&entry.command).as_deref() == Some(script_filename) {
@@ -598,17 +608,21 @@ pub fn canonical_lifecycle_id(
 }
 
 /// 从源 `hooks.json` 移除指向该脚本文件名的全部绑定。
-pub fn remove_bindings_for_script(asset_root: &Utf8Path, script_filename: &str) -> Result<(), CoreError> {
+pub fn remove_bindings_for_script(
+    asset_root: &Utf8Path,
+    script_filename: &str,
+) -> Result<(), CoreError> {
     let manifest = manifest_path(asset_root);
     if !manifest.is_file() {
         return Ok(());
     }
     let raw = fs::read_to_string(manifest.as_std_path()).map_err(CoreError::Io)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-        template: manifest.as_str().to_owned(),
-        reason: e.to_string(),
-        hint: "hooks.json 格式无效".into(),
-    })?;
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+            template: manifest.as_str().to_owned(),
+            reason: e.to_string(),
+            hint: "hooks.json 格式无效".into(),
+        })?;
     let Some(hooks) = doc.get_mut("hooks").and_then(|v| v.as_object_mut()) else {
         return Ok(());
     };
@@ -617,7 +631,9 @@ pub fn remove_bindings_for_script(asset_root: &Utf8Path, script_filename: &str) 
             arr.retain(|e| {
                 e.get("command")
                     .and_then(|v| v.as_str())
-                    .is_none_or(|cmd| !binding_matches_asset(cmd, script_filename, asset_root))
+                    .map_or(true, |cmd| {
+                        !binding_matches_asset(cmd, script_filename, asset_root)
+                    })
             });
         }
     }
@@ -637,11 +653,12 @@ pub fn remove_binding_for_script_lifecycle(
         return Ok(());
     }
     let raw = fs::read_to_string(manifest.as_std_path()).map_err(CoreError::Io)?;
-    let mut doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-        template: manifest.as_str().to_owned(),
-        reason: e.to_string(),
-        hint: "hooks.json 格式无效".into(),
-    })?;
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+            template: manifest.as_str().to_owned(),
+            reason: e.to_string(),
+            hint: "hooks.json 格式无效".into(),
+        })?;
     let Some(hooks) = doc.get_mut("hooks").and_then(|v| v.as_object_mut()) else {
         return Ok(());
     };
@@ -651,7 +668,9 @@ pub fn remove_binding_for_script_lifecycle(
     entries.retain(|e| {
         e.get("command")
             .and_then(|v| v.as_str())
-            .is_none_or(|cmd| !binding_matches_asset(cmd, script_filename, asset_root))
+            .map_or(true, |cmd| {
+                !binding_matches_asset(cmd, script_filename, asset_root)
+            })
     });
     if entries.is_empty() {
         hooks.remove(lifecycle);
@@ -707,12 +726,16 @@ pub fn merge_bindings_into_manifest(
             "command": canonical_command_for_source(&binding.command, script_filename),
         });
         if let Some(m) = &binding.matcher {
-            item.as_object_mut().unwrap().insert("matcher".into(), json!(m));
+            item.as_object_mut()
+                .unwrap()
+                .insert("matcher".into(), json!(m));
         }
         items.push(item);
     }
     if doc.get("version").is_none() {
-        doc.as_object_mut().unwrap().insert("version".into(), json!(1));
+        doc.as_object_mut()
+            .unwrap()
+            .insert("version".into(), json!(1));
     }
     if let Some(parent) = manifest.parent() {
         fs::create_dir_all(parent.as_std_path()).map_err(CoreError::Io)?;
@@ -807,10 +830,7 @@ mod tests {
             canonical_lifecycle_id("pre_tool_call", None, PlatformId::Hermes),
             "beforeShellExecution"
         );
-        assert_eq!(
-            normalize_lifecycle("before_shell"),
-            "beforeShellExecution"
-        );
+        assert_eq!(normalize_lifecycle("before_shell"), "beforeShellExecution");
     }
 
     #[test]
@@ -819,11 +839,7 @@ mod tests {
         let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         let asset = repo.join(".ai-config");
         fs::create_dir_all(asset.join("hooks")).unwrap();
-        fs::write(
-            asset.join("hooks.json"),
-            r#"{"version":1,"hooks":{}}"#,
-        )
-        .unwrap();
+        fs::write(asset.join("hooks.json"), r#"{"version":1,"hooks":{}}"#).unwrap();
         fs::write(
             asset.join("hooks/speak-lifecycle.py"),
             "#!/usr/bin/env python3\n\"\"\"TTS\"\"\"\n",
@@ -835,7 +851,11 @@ mod tests {
             r#"{"version":1,"hooks":{"sessionStart":[{"command":".cursor/hooks/speak-lifecycle.py sessionStart"}]}}"#,
         )
         .unwrap();
-        fs::write(repo.join(".cursor/hooks/speak-lifecycle.py"), "#!/usr/bin/env python3\n").unwrap();
+        fs::write(
+            repo.join(".cursor/hooks/speak-lifecycle.py"),
+            "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
 
         let n = reconcile_orphan_hook_scripts(&asset, &repo).unwrap();
         assert_eq!(n, 1);

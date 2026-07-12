@@ -6,14 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-12
+
 ### Fixed
 
 - **source-first T001 安全止血**：`retract` / `uninstall` 在缺少 marker、精确 legacy link 或 MCP 具名所有权记录时 fail-closed，不再删除普通平台副本或整份 MCP 配置；`status` / `doctor` / scope 解析不再初始化资产根或回写 Hook。项目 MCP 渲染使用项目 deploy base；doctor 仅报告字面 MCP secret 的计数及遗留 secret 文件元数据，不输出值。
 - **install 项目级增量合并**（Gitea #22）：`AI_CONFIG_ROOT=<repo>` 时正确解析 `<repo>/.ai-config` + `~/.ai-config` 合并源并下发到仓库根；hook merge 仅移除 `managedBy: ai-config` 条目；项目作用域跳过覆盖非托管文件。
+- **GUI 平台按钮状态**：强化激活/未激活平台按钮的视觉对比。
 
 ### Added
 
 - **`install` / `sync --workspace`**（zh-cloud #42）：解析 `.gitmodules`，对父仓与已 checkout 子模块逐个下发；子仓无本地 `.ai-config` 时继承父仓资产源。
+
+### Changed
+
+- **Spec Kit plan 详细度门禁**：强化 `plan.md` 必须含 Summary、根因、影响面、方案设计、边界表、测试策略、回滚；禁止仅模块表 + 笼统 Todo。
 
 ## [0.3.3] - 2026-06-26
 

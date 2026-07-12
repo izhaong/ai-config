@@ -32,49 +32,6 @@ pub fn resolve_scope_root(root: Option<&str>) -> Utf8PathBuf {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use tempfile::TempDir;
-
-    use super::*;
-
-    static HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn default_scope_resolution_does_not_initialize_asset_root() {
-        let _lock = HOME_TEST_LOCK.lock().unwrap();
-        let tmp = TempDir::new().unwrap();
-        let home = tmp.path().join("home");
-        let previous_home = std::env::var("HOME").ok();
-        let previous_root = std::env::var("AI_CONFIG_ROOT").ok();
-        std::env::set_var("HOME", &home);
-        std::env::remove_var("AI_CONFIG_ROOT");
-
-        let root = resolve_scope_root(None);
-
-        assert_eq!(
-            root,
-            Utf8PathBuf::from_path_buf(home.join(".ai-config")).unwrap()
-        );
-        assert!(
-            !root.exists(),
-            "read-only API routing must not create assets"
-        );
-        if let Some(value) = previous_home {
-            std::env::set_var("HOME", value);
-        } else {
-            std::env::remove_var("HOME");
-        }
-        if let Some(value) = previous_root {
-            std::env::set_var("AI_CONFIG_ROOT", value);
-        } else {
-            std::env::remove_var("AI_CONFIG_ROOT");
-        }
-    }
-}
-
 fn with_scope<R>(root: &Utf8Path, f: impl FnOnce(ScopeRoots<'_>) -> R) -> R {
     let deploy_base = paths::home_dir();
     let scope = ScopeRoots {
@@ -178,4 +135,47 @@ pub fn scan_summary(root: &Utf8Path) -> Result<EnvSummary, CoreError> {
         commands: scan.commands.len(),
         mcp_json: scan.mcp_json.as_ref().map(|p| p.as_str().to_string()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    static HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn default_scope_resolution_does_not_initialize_asset_root() {
+        let _lock = HOME_TEST_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let previous_home = std::env::var("HOME").ok();
+        let previous_root = std::env::var("AI_CONFIG_ROOT").ok();
+        std::env::set_var("HOME", &home);
+        std::env::remove_var("AI_CONFIG_ROOT");
+
+        let root = resolve_scope_root(None);
+
+        assert_eq!(
+            root,
+            Utf8PathBuf::from_path_buf(home.join(".ai-config")).unwrap()
+        );
+        assert!(
+            !root.exists(),
+            "read-only API routing must not create assets"
+        );
+        if let Some(value) = previous_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = previous_root {
+            std::env::set_var("AI_CONFIG_ROOT", value);
+        } else {
+            std::env::remove_var("AI_CONFIG_ROOT");
+        }
+    }
 }

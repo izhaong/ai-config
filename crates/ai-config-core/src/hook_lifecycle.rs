@@ -210,7 +210,6 @@ pub fn lifecycle_supported(plat: PlatformId, lifecycle: &str) -> bool {
     }
 }
 
-
 fn command_for_lifecycle(
     script_filename: &str,
     lifecycle: &str,
@@ -265,11 +264,8 @@ pub fn list_lifecycle_views(
         })
         .map(|def| {
             let active = active_bindings.iter().any(|b| {
-                hook::canonical_lifecycle_id(
-                    &b.lifecycle,
-                    b.matcher.as_deref(),
-                    active_plat,
-                ) == def.id
+                hook::canonical_lifecycle_id(&b.lifecycle, b.matcher.as_deref(), active_plat)
+                    == def.id
             });
             let supported_platforms = supported_deploy_platforms(def.id);
             HookLifecycleView {
@@ -361,7 +357,10 @@ mod tests {
         .unwrap();
         fs::write(root.join("hooks/demo.py"), "#!/usr/bin/env python3\n").unwrap();
         let views = list_lifecycle_views(&root, &root, PlatformId::AiConfig, "demo.py");
-        let st = views.iter().find(|v| v.lifecycle == "sessionStart").unwrap();
+        let st = views
+            .iter()
+            .find(|v| v.lifecycle == "sessionStart")
+            .unwrap();
         assert!(st.active);
         assert!(st.supported);
         assert!(st.supported_platforms.contains(&PlatformId::Cursor));
@@ -427,7 +426,10 @@ mod tests {
         assert!(shell_after.supported);
         let tool_post = views.iter().find(|v| v.lifecycle == "postToolUse").unwrap();
         assert!(!tool_post.active);
-        let session = views.iter().find(|v| v.lifecycle == "sessionStart").unwrap();
+        let session = views
+            .iter()
+            .find(|v| v.lifecycle == "sessionStart")
+            .unwrap();
         assert!(!session.supported);
         assert!(session.supported_platforms.contains(&PlatformId::Cursor));
     }
@@ -477,7 +479,11 @@ mod tests {
 
         // project-scope cursor deploy base
         fs::create_dir_all(root.join(".cursor/hooks")).unwrap();
-        fs::write(root.join(".cursor/hooks/demo.py"), "#!/usr/bin/env python3\n").unwrap();
+        fs::write(
+            root.join(".cursor/hooks/demo.py"),
+            "#!/usr/bin/env python3\n",
+        )
+        .unwrap();
         fs::write(
             root.join(".cursor/hooks.json"),
             r#"{"version":1,"hooks":{"beforeTabFileRead":[{"command":".cursor/hooks/demo.py beforeTabFileRead"}]}}"#,
@@ -485,12 +491,23 @@ mod tests {
         .unwrap();
 
         let before = list_lifecycle_views(&asset_root, &root, PlatformId::Cursor, "demo.py");
-        assert!(before.iter().any(|v| v.lifecycle == "beforeTabFileRead" && v.active));
+        assert!(before
+            .iter()
+            .any(|v| v.lifecycle == "beforeTabFileRead" && v.active));
 
-        toggle_lifecycle(&asset_root, &root, PlatformId::Cursor, "demo.py", "beforeTabFileRead", false)
-            .unwrap();
+        toggle_lifecycle(
+            &asset_root,
+            &root,
+            PlatformId::Cursor,
+            "demo.py",
+            "beforeTabFileRead",
+            false,
+        )
+        .unwrap();
 
         let after = list_lifecycle_views(&asset_root, &root, PlatformId::Cursor, "demo.py");
-        assert!(after.iter().any(|v| v.lifecycle == "beforeTabFileRead" && !v.active));
+        assert!(after
+            .iter()
+            .any(|v| v.lifecycle == "beforeTabFileRead" && !v.active));
     }
 }

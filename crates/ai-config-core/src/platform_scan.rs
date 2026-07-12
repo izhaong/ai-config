@@ -112,8 +112,7 @@ pub fn scan_platform_assets(
         } else {
             SourceState::Unmanaged
         };
-        let hook_lifecycles =
-            hook_lifecycle_views(kind, plat, state_key, asset_root, deploy_base);
+        let hook_lifecycles = hook_lifecycle_views(kind, plat, state_key, asset_root, deploy_base);
         out.push(PlatformAssetEntry {
             name,
             kind,
@@ -166,39 +165,41 @@ fn scan_aiconfig_assets(
     };
     let mut out: Vec<PlatformAssetEntry> = raw
         .into_iter()
-        .map(|(name, platform_path, description, hook_type, binding_key)| {
-            let state_key = if kind == AssetKind::Hook {
-                binding_key.as_str()
-            } else {
-                name.as_str()
-            };
-            let states = compute_entry_states(
-                PlatformId::AiConfig,
-                kind,
-                state_key,
-                &platform_path,
-                &deploy_base,
-                asset_root,
-                &source_scan,
-            );
-            let hook_lifecycles = hook_lifecycle_views(
-                kind,
-                PlatformId::AiConfig,
-                state_key,
-                asset_root,
-                &deploy_base,
-            );
-            PlatformAssetEntry {
-                name,
-                kind,
-                description,
-                platform_path: platform_path.to_string(),
-                source_state: SourceState::Managed,
-                states,
-                hook_lifecycles,
-                hook_type,
-            }
-        })
+        .map(
+            |(name, platform_path, description, hook_type, binding_key)| {
+                let state_key = if kind == AssetKind::Hook {
+                    binding_key.as_str()
+                } else {
+                    name.as_str()
+                };
+                let states = compute_entry_states(
+                    PlatformId::AiConfig,
+                    kind,
+                    state_key,
+                    &platform_path,
+                    &deploy_base,
+                    asset_root,
+                    &source_scan,
+                );
+                let hook_lifecycles = hook_lifecycle_views(
+                    kind,
+                    PlatformId::AiConfig,
+                    state_key,
+                    asset_root,
+                    &deploy_base,
+                );
+                PlatformAssetEntry {
+                    name,
+                    kind,
+                    description,
+                    platform_path: platform_path.to_string(),
+                    source_state: SourceState::Managed,
+                    states,
+                    hook_lifecycles,
+                    hook_type,
+                }
+            },
+        )
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
@@ -318,7 +319,13 @@ fn scan_platform_hooks(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, C
                     .unwrap_or_default();
                 by_key.insert(
                     name.clone(),
-                    (name.clone(), path, description, Some("command".into()), name),
+                    (
+                        name.clone(),
+                        path,
+                        description,
+                        Some("command".into()),
+                        name,
+                    ),
                 );
             } else if path.is_dir() {
                 by_key.insert(
@@ -337,11 +344,12 @@ fn scan_platform_hooks(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, C
 
     if config_path.is_file() {
         let raw = fs::read_to_string(config_path.as_std_path()).map_err(CoreError::Io)?;
-        let doc: serde_json::Value = serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
-            template: config_path.as_str().to_owned(),
-            reason: e.to_string(),
-            hint: "hooks.json 解析失败".into(),
-        })?;
+        let doc: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|e| CoreError::TemplateRender {
+                template: config_path.as_str().to_owned(),
+                reason: e.to_string(),
+                hint: "hooks.json 解析失败".into(),
+            })?;
         if let Some(hooks) = doc.get("hooks").and_then(|v| v.as_object()) {
             for (lifecycle, entries) in hooks {
                 let Some(arr) = entries.as_array() else {
@@ -357,7 +365,8 @@ fn scan_platform_hooks(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, C
                         .get("prompt")
                         .and_then(|v| v.as_str())
                         .map(str::to_string);
-                    if entry_type == "prompt" || (entry.get("command").is_none() && prompt.is_some())
+                    if entry_type == "prompt"
+                        || (entry.get("command").is_none() && prompt.is_some())
                     {
                         let key = format!("prompt:{lifecycle}:{index}");
                         let title = prompt
@@ -447,7 +456,7 @@ fn scan_platform_skills(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, 
             .ok()
             .map(|c| parse_skill_description(&c))
             .unwrap_or_default();
-            out.push((name.clone(), entry_path, description, None, name));
+        out.push((name.clone(), entry_path, description, None, name));
     }
     Ok(out)
 }
@@ -645,25 +654,33 @@ pub fn find_source_path(
     source_scan: &ScanResult,
 ) -> Option<Utf8PathBuf> {
     match kind {
-        AssetKind::Skill => source_scan.skills.iter().find(|p| {
-            p.parent()
-                .and_then(|p| p.file_name())
-                .map(|n| n == name)
-                .unwrap_or(false)
-        }).cloned(),
+        AssetKind::Skill => source_scan
+            .skills
+            .iter()
+            .find(|p| {
+                p.parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n == name)
+                    .unwrap_or(false)
+            })
+            .cloned(),
         AssetKind::Rule => source_scan
             .rules
             .iter()
             .find(|p| p.file_stem().map(|n| n == name).unwrap_or(false))
             .cloned(),
-        AssetKind::Agent => source_scan.agents.iter().find(|p| {
-            let candidate = if p.is_dir() {
-                p.file_name().map(|s| s.to_string())
-            } else {
-                p.file_stem().map(|s| s.to_string())
-            };
-            candidate.as_deref() == Some(name)
-        }).cloned(),
+        AssetKind::Agent => source_scan
+            .agents
+            .iter()
+            .find(|p| {
+                let candidate = if p.is_dir() {
+                    p.file_name().map(|s| s.to_string())
+                } else {
+                    p.file_stem().map(|s| s.to_string())
+                };
+                candidate.as_deref() == Some(name)
+            })
+            .cloned(),
         AssetKind::Command => source_scan
             .commands
             .iter()
@@ -1286,11 +1303,7 @@ pub fn copy_asset_to_asset_root(
             let spec = crate::hook::load_spec(from_root, &script_filename)?;
             let from_deploy = crate::hook::deploy_base_for_asset_root(from_root);
             let bindings = if spec.bindings.is_empty() {
-                crate::hook::collect_bindings_for_script(
-                    from_root,
-                    &from_deploy,
-                    &script_filename,
-                )?
+                crate::hook::collect_bindings_for_script(from_root, &from_deploy, &script_filename)?
             } else {
                 spec.bindings
             };
@@ -1898,7 +1911,11 @@ mod tests {
         let project_root = Utf8Path::from_path(project.path()).unwrap();
         let global_asset = global_root.join(".ai-config");
         fs::create_dir_all(global_asset.join("hooks")).unwrap();
-        fs::write(global_asset.join("hooks.json"), r#"{"version":1,"hooks":{}}"#).unwrap();
+        fs::write(
+            global_asset.join("hooks.json"),
+            r#"{"version":1,"hooks":{}}"#,
+        )
+        .unwrap();
         fs::write(
             global_asset.join("hooks/speak-lifecycle.py"),
             "#!/usr/bin/env python3\n\"\"\"TTS\"\"\"\n",
@@ -1930,8 +1947,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(dest, project_asset.join("hooks/speak-lifecycle.py"));
-        let manifest =
-            fs::read_to_string(project_asset.join("hooks.json").as_std_path()).unwrap();
+        let manifest = fs::read_to_string(project_asset.join("hooks.json").as_std_path()).unwrap();
         assert!(manifest.contains("sessionStart"));
         assert!(manifest.contains("./hooks/speak-lifecycle.py sessionStart"));
     }
@@ -1964,8 +1980,7 @@ mod tests {
         assert_eq!(dest, project_root.join("hooks/speak-lifecycle.py"));
         assert!(dest.is_file());
         assert!(project_root.join("hooks.json").is_file());
-        let manifest =
-            fs::read_to_string(project_root.join("hooks.json").as_std_path()).unwrap();
+        let manifest = fs::read_to_string(project_root.join("hooks.json").as_std_path()).unwrap();
         assert!(manifest.contains("speak-lifecycle.py"));
     }
 

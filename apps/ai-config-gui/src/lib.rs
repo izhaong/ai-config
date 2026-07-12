@@ -242,7 +242,11 @@ async fn cmd_list(
         }
     }
     for item in &scan.hooks {
-        entries.push((AssetKind::Hook, item.script_filename.clone(), item.script_path.clone()));
+        entries.push((
+            AssetKind::Hook,
+            item.script_filename.clone(),
+            item.script_path.clone(),
+        ));
     }
 
     // 4. 对每条 × 4 平台算 dest + 状态
@@ -668,7 +672,7 @@ async fn cmd_hook_toggle_lifecycle(
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))?
     .map_err(|e| e.to_string())?;
-  let action = if enabled { "启用" } else { "关闭" };
+    let action = if enabled { "启用" } else { "关闭" };
     Ok(format!(
         "hook `{name_for_msg}` 已{action}生命周期 `{lifecycle_for_msg}`"
     ))

@@ -84,7 +84,9 @@ pub fn asset_dest_for_at_base(
         AssetKind::Mcp => return None,
         AssetKind::Hook => {
             return Some(crate::hook_adapter::platform_scripts_dir(
-                deploy_base, plat, name,
+                deploy_base,
+                plat,
+                name,
             ))
         }
         AssetKind::Agent => {
@@ -114,7 +116,9 @@ pub fn link_src_for_create(kind: AssetKind, src: &Utf8Path) -> camino::Utf8PathB
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| src.to_path_buf()),
         AssetKind::Agent => agent_link_src(src),
-        AssetKind::Rule | AssetKind::Command | AssetKind::Mcp | AssetKind::Hook => src.to_path_buf(),
+        AssetKind::Rule | AssetKind::Command | AssetKind::Mcp | AssetKind::Hook => {
+            src.to_path_buf()
+        }
     }
 }
 
@@ -265,11 +269,11 @@ fn compute_actions(
         for (name, src) in entries {
             let item_id = item_id_for(project.id, kind, &name);
             for plat in &platforms {
-                if !platform::supports_at_scope(*plat, kind, &deploy_base) {
+                if !platform::supports_at_scope(*plat, kind, deploy_base) {
                     continue;
                 }
                 if kind == AssetKind::Hook {
-                    let spec = match crate::hook::load_spec(&asset_root, &name) {
+                    let spec = match crate::hook::load_spec(asset_root, &name) {
                         Ok(s) => s,
                         Err(_) => continue,
                     };
@@ -286,7 +290,7 @@ fn compute_actions(
                     });
                     continue;
                 }
-                    match kind {
+                match kind {
                     AssetKind::Mcp => {
                         out.push(SyncAction::RenderMcp {
                             project_id: project.id,
@@ -294,7 +298,7 @@ fn compute_actions(
                         });
                     }
                     _ => {
-                        let dest = match dest_for(*plat, kind, &name, &src, &deploy_base) {
+                        let dest = match dest_for(*plat, kind, &name, &src, deploy_base) {
                             Some(d) => d,
                             None => continue,
                         };
@@ -342,7 +346,9 @@ pub fn compute_global(
                     item_id, platform, ..
                 } => (3, *item_id, *platform),
                 SyncAction::Unlink { item_id, platform } => (4, *item_id, *platform),
-                SyncAction::DeployHook { item_id, platform, .. } => (5, *item_id, *platform),
+                SyncAction::DeployHook {
+                    item_id, platform, ..
+                } => (5, *item_id, *platform),
             };
             if seen.insert(key) {
                 out.push(action);
