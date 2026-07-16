@@ -1056,16 +1056,32 @@ pub fn build_hermes_cross_domain_projection_plan(
     let mut actions = direct;
     if !members.is_empty() || !mcp_members.is_empty() {
         let precondition = path_fingerprint(&target.path)?;
-        let ownership_conflict = hermes_cross_domain_foreign_entry_reason(
-            &target,
-            &members,
-            &mcp_members,
-            context,
-            &mut warnings,
-        )?;
+        let retracting = matches!(
+            request.operation,
+            ProjectionOperation::Retract | ProjectionOperation::Uninstall
+        );
+        let ownership_conflict = if retracting {
+            hermes_cross_domain_retract_reason(
+                &target,
+                &members,
+                &mcp_members,
+                context,
+                &mut warnings,
+            )?
+        } else {
+            hermes_cross_domain_foreign_entry_reason(
+                &target,
+                &members,
+                &mcp_members,
+                context,
+                &mut warnings,
+            )?
+        };
         actions.push(ProjectionAction {
             kind: if ownership_conflict.is_some() {
                 ProjectionActionKind::ReportOnly
+            } else if retracting {
+                ProjectionActionKind::RemoveGeneratedEntries
             } else {
                 ProjectionActionKind::UpsertGeneratedBatch
             },
@@ -1079,6 +1095,8 @@ pub fn build_hermes_cross_domain_projection_plan(
             state: Some(
                 if ownership_conflict.is_some() {
                     "foreign"
+                } else if retracting {
+                    "managed_generated"
                 } else {
                     "missing"
                 }
@@ -1086,16 +1104,114 @@ pub fn build_hermes_cross_domain_projection_plan(
             ),
             reason_code: if ownership_conflict.is_some() {
                 "hermes_cross_domain_ownership_unproven".to_owned()
+            } else if retracting {
+                "hermes_cross_domain_retract".to_owned()
             } else {
                 "hermes_cross_domain_batch".to_owned()
             },
             reason: ownership_conflict.unwrap_or_else(|| {
-                "MCP, external skill directories and Hook bindings share one Hermes YAML transaction"
-                    .to_owned()
+                if retracting {
+                    "only unchanged ledger-proven Hermes MCP, external_dirs and Hook bindings may be retracted".to_owned()
+                } else {
+                    "MCP, external skill directories and Hook bindings share one Hermes YAML transaction".to_owned()
+                }
             }),
         });
     }
     finish_plan(request, actions, warnings)
+}
+
+/// Retraction is stricter than upsert: every desired cross-domain entry must still be present,
+/// marked where applicable, and covered by an unchanged ledger record before any YAML or link is
+/// removed. A missing ledger or any drift blocks the whole transaction.
+fn hermes_cross_domain_retract_reason(
+    target: &ProjectionTarget,
+    members: &[ProjectionMember],
+    mcp_members: &[McpProjectionMember],
+    context: &PlannerContext<'_>,
+    warnings: &mut Vec<PlanWarning>,
+) -> Result<Option<String>, CoreError> {
+    if !target.path.is_file() {
+        return Ok(Some(
+            "Hermes config.yaml is absent; unified ownership is not proven".to_owned(),
+        ));
+    }
+    let current = path_fingerprint(&target.path)?;
+    let Some(digest) = current.digest.as_deref() else {
+        return Ok(Some(
+            "Hermes config.yaml has no stable ownership digest".to_owned(),
+        ));
+    };
+    let document =
+        serde_yaml::from_str::<serde_yaml::Value>(&fs::read_to_string(target.path.as_std_path())?)
+            .map_err(|_| {
+                CoreError::InvalidPath("Hermes config.yaml cannot be parsed".to_owned())
+            })?;
+    let Some(root) = document.as_mapping() else {
+        return Ok(Some(
+            "Hermes config.yaml root is not a mapping; ownership is not proven".to_owned(),
+        ));
+    };
+    let key = |name: &str| serde_yaml::Value::String(name.to_owned());
+    let mut record_is_current = |id: &ProjectionId, entry_key: Option<&str>| {
+        ledger_record(context, id, warnings).is_some_and(|record| {
+            record.mode == ProjectionMode::GeneratedYaml
+                && record.target_path == target.path
+                && record.entry_key.as_deref() == entry_key
+                && record.target_fingerprint == digest
+        })
+    };
+    let servers = root
+        .get(key("mcp_servers"))
+        .and_then(serde_yaml::Value::as_mapping);
+    for member in mcp_members {
+        if !servers.is_some_and(|servers| servers.contains_key(key(&member.name)))
+            || !record_is_current(&member.id, Some(&member.entry_key))
+        {
+            return Ok(Some(
+                "Hermes MCP retraction requires an unchanged ledger-proven named server".to_owned(),
+            ));
+        }
+    }
+    let external_dirs = root
+        .get(key("skills"))
+        .and_then(serde_yaml::Value::as_mapping)
+        .and_then(|skills| skills.get(key("external_dirs")))
+        .and_then(serde_yaml::Value::as_sequence);
+    let hooks = root
+        .get(key("hooks"))
+        .and_then(serde_yaml::Value::as_mapping);
+    for member in members {
+        let present = match member.id.kind {
+            AssetKind::Skill => external_dirs.is_some_and(|dirs| {
+                dirs.iter()
+                    .any(|entry| entry.as_str() == Some(member.source.absolute_path.as_str()))
+            }),
+            AssetKind::Hook => hooks.is_some_and(|hooks| {
+                hooks.values().any(|entries| {
+                    entries.as_sequence().is_some_and(|entries| {
+                        entries.iter().any(|entry| {
+                            entry.as_mapping().is_some_and(|entry| {
+                                entry
+                                    .get(key("managedBy"))
+                                    .and_then(serde_yaml::Value::as_str)
+                                    == Some("ai-config")
+                                    && entry.get(key("hook")).and_then(serde_yaml::Value::as_str)
+                                        == Some(member.id.name.as_str())
+                            })
+                        })
+                    })
+                })
+            }),
+            _ => false,
+        };
+        if !present || !record_is_current(&member.id, member.entry_key.as_deref()) {
+            return Ok(Some(
+                "Hermes generated retraction requires unchanged ledger-proven entries".to_owned(),
+            ));
+        }
+    }
+    Ok(None)
 }
 
 /// The unified renderer may append a new named entry to a foreign YAML container, but may never

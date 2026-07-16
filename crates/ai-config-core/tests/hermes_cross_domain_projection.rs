@@ -48,6 +48,42 @@ impl ProjectionLedger for FailingLedger {
     }
 }
 
+struct FailingApplyLedger<'a> {
+    inner: &'a MemoryProjectionLedger,
+}
+
+impl ProjectionLedger for FailingApplyLedger<'_> {
+    fn get(
+        &self,
+        id: &ai_config_core::projection::model::ProjectionId,
+    ) -> Result<Option<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        self.inner.get(id)
+    }
+
+    fn get_many(
+        &self,
+        ids: &[ai_config_core::projection::model::ProjectionId],
+    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        self.inner.get_many(ids)
+    }
+
+    fn list_scope(
+        &self,
+        scope_key: &str,
+    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        self.inner.list_scope(scope_key)
+    }
+
+    fn apply_batch(
+        &self,
+        _mutations: &[ai_config_core::projection::model::LedgerMutation],
+    ) -> Result<(), CoreError> {
+        Err(CoreError::ProjectionLedger(
+            "forced ledger write failure".to_owned(),
+        ))
+    }
+}
+
 fn file_asset(root: &Utf8Path, kind: AssetKind, name: &str) -> EffectiveAsset {
     let source_path = root.join("source/hooks").join(name);
     fs::create_dir_all(source_path.parent().unwrap().as_std_path()).unwrap();
@@ -125,6 +161,40 @@ fn request(
         assets,
         platforms: vec![PlatformId::Hermes],
     }
+}
+
+fn install_managed_hermes_fixture(
+    root: &Utf8Path,
+) -> (ProjectionRequest, MemoryProjectionLedger, Utf8PathBuf) {
+    let request = request(
+        root,
+        DeploymentScope::User,
+        vec![
+            skill_asset(root, "demo"),
+            file_asset(root, AssetKind::Hook, "format.sh"),
+        ],
+    );
+    let config = request.deploy_base.join(".hermes/config.yaml");
+    fs::create_dir_all(config.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        config.as_std_path(),
+        "provider: foreign\nmodel: local\nskills:\n  external_dirs:\n    - /opt/foreign-skills\nhooks:\n  PostToolUse:\n    - command: /opt/foreign-hook.sh\nmcp_servers:\n  foreign:\n    command: foreign-mcp\n",
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let install = build_hermes_cross_domain_projection_plan(
+        &request,
+        &[mcp_definition(root)],
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    apply_projection_plan(
+        &install,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&install),
+    )
+    .unwrap();
+    (request, ledger, config)
 }
 
 #[test]
@@ -331,6 +401,187 @@ fn hermes_user_cross_domain_ledger_failure_restores_config_and_hook_link() {
     assert!(failure.is_err());
     assert_eq!(fs::read_to_string(config.as_std_path()).unwrap(), before);
     assert!(!request.deploy_base.join(".hermes/hooks/format.sh").exists());
+}
+
+#[test]
+fn hermes_user_cross_domain_retracts_only_ledger_proven_entries_and_hook_link() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let skill = skill_asset(root, "demo");
+    let hook = file_asset(root, AssetKind::Hook, "format.sh");
+    let mut request = request(
+        root,
+        DeploymentScope::User,
+        vec![skill.clone(), hook.clone()],
+    );
+    let config = request.deploy_base.join(".hermes/config.yaml");
+    fs::create_dir_all(config.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        config.as_std_path(),
+        "provider: foreign\nmodel: local\nskills:\n  external_dirs:\n    - /opt/foreign-skills\nhooks:\n  PostToolUse:\n    - command: /opt/foreign-hook.sh\nmcp_servers:\n  foreign:\n    command: foreign-mcp\n",
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let install = build_hermes_cross_domain_projection_plan(
+        &request,
+        &[mcp_definition(root)],
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    apply_projection_plan(
+        &install,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&install),
+    )
+    .unwrap();
+    request.operation = ProjectionOperation::Retract;
+
+    let retract = build_hermes_cross_domain_projection_plan(
+        &request,
+        &[mcp_definition(root)],
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    assert!(retract.actions.iter().any(|action| {
+        action.kind == ProjectionActionKind::RemoveGeneratedEntries
+            && action
+                .target
+                .as_ref()
+                .is_some_and(|target| target.path == config)
+    }));
+
+    apply_projection_plan(
+        &retract,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&retract),
+    )
+    .unwrap();
+    let rendered: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(config.as_std_path()).unwrap()).unwrap();
+    assert_eq!(rendered["provider"], "foreign");
+    assert_eq!(rendered["model"], "local");
+    assert_eq!(rendered["mcp_servers"]["foreign"]["command"], "foreign-mcp");
+    assert!(rendered["mcp_servers"].get("catalog").is_none());
+    assert_eq!(
+        rendered["skills"]["external_dirs"].as_sequence().unwrap(),
+        &vec![serde_yaml::Value::String("/opt/foreign-skills".to_owned())]
+    );
+    assert_eq!(
+        rendered["hooks"]["PostToolUse"]
+            .as_sequence()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(!request.deploy_base.join(".hermes/hooks/format.sh").exists());
+    assert_eq!(
+        ledger
+            .list_scope(&request.scope_key)
+            .unwrap()
+            .into_iter()
+            .filter(|record| record.id.kind == AssetKind::Hook || record.id.kind == AssetKind::Mcp)
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn hermes_user_cross_domain_retract_blocks_container_drift_and_missing_ledger_without_writes() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let (mut request, ledger, config) = install_managed_hermes_fixture(root);
+    fs::write(
+        config.as_std_path(),
+        format!(
+            "{}foreign_change: true\n",
+            fs::read_to_string(config.as_std_path()).unwrap()
+        ),
+    )
+    .unwrap();
+    let before_drift = fs::read_to_string(config.as_std_path()).unwrap();
+    request.operation = ProjectionOperation::Retract;
+    let drift_plan = build_hermes_cross_domain_projection_plan(
+        &request,
+        &[mcp_definition(root)],
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    assert!(drift_plan.actions.iter().any(|action| {
+        action.kind == ProjectionActionKind::ReportOnly
+            && action.state.as_deref() == Some("foreign")
+    }));
+    assert!(apply_projection_plan(
+        &drift_plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&drift_plan),
+    )
+    .is_err());
+    assert_eq!(
+        fs::read_to_string(config.as_std_path()).unwrap(),
+        before_drift
+    );
+    assert!(request.deploy_base.join(".hermes/hooks/format.sh").exists());
+}
+
+#[test]
+fn hermes_user_cross_domain_retract_blocks_missing_ledger_without_writes() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let (mut request, _managed_ledger, config) = install_managed_hermes_fixture(root);
+    let before = fs::read_to_string(config.as_std_path()).unwrap();
+    request.operation = ProjectionOperation::Retract;
+    let missing_ledger = MemoryProjectionLedger::default();
+    let plan = build_hermes_cross_domain_projection_plan(
+        &request,
+        &[mcp_definition(root)],
+        &PlannerContext::new(&missing_ledger),
+    )
+    .unwrap();
+    assert!(plan.actions.iter().any(|action| {
+        action.kind == ProjectionActionKind::ReportOnly
+            && action.state.as_deref() == Some("foreign")
+    }));
+    assert!(apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(
+            &missing_ledger,
+            request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&plan),
+    )
+    .is_err());
+    assert_eq!(fs::read_to_string(config.as_std_path()).unwrap(), before);
+    assert!(request.deploy_base.join(".hermes/hooks/format.sh").exists());
+}
+
+#[test]
+fn hermes_user_cross_domain_retract_ledger_failure_restores_yaml_and_hook_link() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let (mut request, ledger, config) = install_managed_hermes_fixture(root);
+    let before = fs::read_to_string(config.as_std_path()).unwrap();
+    request.operation = ProjectionOperation::Uninstall;
+    let failing = FailingApplyLedger { inner: &ledger };
+    let plan = build_hermes_cross_domain_projection_plan(
+        &request,
+        &[mcp_definition(root)],
+        &PlannerContext::new(&failing),
+    )
+    .unwrap();
+    assert!(plan
+        .actions
+        .iter()
+        .any(|action| action.kind == ProjectionActionKind::RemoveGeneratedEntries));
+
+    assert!(apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&failing, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    )
+    .is_err());
+    assert_eq!(fs::read_to_string(config.as_std_path()).unwrap(), before);
+    assert!(request.deploy_base.join(".hermes/hooks/format.sh").exists());
 }
 
 #[test]

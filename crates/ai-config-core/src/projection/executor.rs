@@ -530,6 +530,17 @@ pub fn apply_projection_plan(
                         }
                     })
                 }
+                Some(GeneratedContainerRenderer::HermesUnifiedYaml) => {
+                    apply_hermes_unified_yaml_retraction(action, context).map(|applied| {
+                        mutations.extend(applied.mutations);
+                        if let Some(undo_action) = applied.undo {
+                            undo.push((index, undo_action));
+                            report.set_status(index, ApplyActionStatus::Applied);
+                        } else {
+                            report.set_status(index, ApplyActionStatus::Skipped);
+                        }
+                    })
+                }
                 _ => apply_mcp_generated_retraction(action, context).map(|applied| {
                     mutations.extend(applied.mutations);
                     if let Some(undo_action) = applied.undo {
@@ -1088,6 +1099,80 @@ fn apply_hermes_unified_yaml_upsert(
     })
 }
 
+fn apply_hermes_unified_yaml_retraction(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<AppliedHermesUnifiedYaml, CoreError> {
+    if action.generated_renderer != Some(GeneratedContainerRenderer::HermesUnifiedYaml) {
+        return Err(CoreError::InvalidPath(
+            "Hermes unified removal has the wrong renderer".to_owned(),
+        ));
+    }
+    let target = action
+        .target
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("Hermes unified removal has no target".to_owned()))?;
+    let expected = action.precondition.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("Hermes unified removal has no target precondition".to_owned())
+    })?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected || actual.entry_type != super::model::FingerprintType::File {
+        return Err(CoreError::InvalidPath(
+            "Hermes unified removal requires the exact planned config.yaml file".to_owned(),
+        ));
+    }
+    let existing = fs::read_to_string(target.path.as_std_path())?;
+    let rendered =
+        render_hermes_unified_yaml_removal(&existing, &action.members, &action.mcp_members)?;
+    let parent = ensure_safe_target_parent(&target.path, &context.deploy_base)?;
+    let temporary = generated_temporary_path(&parent.path, &target.path)?;
+    if let Err(error) = write_private_generated_file(&temporary, rendered.as_bytes()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    let rendered_digest = path_fingerprint(&temporary)?
+        .digest
+        .ok_or_else(|| CoreError::InvalidPath("rendered Hermes config has no digest".to_owned()))?;
+    let mut mutations = action
+        .members
+        .iter()
+        .map(|member| LedgerMutation::Remove(member.id.clone()))
+        .collect::<Vec<_>>();
+    mutations.extend(
+        action
+            .mcp_members
+            .iter()
+            .map(|member| LedgerMutation::Remove(member.id.clone())),
+    );
+    let backup = allocate_backup_path(&context.backup_root, &target.path)?;
+    write_backup_manifest(&backup, &target.path, expected)?;
+    if let Err(error) = fs::rename(target.path.as_std_path(), backup.as_std_path()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+    if let Err(error) = set_private_file_permissions(&backup) {
+        let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(temporary.as_std_path(), target.path.as_std_path()) {
+        let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+    Ok(AppliedHermesUnifiedYaml {
+        mutations,
+        undo: Some(FileUndo::RestoreGenerated {
+            target: target.path.clone(),
+            rendered_digest,
+            backup: Some(backup),
+            created_parents: parent.created_parents,
+        }),
+        skipped_members: Vec::new(),
+    })
+}
+
 fn render_hermes_unified_yaml(
     existing: &str,
     members: &[super::planner::ProjectionMember],
@@ -1165,6 +1250,58 @@ fn render_hermes_unified_yaml(
         binding.insert(key("managedBy"), YamlValue::String("ai-config".to_owned()));
         binding.insert(key("hook"), YamlValue::String(member.id.name.clone()));
         lifecycle.push(YamlValue::Mapping(binding));
+    }
+    serde_yaml::to_string(&root).map_err(|error| CoreError::InvalidPath(error.to_string()))
+}
+
+fn render_hermes_unified_yaml_removal(
+    existing: &str,
+    members: &[super::planner::ProjectionMember],
+    mcp_members: &[McpProjectionMember],
+) -> Result<String, CoreError> {
+    let mut root = serde_yaml::from_str::<YamlValue>(existing)
+        .map_err(|_| CoreError::InvalidPath("Hermes config.yaml must be valid YAML".to_owned()))?;
+    let mapping = root.as_mapping_mut().ok_or_else(|| {
+        CoreError::InvalidPath("Hermes config.yaml root must be a mapping".to_owned())
+    })?;
+    let key = |name: &str| YamlValue::String(name.to_owned());
+    if let Some(servers) = mapping
+        .get_mut(key("mcp_servers"))
+        .and_then(YamlValue::as_mapping_mut)
+    {
+        for member in mcp_members {
+            servers.remove(key(&member.name));
+        }
+    }
+    if let Some(external_dirs) = mapping
+        .get_mut(key("skills"))
+        .and_then(YamlValue::as_mapping_mut)
+        .and_then(|skills| skills.get_mut(key("external_dirs")))
+        .and_then(YamlValue::as_sequence_mut)
+    {
+        for member in members
+            .iter()
+            .filter(|member| member.id.kind == crate::model::AssetKind::Skill)
+        {
+            external_dirs
+                .retain(|entry| entry.as_str() != Some(member.source.absolute_path.as_str()));
+        }
+    }
+    if let Some(hooks) = mapping
+        .get_mut(key("hooks"))
+        .and_then(YamlValue::as_mapping_mut)
+    {
+        for entries in hooks.values_mut() {
+            let Some(entries) = entries.as_sequence_mut() else {
+                continue;
+            };
+            for member in members
+                .iter()
+                .filter(|member| member.id.kind == crate::model::AssetKind::Hook)
+            {
+                entries.retain(|entry| !yaml_hook_is_managed(entry, &member.id.name));
+            }
+        }
     }
     serde_yaml::to_string(&root).map_err(|error| CoreError::InvalidPath(error.to_string()))
 }
