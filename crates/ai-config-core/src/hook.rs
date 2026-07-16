@@ -197,43 +197,6 @@ pub(crate) fn is_hook_script_file(name: &str) -> bool {
     )
 }
 
-/// 将 `hooks/` 下已存在但未写入 `hooks.json` 的脚本，按平台配置补登记。
-pub fn reconcile_orphan_hook_scripts(
-    asset_root: &Utf8Path,
-    deploy_base: &Utf8Path,
-) -> Result<usize, CoreError> {
-    let dir = hooks_dir(asset_root);
-    if !dir.is_dir() {
-        return Ok(0);
-    }
-    let manifest = manifest_path(asset_root);
-    let registered: std::collections::HashSet<String> = list_from_manifest(&manifest, asset_root)?
-        .into_iter()
-        .map(|i| i.script_filename)
-        .collect();
-    let mut updated = 0;
-    for entry in fs::read_dir(dir.as_std_path()).map_err(CoreError::Io)? {
-        let entry = entry.map_err(CoreError::Io)?;
-        let path = Utf8PathBuf::from_path_buf(entry.path()).unwrap_or_default();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().map(str::to_string) else {
-            continue;
-        };
-        if !is_hook_script_file(&name) || registered.contains(&name) {
-            continue;
-        }
-        let bindings = collect_bindings_for_script(asset_root, deploy_base, &name)?;
-        if bindings.is_empty() {
-            continue;
-        }
-        merge_bindings_into_manifest(asset_root, &name, &bindings)?;
-        updated += 1;
-    }
-    Ok(updated)
-}
-
 /// 脚本开头 `"""..."""` 描述（shebang 之后亦可）。
 pub fn parse_script_description(content: &str) -> String {
     let mut lines = content.lines();
@@ -831,37 +794,6 @@ mod tests {
             "beforeShellExecution"
         );
         assert_eq!(normalize_lifecycle("before_shell"), "beforeShellExecution");
-    }
-
-    #[test]
-    fn reconcile_orphan_registers_from_platform_hooks_json() {
-        let tmp = TempDir::new().unwrap();
-        let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let asset = repo.join(".ai-config");
-        fs::create_dir_all(asset.join("hooks")).unwrap();
-        fs::write(asset.join("hooks.json"), r#"{"version":1,"hooks":{}}"#).unwrap();
-        fs::write(
-            asset.join("hooks/speak-lifecycle.py"),
-            "#!/usr/bin/env python3\n\"\"\"TTS\"\"\"\n",
-        )
-        .unwrap();
-        fs::create_dir_all(repo.join(".cursor/hooks")).unwrap();
-        fs::write(
-            repo.join(".cursor/hooks.json"),
-            r#"{"version":1,"hooks":{"sessionStart":[{"command":".cursor/hooks/speak-lifecycle.py sessionStart"}]}}"#,
-        )
-        .unwrap();
-        fs::write(
-            repo.join(".cursor/hooks/speak-lifecycle.py"),
-            "#!/usr/bin/env python3\n",
-        )
-        .unwrap();
-
-        let n = reconcile_orphan_hook_scripts(&asset, &repo).unwrap();
-        assert_eq!(n, 1);
-        let raw = fs::read_to_string(asset.join("hooks.json").as_std_path()).unwrap();
-        assert!(raw.contains("sessionStart"));
-        assert!(raw.contains("./hooks/speak-lifecycle.py sessionStart"));
     }
 
     #[test]
