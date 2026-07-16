@@ -1,11 +1,14 @@
 //! `ai-config mcp ...` 子命令(PRD §4.2 / §5.1 / §10 A-7 / A-8 / A-15)。
 //!
 //! T007 安全边界：source-first CRUD 仅变更 canonical source，绝不直接写平台容器；
-//! `deploy` / `retract` 与迁移 apply 在 generated executor / secret store 就绪前 fail-closed。
+//! `deploy` / `retract` 在 generated executor 就绪前 fail-closed；legacy migration
+//! 仅允许显式 `--extract-secrets --apply` 的受控 source-first 路径。
 
+use std::collections::BTreeMap;
+use std::io::Write;
 use std::process::ExitCode;
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -13,6 +16,7 @@ use ai_config_core::error::{exit_code, CoreError};
 use ai_config_core::model::McpServer;
 use ai_config_core::paths;
 use ai_config_core::projection::mcp::source::{load_mcp_definition_at, load_mcp_definitions};
+use ai_config_core::secrets;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
@@ -375,7 +379,32 @@ fn refuse_legacy_write(mode: OutputMode, action: &str) -> ExitCode {
     ExitCode::from(exit_code::ARG_ERROR)
 }
 
-// ── migrate(legacy inputs → source-first plan; writes are deliberately disabled) ──
+// ── migrate(legacy container → source-first per-server sources) ────────────
+
+/// A prepared migration deliberately keeps literal values private. It is never Debug/Serialize.
+struct PreparedSecretMigration {
+    source_bytes: Vec<u8>,
+    backup_path: Utf8PathBuf,
+    canonical: Vec<PreparedCanonicalSource>,
+    secret_path: Utf8PathBuf,
+    merged_secrets: Vec<(String, String)>,
+    secret_store_changed: bool,
+    secret_keys_added: Vec<String>,
+    original_secret_bytes: Option<Vec<u8>>,
+}
+
+struct PreparedCanonicalSource {
+    name: String,
+    destination: Utf8PathBuf,
+    bytes: Vec<u8>,
+}
+
+#[derive(Serialize)]
+struct SecretMigrationReport {
+    legacy_backup: String,
+    written: Vec<String>,
+    secret_keys_added: Vec<String>,
+}
 
 fn run_migrate(
     mode: OutputMode,
@@ -386,23 +415,13 @@ fn run_migrate(
     apply: bool,
 ) -> ExitCode {
     let rel_source = source.unwrap_or("mcp/cursor.mcp.template.json");
-    let template_path = root.join(rel_source);
-    let legacy_servers = root.join("mcp/servers");
+    let template_path = match legacy_source_path(root, rel_source) {
+        Ok(path) => path,
+        Err(error) => return emit_migration_error(mode, error),
+    };
 
     if dry_run {
-        let count = if legacy_servers.is_dir() {
-            std::fs::read_dir(legacy_servers.as_std_path())
-                .map(|rd| {
-                    rd.flatten()
-                        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
-                        .count()
-                })
-                .unwrap_or(0)
-        } else if template_path.is_file() {
-            count_template_servers(&template_path).unwrap_or(0)
-        } else {
-            0
-        };
+        let count = count_template_servers(&template_path).unwrap_or(0);
         if mode.is_json() {
             emit_json(
                 mode,
@@ -420,18 +439,456 @@ fn run_migrate(
         return ExitCode::SUCCESS;
     }
 
-    let message = if extract_secrets && apply {
-        "MCP secret extraction apply 尚未接入受控 secret storage，拒绝写入 literal credential 或 source"
-    } else {
-        "legacy MCP migrate 只读：source-first apply 尚未就绪，拒绝写入或删除旧 MCP 资产"
-    };
+    if !(extract_secrets && apply) {
+        emit_error_envelope(
+            mode,
+            exit_code::ARG_ERROR,
+            "legacy MCP migrate 只读：仅 `--extract-secrets --apply` 可执行受控 source-first 迁移",
+            Some("使用 `ai-config mcp migrate --dry-run` 盘点；确认后同时传入 `--extract-secrets --apply`"),
+        );
+        return ExitCode::from(exit_code::ARG_ERROR);
+    }
+
+    match prepare_secret_migration(root, &template_path)
+        .and_then(|plan| apply_secret_migration(root, plan))
+    {
+        Ok(report) => {
+            if mode.is_json() {
+                emit_json(mode, &report);
+            } else {
+                println!(
+                    "已迁移 {} 个 server；新增 {} 个 secret key；legacy backup: {}",
+                    report.written.len(),
+                    report.secret_keys_added.len(),
+                    report.legacy_backup
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => emit_migration_error(mode, error),
+    }
+}
+
+fn emit_migration_error(mode: OutputMode, error: anyhow::Error) -> ExitCode {
     emit_error_envelope(
         mode,
         exit_code::ARG_ERROR,
-        message,
-        Some("使用 `ai-config mcp migrate --dry-run` 盘点；待生成 source-first 计划后再执行单项 apply"),
+        &error.to_string(),
+        Some("不会回显 literal credential；修复后重新执行迁移"),
     );
     ExitCode::from(exit_code::ARG_ERROR)
+}
+
+fn legacy_source_path(root: &Utf8Path, source: &str) -> anyhow::Result<Utf8PathBuf> {
+    let relative = Utf8Path::new(source);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, Utf8Component::ParentDir))
+    {
+        anyhow::bail!("legacy MCP source must be a path below the selected root");
+    }
+    Ok(root.join(relative))
+}
+
+fn prepare_secret_migration(
+    root: &Utf8Path,
+    source_path: &Utf8Path,
+) -> anyhow::Result<PreparedSecretMigration> {
+    reject_symlink(source_path, "legacy MCP source")?;
+    if !source_path.is_file() {
+        anyhow::bail!("legacy MCP source does not exist or is not a regular file");
+    }
+    let source_bytes = std::fs::read(source_path.as_std_path())?;
+    let source: Value = serde_json::from_slice(&source_bytes)
+        .map_err(|_| anyhow::anyhow!("legacy MCP source is not valid JSON"))?;
+    let servers = source
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("legacy MCP source must contain an mcpServers object"))?;
+
+    preflight_canonical_parent(root)?;
+    let secret_path = secrets::default_path();
+    reject_symlink(&secret_path, "secret store")?;
+    let existing_secrets = secrets::load_from(&secret_path)?;
+    let original_secret_bytes = match std::fs::read(secret_path.as_std_path()) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    let existing_by_key = unique_existing_secrets(&existing_secrets)?;
+
+    let mut proposed = BTreeMap::new();
+    let mut canonical = Vec::new();
+    for (name, entry) in servers {
+        let destination = canonical_server_path(root, name)?;
+        if destination.exists() {
+            anyhow::bail!("canonical MCP source already exists for server `{name}`");
+        }
+        let entry = entry
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("legacy MCP server `{name}` must be a JSON object"))?;
+        let (transport, mut config) = legacy_entry_to_canonical_config(name, entry)?;
+        extract_legacy_literal_secrets(name, &mut config, &mut proposed)?;
+        validate_canonical_config(name, &config)?;
+        let payload = serde_json::json!({
+            "name": name,
+            "transport": transport,
+            "enabled": true,
+            "config": config,
+        });
+        canonical.push(PreparedCanonicalSource {
+            name: name.clone(),
+            destination,
+            bytes: serde_json::to_vec_pretty(&payload)?,
+        });
+    }
+
+    let mut merged_secrets = existing_secrets;
+    let mut secret_keys_added = Vec::new();
+    for (key, value) in proposed {
+        if let Some(existing) = existing_by_key.get(&key) {
+            if existing != &value {
+                anyhow::bail!("secret key collision for `{key}` with a different existing value");
+            }
+            continue;
+        }
+        merged_secrets.push((key.clone(), value));
+        secret_keys_added.push(key);
+    }
+
+    let backup_path = Utf8PathBuf::from(format!("{}.ai-config-migrate-backup", source_path));
+    if backup_path.exists() {
+        anyhow::bail!("legacy MCP backup already exists; inspect it before retrying migration");
+    }
+    reject_symlink(&backup_path, "legacy MCP backup")?;
+
+    Ok(PreparedSecretMigration {
+        source_bytes,
+        backup_path,
+        canonical,
+        secret_path,
+        merged_secrets,
+        secret_store_changed: !secret_keys_added.is_empty(),
+        secret_keys_added,
+        original_secret_bytes,
+    })
+}
+
+fn unique_existing_secrets(
+    existing: &[(String, String)],
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut by_key = BTreeMap::new();
+    for (key, value) in existing {
+        if let Some(previous) = by_key.insert(key.clone(), value.clone()) {
+            if previous != *value {
+                anyhow::bail!("secret store contains conflicting duplicate key `{key}`");
+            }
+        }
+    }
+    Ok(by_key)
+}
+
+fn legacy_entry_to_canonical_config(
+    name: &str,
+    entry: &serde_json::Map<String, Value>,
+) -> anyhow::Result<(&'static str, serde_json::Map<String, Value>)> {
+    let transport = match entry.get("type").and_then(Value::as_str) {
+        Some("stdio") => "stdio",
+        Some("http") => "http",
+        Some("sse") => "sse",
+        Some(_) => anyhow::bail!("legacy MCP server `{name}` has an unsupported transport type"),
+        None if entry.contains_key("url") => "http",
+        None => "stdio",
+    };
+    let mut config = entry.clone();
+    config.remove("type");
+    Ok((transport, config))
+}
+
+fn extract_legacy_literal_secrets(
+    server: &str,
+    config: &mut serde_json::Map<String, Value>,
+    proposed: &mut BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    extract_literal_map(server, config, "env", proposed)?;
+    extract_literal_map(server, config, "headers", proposed)
+}
+
+fn extract_literal_map(
+    server: &str,
+    config: &mut serde_json::Map<String, Value>,
+    field: &str,
+    proposed: &mut BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    let Some(value) = config.get_mut(field) else {
+        return Ok(());
+    };
+    let entries = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("legacy MCP server `{server}` has a non-object {field}"))?;
+    for (field_key, value) in entries {
+        let literal = value.as_str().ok_or_else(|| {
+            anyhow::anyhow!("legacy MCP server `{server}` has a non-string {field} value")
+        })?;
+        if placeholder_key(literal).is_some() {
+            continue;
+        }
+        if literal.contains("${") {
+            anyhow::bail!(
+                "legacy MCP server `{server}` has an invalid secret placeholder in {field}"
+            );
+        }
+        let secret_key = if field == "env" {
+            if !is_valid_secret_key(field_key) {
+                anyhow::bail!("legacy MCP server `{server}` has an env key that cannot become a safe secret reference");
+            }
+            field_key.clone()
+        } else {
+            derived_header_secret_key(server, field_key)
+        };
+        record_proposed_secret(proposed, &secret_key, literal)?;
+        *value = Value::String(format!("${{{secret_key}}}"));
+    }
+    Ok(())
+}
+
+fn derived_header_secret_key(server: &str, header: &str) -> String {
+    format!(
+        "MCP_{}_HEADER_{}",
+        secret_key_segment(server),
+        secret_key_segment(header)
+    )
+}
+
+fn secret_key_segment(raw: &str) -> String {
+    let mut out = String::new();
+    let mut previous_was_underscore = false;
+    for byte in raw.bytes() {
+        let next = if byte.is_ascii_alphanumeric() {
+            byte.to_ascii_uppercase() as char
+        } else {
+            '_'
+        };
+        if next == '_' && previous_was_underscore {
+            continue;
+        }
+        previous_was_underscore = next == '_';
+        out.push(next);
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "UNNAMED".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn record_proposed_secret(
+    proposed: &mut BTreeMap<String, String>,
+    key: &str,
+    value: &str,
+) -> anyhow::Result<()> {
+    if let Some(previous) = proposed.get(key) {
+        if previous != value {
+            anyhow::bail!("legacy MCP source maps multiple different values to secret key `{key}`");
+        }
+        return Ok(());
+    }
+    proposed.insert(key.to_owned(), value.to_owned());
+    Ok(())
+}
+
+fn validate_canonical_config(
+    server: &str,
+    config: &serde_json::Map<String, Value>,
+) -> anyhow::Result<()> {
+    if config
+        .get("url")
+        .and_then(Value::as_str)
+        .is_some_and(url_has_userinfo)
+    {
+        anyhow::bail!("legacy MCP server `{server}` URL contains userinfo credentials");
+    }
+    for (field, value) in config {
+        if field != "env" && field != "headers" && contains_placeholder(value) {
+            anyhow::bail!(
+                "legacy MCP server `{server}` uses a secret placeholder outside env/header"
+            );
+        }
+    }
+    if let Some(args) = config.get("args").and_then(Value::as_array) {
+        reject_credential_arguments(server, args)?;
+    }
+    Ok(())
+}
+
+fn url_has_userinfo(url: &str) -> bool {
+    url.split_once("://")
+        .and_then(|(_, remainder)| remainder.split('/').next())
+        .is_some_and(|authority| authority.contains('@'))
+}
+
+fn contains_placeholder(value: &Value) -> bool {
+    match value {
+        Value::String(value) => value.contains("${"),
+        Value::Array(values) => values.iter().any(contains_placeholder),
+        Value::Object(values) => values.values().any(contains_placeholder),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
+}
+
+fn reject_credential_arguments(server: &str, args: &[Value]) -> anyhow::Result<()> {
+    for (index, argument) in args.iter().enumerate() {
+        let Some(argument) = argument.as_str() else {
+            continue;
+        };
+        let normalized = argument.to_ascii_lowercase();
+        let looks_like_credential_flag = [
+            "token",
+            "password",
+            "secret",
+            "api-key",
+            "apikey",
+            "credential",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle));
+        let has_inline_value = normalized
+            .split_once('=')
+            .is_some_and(|(_, value)| !value.is_empty());
+        let has_following_value = args
+            .get(index + 1)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.starts_with('-'));
+        if looks_like_credential_flag && (has_inline_value || has_following_value) {
+            anyhow::bail!("legacy MCP server `{server}` has a credential-like command argument");
+        }
+    }
+    Ok(())
+}
+
+fn placeholder_key(value: &str) -> Option<&str> {
+    let key = value.strip_prefix("${")?.strip_suffix('}')?;
+    is_valid_secret_key(key).then_some(key)
+}
+
+fn is_valid_secret_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.bytes().enumerate().all(|(index, byte)| {
+            byte == b'_' || byte.is_ascii_uppercase() || (index != 0 && byte.is_ascii_digit())
+        })
+}
+
+fn preflight_canonical_parent(root: &Utf8Path) -> anyhow::Result<()> {
+    for path in [root.join("mcp"), root.join("mcp/servers")] {
+        match std::fs::symlink_metadata(path.as_std_path()) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                anyhow::bail!("canonical MCP directory must not be a symlink")
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                anyhow::bail!("canonical MCP path exists but is not a directory")
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn apply_secret_migration(
+    root: &Utf8Path,
+    plan: PreparedSecretMigration,
+) -> anyhow::Result<SecretMigrationReport> {
+    write_private_new_file(&plan.backup_path, &plan.source_bytes)?;
+    let mut written = Vec::new();
+    let attempt = (|| -> anyhow::Result<()> {
+        ensure_canonical_parent(root)?;
+        for source in &plan.canonical {
+            write_new_file(&source.destination, &source.bytes)?;
+            written.push(source.destination.clone());
+        }
+        if plan.secret_store_changed {
+            secrets::save_to(&plan.merged_secrets, &plan.secret_path)?;
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = attempt {
+        for path in written.iter().rev() {
+            let _ = std::fs::remove_file(path.as_std_path());
+        }
+        if plan.secret_store_changed {
+            let _ = restore_secret_store(&plan.secret_path, plan.original_secret_bytes.as_deref());
+        }
+        let _ = std::fs::remove_file(plan.backup_path.as_std_path());
+        return Err(error);
+    }
+
+    let names = plan
+        .canonical
+        .into_iter()
+        .map(|source| source.name)
+        .collect();
+    Ok(SecretMigrationReport {
+        legacy_backup: plan.backup_path.to_string(),
+        written: names,
+        secret_keys_added: plan.secret_keys_added,
+    })
+}
+
+fn write_private_new_file(path: &Utf8Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let temp = temporary_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp.as_std_path())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    match std::fs::hard_link(temp.as_std_path(), path.as_std_path()) {
+        Ok(()) => {
+            std::fs::remove_file(temp.as_std_path())?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(temp.as_std_path());
+            Err(error.into())
+        }
+    }
+}
+
+fn restore_secret_store(path: &Utf8Path, original: Option<&[u8]>) -> anyhow::Result<()> {
+    match original {
+        Some(bytes) => {
+            let temp = temporary_path(path);
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(temp.as_std_path())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            }
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(temp.as_std_path(), path.as_std_path())?;
+        }
+        None => match std::fs::remove_file(path.as_std_path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        },
+    }
+    Ok(())
 }
 
 fn count_template_servers(path: &Utf8Path) -> Result<usize, String> {

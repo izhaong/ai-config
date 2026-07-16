@@ -205,13 +205,243 @@ fn mcp_add_refuses_literal_credentials_without_creating_a_source() {
 }
 
 #[test]
-fn mcp_migrate_extract_secrets_apply_is_explicitly_fail_closed_until_secret_store_is_wired() {
+fn mcp_migrate_extract_secrets_apply_backs_up_legacy_source_and_writes_only_references() {
     let (home, root) = setup();
-    cmd(home.path(), root.path())
-        .args(["mcp", "migrate", "--extract-secrets", "--apply"])
+    let legacy = root.path().join("legacy.json");
+    let secret_dir = root.path().join("secret-store");
+    let secret = "literal-env-token-must-not-reach-output";
+    let header = "Bearer literal-header-token-must-not-reach-output";
+    fs::write(
+        &legacy,
+        format!(
+            r#"{{
+  "mcpServers": {{
+    "migrate-catalog": {{
+      "command": "catalog-mcp",
+      "env": {{ "CATALOG_TOKEN": "{secret}" }},
+      "headers": {{ "Authorization": "{header}" }}
+    }}
+  }}
+}}"#
+        ),
+    )
+    .expect("write legacy source");
+    let legacy_before = fs::read(&legacy).expect("read legacy source before migration");
+
+    let assert = cmd(home.path(), root.path())
+        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .args([
+            "--json",
+            "mcp",
+            "migrate",
+            "legacy.json",
+            "--extract-secrets",
+            "--apply",
+        ])
         .assert()
-        .failure()
-        .stderr(predicates::str::contains("secret extraction"));
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8 stdout");
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
+    assert!(
+        !stdout.contains(secret) && !stdout.contains(header) && !stderr.contains(secret),
+        "migration output must never expose literal credentials"
+    );
+
+    assert_eq!(
+        fs::read(&legacy).expect("read legacy source after migration"),
+        legacy_before,
+        "migration must keep the original legacy source"
+    );
+    assert_eq!(
+        fs::read(root.path().join("legacy.json.ai-config-migrate-backup"))
+            .expect("read legacy backup"),
+        legacy_before,
+        "migration must make an immutable backup before introducing canonical source"
+    );
+
+    let canonical: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.path().join("mcp/servers/migrate-catalog.json"))
+            .expect("read canonical source"),
+    )
+    .expect("canonical source JSON");
+    assert_eq!(
+        canonical["config"]["env"]["CATALOG_TOKEN"],
+        "${CATALOG_TOKEN}"
+    );
+    assert_eq!(
+        canonical["config"]["headers"]["Authorization"],
+        "${MCP_MIGRATE_CATALOG_HEADER_AUTHORIZATION}"
+    );
+
+    let secret_path = secret_dir.join("secrets.env");
+    let pairs = ai_config_core::secrets::load_from(
+        camino::Utf8Path::from_path(&secret_path).expect("utf8 secret path"),
+    )
+    .expect("read generated secret store");
+    assert_eq!(
+        pairs,
+        vec![
+            ("CATALOG_TOKEN".to_owned(), secret.to_owned()),
+            (
+                "MCP_MIGRATE_CATALOG_HEADER_AUTHORIZATION".to_owned(),
+                header.to_owned(),
+            ),
+        ]
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&secret_path)
+                .expect("stat secret store")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600,
+            "secret store must be strict 0600"
+        );
+    }
+}
+
+#[test]
+fn mcp_migrate_extract_secrets_apply_aborts_on_existing_different_secret_without_mutation() {
+    let (home, root) = setup();
+    let legacy = root.path().join("legacy.json");
+    let secret_dir = root.path().join("secret-store");
+    let secret_path = secret_dir.join("secrets.env");
+    fs::write(
+        &legacy,
+        r#"{"mcpServers":{"collision-server":{"command":"catalog-mcp","env":{"CATALOG_TOKEN":"new-secret-value"}}}}"#,
+    )
+    .expect("write legacy source");
+    ai_config_core::secrets::save_to(
+        &[("CATALOG_TOKEN".to_owned(), "old-secret-value".to_owned())],
+        camino::Utf8Path::from_path(&secret_path).expect("utf8 secret path"),
+    )
+    .expect("seed strict secret store");
+    let secret_before = fs::read(&secret_path).expect("read secret store before migration");
+
+    let assert = cmd(home.path(), root.path())
+        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .args([
+            "mcp",
+            "migrate",
+            "legacy.json",
+            "--extract-secrets",
+            "--apply",
+        ])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
+    assert!(
+        !stderr.contains("new-secret-value")
+            && !stderr.contains("old-secret-value")
+            && !String::from_utf8(assert.get_output().stdout.clone())
+                .expect("utf8 stdout")
+                .contains("new-secret-value"),
+        "collision errors must not echo secret values"
+    );
+    assert_eq!(
+        fs::read(&secret_path).expect("read secret store after migration"),
+        secret_before
+    );
+    assert!(
+        !root
+            .path()
+            .join("mcp/servers/collision-server.json")
+            .exists(),
+        "secret collision must prevent any canonical source write"
+    );
+    assert!(
+        !root
+            .path()
+            .join("legacy.json.ai-config-migrate-backup")
+            .exists(),
+        "validation failure must not create a misleading backup"
+    );
+}
+
+#[test]
+fn mcp_migrate_extract_secrets_apply_rejects_url_userinfo_before_any_write() {
+    let (home, root) = setup();
+    let legacy = root.path().join("legacy.json");
+    let secret_dir = root.path().join("secret-store");
+    let url_password = "url-password-must-not-leak";
+    fs::write(
+        &legacy,
+        format!(
+            r#"{{"mcpServers":{{"remote":{{"type":"http","url":"https://user:{url_password}@example.test/mcp"}}}}}}"#
+        ),
+    )
+    .expect("write userinfo source");
+
+    let assert = cmd(home.path(), root.path())
+        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .args([
+            "mcp",
+            "migrate",
+            "legacy.json",
+            "--extract-secrets",
+            "--apply",
+        ])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8 stdout");
+    assert!(
+        !stderr.contains(url_password) && !stdout.contains(url_password),
+        "URL credentials must not appear in errors"
+    );
+    assert!(
+        !root.path().join("mcp/servers/remote.json").exists(),
+        "URL userinfo must prevent canonical source write"
+    );
+    assert!(
+        !secret_dir.join("secrets.env").exists(),
+        "URL userinfo must prevent secret store write"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn mcp_migrate_extract_secrets_apply_refuses_a_symlinked_secret_store() {
+    use std::os::unix::fs::symlink;
+
+    let (home, root) = setup();
+    let legacy = root.path().join("legacy.json");
+    let secret_dir = root.path().join("secret-store");
+    let outside = root.path().join("outside-secrets.env");
+    fs::write(
+        &legacy,
+        r#"{"mcpServers":{"new-catalog":{"command":"catalog-mcp","env":{"TOKEN":"literal-must-stay-outside"}}}}"#,
+    )
+    .expect("write legacy source");
+    fs::write(&outside, "OUTSIDE=must-not-be-read\n").expect("write outside secrets");
+    fs::create_dir_all(&secret_dir).expect("create secret directory");
+    symlink(&outside, secret_dir.join("secrets.env")).expect("link secret store");
+
+    let assert = cmd(home.path(), root.path())
+        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .args([
+            "mcp",
+            "migrate",
+            "legacy.json",
+            "--extract-secrets",
+            "--apply",
+        ])
+        .assert()
+        .failure();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
+    assert!(stderr.contains("secret store must not be a symlink"));
+    assert!(!stderr.contains("must-not-be-read"));
+    assert_eq!(
+        fs::read_to_string(&outside).expect("read outside secret store"),
+        "OUTSIDE=must-not-be-read\n"
+    );
+    assert!(
+        !root.path().join("mcp/servers/new-catalog.json").exists(),
+        "a symlinked secret store must prevent canonical source creation"
+    );
 }
 
 #[cfg(unix)]
