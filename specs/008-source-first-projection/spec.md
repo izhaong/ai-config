@@ -123,6 +123,8 @@
 
 **官方契约复核日期**：2026-07-16。
 
+**Workspace scope 归一化**：`workspace` 是独立 deploy scope，而非写入用户 HOME 的别名。对表中有稳定 project target 的 Cursor、Codex、Claude 能力，workspace 使用 workspace root 代替 `<repo>`；Hermes 的 workspace skill、MCP 与 Hook 仍为 `unsupported`，不得借此改写全局 `config.yaml`。每个 capability test 必须断言目标仍位于该 workspace root 内。
+
 **上游依据**：
 
 - Cursor：[Skills](https://cursor.com/docs/skills)、[Rules](https://cursor.com/docs/rules)、[Subagents](https://cursor.com/docs/subagents)、[MCP](https://cursor.com/docs/mcp)、[Hooks](https://cursor.com/docs/hooks)、[Commands](https://cursor.com/changelog/1-6)。

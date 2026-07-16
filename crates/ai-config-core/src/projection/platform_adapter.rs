@@ -106,7 +106,7 @@ pub fn capability_for(
                 reason: "Cursor user rules have no stable file target".to_owned(),
             }
         }
-        (PlatformId::Cursor, AssetKind::Rule) if context.scope == DeploymentScope::Project => {
+        (PlatformId::Cursor, AssetKind::Rule) if context.scope != DeploymentScope::User => {
             PlatformCapability::DirectLink {
                 target: ProjectionTarget {
                     path: context
@@ -165,7 +165,7 @@ pub fn capability_for(
                 surface: ProjectionSurface::Platform(PlatformId::Claude),
             }
         }
-        (PlatformId::Claude, AssetKind::Mcp) if context.scope == DeploymentScope::Project => {
+        (PlatformId::Claude, AssetKind::Mcp) if context.scope != DeploymentScope::User => {
             PlatformCapability::Generated {
                 target: ProjectionTarget {
                     path: context.deploy_base.join(".mcp.json"),
@@ -1086,6 +1086,45 @@ mod tests {
             capability_for(PlatformId::Claude, AssetKind::Command, "review", &claude),
             direct("/repo/.claude/commands/review.md", PlatformId::Claude),
         );
+    }
+
+    #[test]
+    fn workspace_scope_uses_workspace_root_without_falling_back_to_home() {
+        let context = TargetContext {
+            scope: DeploymentScope::Workspace,
+            deploy_base: Utf8PathBuf::from("/workspace"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Rule, "review", &context),
+            PlatformCapability::DirectLink {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/workspace/.cursor/rules/review.mdc"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::DirectLink,
+                surface: ProjectionSurface::SharedTarget {
+                    key: "cursor_hermes_rules".to_owned(),
+                },
+            }
+        );
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Mcp, "catalog", &context),
+            generated(
+                "/workspace/.mcp.json",
+                "mcpServers.catalog",
+                ProjectionMode::GeneratedJson,
+                PlatformId::Claude,
+            ),
+        );
+        assert!(matches!(
+            capability_for(PlatformId::Hermes, AssetKind::Mcp, "catalog", &context),
+            PlatformCapability::Unsupported { .. }
+        ));
+        assert!(matches!(
+            hook_capability_for(PlatformId::Hermes, "format.sh", &context),
+            HookCapability::Unsupported { .. }
+        ));
     }
 
     fn direct(path: &str, platform: PlatformId) -> PlatformCapability {

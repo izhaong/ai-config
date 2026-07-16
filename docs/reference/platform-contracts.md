@@ -9,6 +9,7 @@
 - `direct_link` 只用于一项专用路径；聚合配置一律以具名 entry `generated`，保留外部字段。
 - `unsupported` 是安全结果，不允许 fallback 到用户全局配置、虚构目录或历史路径。
 - 真实 HOME 仅在全部本地验证后执行只读 inventory；写入只能是用户再次确认的一项无 secret、无 conflict Skill canary。
+- workspace 是独立 deploy root：有 project target 的 Cursor、Codex、Claude 使用 `<workspace>` 替换 `<repo>`；Hermes workspace skill/MCP/Hook 均 `unsupported`，绝不回退到用户全局配置。
 
 ## Skills
 
