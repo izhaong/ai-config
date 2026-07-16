@@ -810,23 +810,23 @@ source-first `ProjectionPlan` 降级后交给硬拷贝 executor；T009 在 T007/
 
 **Produces:** `load_mcp_definitions`、`GeneratedConfigAdapter` implementations、legacy monolith migration plan。
 
-**执行状态（2026-07-17，防偏航）**：逐 server source 校验、四个纯 renderer 与单条语义
-fingerprint 已有局部实现，但它们尚未接入 planner/executor 的 apply transaction；因此它们不能
-作为 T007 完成或 public lifecycle 切换的依据。generated action 仍必须在 executor 内 fail-closed，
-直到同一 target 的一次 parse/backup-swap、逐条 ledger ownership、secret 缺失的单项 skipped
-报告和完整 rollback 都有 RED→GREEN 证据。legacy `mcp migrate` 已固定为只读拒写；其余 legacy
-MCP 写入口在 source-first CRUD/内部 plan apply 接通前必须逐一 fail-closed，不能借旧 `mcp.json`
-或整文件 deploy/retract 回填功能空档。
+**执行状态（2026-07-17，防偏航）**：T007 已通过 source-first 的内部 MCP plan/apply
+入口接通；四平台 renderer 以单条语义 fingerprint 证明 ownership，并以一次
+parse/backup-swap 写入同一 target。缺失 secret 只产生该 server 的 `skipped` 明细，错误不含
+value；migration 仅在 `--extract-secrets --apply` 下写入 0600 store。CLI 的 `deploy/retract`
+不切换 `install/sync` 公共生命周期：没有持久 ledger 的独立进程 retract 必须报告
+`generated_ownership_unproven` 并零写，不能从容器内容猜测 ownership。持久 ledger 与统一
+public lifecycle 切换仍留给 T009。
 
-- [ ] **T007.1 Write failing source/security tests**：per-server parse、overlay whole-entry override、disabled/targets filtering、placeholder validation、literal value redacted detection、0600 enforcement、plan/Debug/Serialize 无 sentinel；缺失 secret 只阻塞引用该 key 的 server，错误仅含 key name。
-- [ ] **T007.2 Write failing renderer/batch tests**：每个平台同一 target 内两个托管 server + 一个 foreign server + unknown top-level fields 只产生一个 batch/一次替换；同一规范化 path 不允许第二 renderer；Cursor foreign/top-level 保留；Codex comments/unknown TOML 保留；Claude user projects/settings 保留、project `.mcp.json` scoped；Hermes user provider/model/comments 保留且 project MCP Unsupported/global config 零变化；remove only owned unchanged server；drift blocks remove。
-- [ ] **T007.3 Verify RED**：`cargo test -p ai-config-core --test mcp_projection`。
-- [ ] **T007.4 Implement canonical source**：每个 JSON 转为现有 `McpServer` domain model；`env` 与 HTTP header value 必须是 `${VAR}` 引用，command/args/URL 等非 secret 字段可保留普通字面量；literal env/header、URL userinfo 和疑似 credential args 返回 redacted migration issue。
-- [ ] **T007.5 Implement lossless container renderers**：JSON object merge、`toml_edit`、`yaml-edit`；planner 按规范化 target path 聚合 intents并绑定唯一 container renderer，adapter 每个目标文件只 parse/render 一次；semantic validate 后一次 backup-swap，保留 unknown/foreign；中间 bytes 只在 executor 内存，最终 bytes 只在目标和 0600 backup。
-- [ ] **T007.6 Implement explicit secret extraction**：`mcp migrate --extract-secrets --apply` 按 spec 的 key 规则写入 secrets；existing differing value/key collision/URL credential 均 conflict；旧 `mcp.json` 只备份不删除。
-- [ ] **T007.7 Route MCP domain CLI without lifecycle cutover**：list/show/add/remove/enable/disable 操作 per-server files；deploy/retract 先接入 core plan 的内部/测试入口但不切换 install/sync public lifecycle，保留 legacy read-only import 一个发布周期；统一公开切换留到 T009。
-- [ ] **T007.8 Verify**：`cargo test -p ai-config-core --test mcp_projection`、`cargo test -p ai-config-cli --test mcp_migrate --test deploy_retract`。
-- [ ] **T007.9 Commit checkpoint**：`git commit -m "feat(mcp): 增加逐服务源与四平台安全渲染"`。
+- [x] **T007.1 Write failing source/security tests**：per-server parse、overlay whole-entry override、disabled/targets filtering、placeholder validation、literal value redacted detection、0600 enforcement、plan/Debug/Serialize 无 sentinel；缺失 secret 只阻塞引用该 key 的 server，错误仅含 key name。
+- [x] **T007.2 Write failing renderer/batch tests**：每个平台同一 target 内两个托管 server + 一个 foreign server + unknown top-level fields 只产生一个 batch/一次替换；同一规范化 path 不允许第二 renderer；Cursor foreign/top-level 保留；Codex comments/unknown TOML 保留；Claude user projects/settings 保留、project `.mcp.json` scoped；Hermes user provider/model/comments 保留且 project MCP Unsupported/global config 零变化；remove only owned unchanged server；drift blocks remove。
+- [x] **T007.3 Verify RED**：`cargo test -p ai-config-core --test mcp_projection`。
+- [x] **T007.4 Implement canonical source**：每个 JSON 转为现有 `McpServer` domain model；`env` 与 HTTP header value 必须是 `${VAR}` 引用，command/args/URL 等非 secret 字段可保留普通字面量；literal env/header、URL userinfo 和疑似 credential args 返回 redacted migration issue。
+- [x] **T007.5 Implement lossless container renderers**：JSON object merge、`toml_edit`、`yaml-edit`；planner 按规范化 target path 聚合 intents并绑定唯一 container renderer，adapter 每个目标文件只 parse/render 一次；semantic validate 后一次 backup-swap，保留 unknown/foreign；中间 bytes 只在 executor 内存，最终 bytes 只在目标和 0600 backup。
+- [x] **T007.6 Implement explicit secret extraction**：`mcp migrate --extract-secrets --apply` 按 spec 的 key 规则写入 secrets；existing differing value/key collision/URL credential 均 conflict；旧 `mcp.json` 只备份不删除。
+- [x] **T007.7 Route MCP domain CLI without lifecycle cutover**：list/show/add/remove/enable/disable 操作 per-server files；deploy/retract 先接入 core plan 的内部/测试入口但不切换 install/sync public lifecycle，保留 legacy read-only import 一个发布周期；统一公开切换留到 T009。
+- [x] **T007.8 Verify**：`mcp_projection` 35 passed；CLI `mcp_migrate`、`deploy_retract`、`mcp_plan_apply`、`mcp_source_readonly` 共 31 passed；另 `cargo test -p ai-config-core -p ai-config-cli` 全绿。
+- [x] **T007.9 Commit checkpoint**：source/renderer/transaction/CLI 分步 checkpoint 至 `eaeb880 feat(cli): 接入 MCP 源投影执行`；全程未切换 public lifecycle。
 
 ### T008 — Hook generated projection 与 canonical Prompt 入口
 
