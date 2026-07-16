@@ -840,13 +840,20 @@ public lifecycle 切换仍留给 T009。
 
 **Produces:** Hook script/bundle direct link + platform config GeneratedMutation；`.ai-config/prompts/AGENTS.md` canonical、root `AGENTS.md` ProjectEntry link、Claude minimal wrapper。
 
-- [ ] **T008.1 Write failing Hook tests**：scan zero-write；foreign bindings preserved across platforms；retract only owned binding/link；drift blocks retract；bundle single unit；apply failure restores config+link；project overlay；migration always backup；Hermes project Hook unsupported 且 global config 零变化。
-- [ ] **T008.2 Write failing Prompt tests**：project template seeds `.ai-config/prompts/AGENTS.md`；root AGENTS 是精确 link；四平台只产生一个 ProjectEntry action；Claude wrapper 只引用 AGENTS；现有普通 AGENTS/CLAUDE 或外部 link 为 Equivalent/Foreign/Conflict 且零覆盖；prompt overlay 与 repeated apply noop。
+**执行状态（2026-07-17，防偏航）**：Prompt canonical source 与 Hook JSON transaction
+已完成独立 RED→GREEN checkpoint。Hook JSON 覆盖 Cursor、Codex、Claude 的 foreign/unknown
+保留、bundle direct-link、精确 retract、drift/ledger rollback 与 legacy import fail-close；Hermes
+project Hook 仍 report-only/零全局写。**尚未完成** Hermes user YAML Hook，以及 MCP + Hook +
+external-directory 同一 `config.yaml` 的跨域单次 renderer；它们必须继续 fail-closed，T008 不能
+因此标为完成，T009 也不得切换 public lifecycle。
+
+- [x] **T008.1 Write failing Hook tests**：scan zero-write；foreign bindings preserved across platforms；retract only owned binding/link；drift blocks retract；bundle single unit；apply failure restores config+link；project overlay；migration always backup；Hermes project Hook unsupported 且 global config 零变化。
+- [x] **T008.2 Write failing Prompt tests**：project template seeds `.ai-config/prompts/AGENTS.md`；root AGENTS 是精确 link；四平台只产生一个 ProjectEntry action；Claude wrapper 只引用 AGENTS；现有普通 AGENTS/CLAUDE 或外部 link 为 Equivalent/Foreign/Conflict 且零覆盖；prompt overlay 与 repeated apply noop。
 - [ ] **T008.3 Write cross-domain container test**：Hermes user `config.yaml` 同时包含 MCP、`skills.external_dirs`、Hook 与 foreign provider/model 时，planner 只生成一个 target batch，container renderer 一次解析/替换并保留全部 foreign/unknown；workspace/project 请求为 Unsupported 且绝不触碰 global config。
-- [ ] **T008.4 Verify RED**：`cargo test -p ai-config-core --test hook_projection --test prompt_projection`。
+- [x] **T008.4 Verify RED**：`hook_projection` 与 `prompt_projection` 均先实测 RED；Prompt 6/6、Hook JSON 11/11 已转 GREEN，保留 Hermes YAML 跨域 RED 给 T008.3。
 - [ ] **T008.5 Split adapter responsibilities**：Hook/ExternalDirectory/PromptWrapper adapter 只产生 domain intents；每个目标配置只有一个 platform container renderer 负责跨 domain parse/render；ownership/planning/transaction 留 projection 模块；删除 reconcile side effect。
-- [ ] **T008.6 Link scripts/bundles**：能直接执行的 script/目录逐项 link；无法链接时显式 unsupported/copy fallback，不再默认复制。
-- [ ] **T008.7 Consolidate project entry prompts**：template 把完整正文 seed 到 `.ai-config/prompts/AGENTS.md`；root `AGENTS.md` 由 ProjectEntry link 产生；`CLAUDE.md` 仅 import/reference + Claude-specific short section；Hermes/Cursor/Codex 直接读 AGENTS，禁止复制完整正文。
+- [x] **T008.6 Link scripts/bundles**：能直接执行的 script/目录逐项 link；无法链接时显式 unsupported/copy fallback，不再默认复制。
+- [x] **T008.7 Consolidate project entry prompts**：template 把完整正文 seed 到 `.ai-config/prompts/AGENTS.md`；root `AGENTS.md` 由 ProjectEntry link 产生；`CLAUDE.md` 仅 import/reference + Claude-specific short section；Hermes/Cursor/Codex 直接读 AGENTS，禁止复制完整正文。
 - [ ] **T008.8 Verify**：`cargo test -p ai-config-core --test hook_projection --test prompt_projection --test mcp_projection`。
 - [ ] **T008.9 Commit checkpoint**：`git commit -m "feat(hooks): 接入事务化生成投影与统一入口"`。
 
