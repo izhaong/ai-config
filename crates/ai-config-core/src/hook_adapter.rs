@@ -140,6 +140,14 @@ pub fn retract(
     let token = hook::managed_command_token(script_filename);
     let script_dest = platform_script_path(deploy_base, plat, script_filename);
 
+    // 配置中没有 ai-config binding 时，脚本无法证明归属；不得触碰外部 hook。
+    if !is_deployed(deploy_base, plat, script_filename) {
+        return Ok(format!(
+            "Hook `{script_filename}` ← {} skipped (external or unowned)",
+            platform::platform_label(plat)
+        ));
+    }
+
     match plat {
         PlatformId::Cursor | PlatformId::Codex => {
             let path = platform_config_path(deploy_base, plat);
@@ -1399,6 +1407,30 @@ mod tests {
         let arr = merged["hooks"]["beforeSubmitPrompt"].as_array().unwrap();
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["hook"], "speak-lifecycle.py");
+    }
+
+    #[test]
+    fn retract_preserves_external_hook_script_without_managed_binding() {
+        let tmp = TempDir::new().unwrap();
+        let home = tmp.path().join("home");
+        let hooks_dir = home.join(".cursor/hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let script = hooks_dir.join("external.sh");
+        fs::write(&script, "#!/bin/sh\necho external\n").unwrap();
+        fs::write(
+            home.join(".cursor/hooks.json"),
+            r#"{"hooks":{"afterShellExecution":[{"command":"./hooks/external.sh"}]}}"#,
+        )
+        .unwrap();
+
+        let asset = Utf8PathBuf::from_path_buf(tmp.path().join("asset")).unwrap();
+        let deploy_base = Utf8PathBuf::from_path_buf(home).unwrap();
+
+        retract(&asset, &deploy_base, "external.sh", PlatformId::Cursor).unwrap();
+
+        assert!(script.is_file(), "external hook script must not be removed");
+        let config = fs::read_to_string(deploy_base.join(".cursor/hooks.json")).unwrap();
+        assert!(config.contains("external.sh"));
     }
 
     #[test]
