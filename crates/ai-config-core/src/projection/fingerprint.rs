@@ -1,6 +1,7 @@
 use camino::Utf8Path;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::error::CoreError;
@@ -9,8 +10,9 @@ const LEGACY_MARKER_NAME: &str = ".ai-config-deploy.json";
 
 /// 计算目录内容的稳定摘要。
 ///
-/// 路径、类型、权限和文件内容均参与摘要；隐藏文件必须参与，只有历史部署 marker
-/// 不参与。软链接只记录其 target，不跟随外部目录。
+/// 路径、类型和文件内容均参与摘要；隐藏文件必须参与，只有历史部署 marker
+/// 不参与。权限 mode 属于 apply 前置条件，不能参与“内容等价”判定。软链接只记录
+/// 其 target，不跟随外部目录。
 pub fn directory_digest(root: &Utf8Path) -> Result<String, CoreError> {
     let mut entries = Vec::new();
     for entry in WalkDir::new(root.as_std_path()).follow_links(false) {
@@ -22,7 +24,7 @@ pub fn directory_digest(root: &Utf8Path) -> Result<String, CoreError> {
         let relative = path
             .strip_prefix(root.as_std_path())
             .map_err(|error| CoreError::InvalidPath(error.to_string()))?;
-        if relative.file_name().is_some_and(|name| name == LEGACY_MARKER_NAME) {
+        if relative == Path::new(LEGACY_MARKER_NAME) {
             continue;
         }
         let relative = relative
@@ -38,7 +40,6 @@ pub fn directory_digest(root: &Utf8Path) -> Result<String, CoreError> {
         hasher.update(relative.as_bytes());
         hasher.update([0]);
         hasher.update([entry_kind(&metadata)]);
-        hasher.update(entry_mode(&metadata).to_le_bytes());
         hasher.update([0]);
 
         if metadata.file_type().is_symlink() {
@@ -62,18 +63,6 @@ fn entry_kind(metadata: &fs::Metadata) -> u8 {
     } else {
         b'o'
     }
-}
-
-#[cfg(unix)]
-fn entry_mode(metadata: &fs::Metadata) -> u32 {
-    use std::os::unix::fs::PermissionsExt;
-
-    metadata.permissions().mode()
-}
-
-#[cfg(not(unix))]
-fn entry_mode(_metadata: &fs::Metadata) -> u32 {
-    0
 }
 
 #[cfg(test)]
@@ -106,6 +95,38 @@ mod tests {
         assert_eq!(before, directory_digest(&root).unwrap());
 
         fs::write(root.join(".hidden").as_std_path(), "changed hidden file\n").unwrap();
+        assert_ne!(before, directory_digest(&root).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_digest_ignores_mode_for_content_equivalence() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap().join("skill");
+        fs::create_dir_all(root.as_std_path()).unwrap();
+        let skill_md = root.join("SKILL.md");
+        fs::write(skill_md.as_std_path(), "body\n").unwrap();
+        let before = directory_digest(&root).unwrap();
+
+        fs::set_permissions(skill_md.as_std_path(), fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert_eq!(before, directory_digest(&root).unwrap());
+    }
+
+    #[test]
+    fn directory_digest_includes_nested_marker_named_files() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap().join("skill");
+        let nested = root.join("resources/.ai-config-deploy.json");
+        fs::create_dir_all(nested.parent().unwrap().as_std_path()).unwrap();
+        fs::write(root.join("SKILL.md").as_std_path(), "body\n").unwrap();
+        fs::write(nested.as_std_path(), "first resource\n").unwrap();
+        let before = directory_digest(&root).unwrap();
+
+        fs::write(nested.as_std_path(), "changed resource\n").unwrap();
+
         assert_ne!(before, directory_digest(&root).unwrap());
     }
 }

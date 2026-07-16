@@ -693,6 +693,8 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 **Produces:** 本计划“核心 API/类型”中的全部 model（含 `AssetKind::Prompt`、`ProjectionSurface`）；`ProjectionLedger` trait；`SqliteProjectionRepo`；`MemoryProjectionLedger` test double。
 
 - [ ] **T002.1 Write model/ownership tests**：覆盖 Prompt/ProjectionSurface serde、ProjectionId 稳定性、目录 digest 包含 dotfiles 且只排除 legacy marker、正确 link 为 ManagedLink、等内容普通副本为 Equivalent、有 ownership 的错源 link 为 Drifted、无 ownership 的错源 link 为 Foreign、ledger 缺失 generated 为 Foreign。
+- [x] **T002.1a Projection fingerprint/ownership foundation**：已先验证目录 semantic digest 包含 dotfiles、仅忽略根 legacy marker、忽略 mode；`ProjectionSurface::SharedTarget` 防止 Cursor/Codex 共享 `.agents/skills` 产生两份可独立收回的 ownership；已覆盖 exact link→ManagedLink、equal copy→Equivalent、wrong link→Foreign/Drifted、missing→Missing。`Prompt` 的 legacy enum 迁移保持在协调门禁之后，避免在旧 hard-copy lifecycle 中产生路径或写入语义。
+- [x] **T002.1b Ledger contract and SQLite persistence**：`ProjectionLedger` 作为 core trait，`MemoryProjectionLedger` 与 SQLite `projection_ledger` 都拒绝同一 batch 重复 mutation；SQLite 在单一 transaction 内提交，批次验证失败时不留下部分写入。generated target 仅在 id、mode 和 target fingerprint 都匹配账本时为 `ManagedGenerated`，账本缺失仍为 `Foreign`。
 - [ ] **T002.2 Verify RED**：`cargo test -p ai-config-core projection:: -- --nocapture`，预期因模块/类型不存在失败。
 - [ ] **T002.3 Implement model and fingerprints**：使用 `sha2` 对排序后的相对路径、entry type、mode 和 bytes 计算 digest；symlink fingerprint 记录 target，不跟随未知 root 外链。
 - [ ] **T002.4 Implement ownership classifier**：签名 `classify_projection(expected, actual, record) -> ProjectionState`；content comparison 与 ownership 分支分离，任何不确定状态返回 Foreign/Conflict 而非 managed。

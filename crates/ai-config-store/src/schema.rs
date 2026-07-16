@@ -39,4 +39,21 @@ pub const DDL: &[&str] = &[
         value TEXT NOT NULL
     )
     "#,
+    // 投影账本是生成物所有权的辅助证据；缺失时 core 会安全降级为 Foreign。
+    r#"
+    CREATE TABLE IF NOT EXISTS projection_ledger (
+        scope_key          TEXT NOT NULL,
+        kind               TEXT NOT NULL,
+        name               TEXT NOT NULL,
+        surface_json       TEXT NOT NULL,
+        mode               TEXT NOT NULL,
+        source_path        TEXT NOT NULL,
+        target_path        TEXT NOT NULL,
+        entry_key          TEXT,
+        source_fingerprint TEXT NOT NULL,
+        target_fingerprint TEXT NOT NULL,
+        applied_at         TEXT NOT NULL,
+        PRIMARY KEY (scope_key, kind, name, surface_json)
+    )
+    "#,
 ];

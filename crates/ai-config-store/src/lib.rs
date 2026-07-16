@@ -23,6 +23,7 @@ use rusqlite::Connection;
 use thiserror::Error;
 
 pub mod project_repo;
+pub mod projection_repo;
 pub mod schema;
 pub mod settings_repo;
 
@@ -31,6 +32,7 @@ pub mod settings_repo;
 // `Open` / `DataDirUnknown` / `Sqlite` / `Project` 转发),使用方只需要面对一种
 // 错误类型,无需知道内部模块边界。
 pub use project_repo::ProjectRepo;
+pub use projection_repo::ProjectionRepo;
 pub use settings_repo::SettingsRepo;
 
 // ── 公共类型 ─────────────────────────────────────────────────────
@@ -102,6 +104,11 @@ impl Store {
         SettingsRepo::new(&self.conn)
     }
 
+    /// 借用 connection 拿 projection ownership ledger 句柄。
+    pub fn projections(&self) -> ProjectionRepo<'_> {
+        ProjectionRepo::new(&self.conn)
+    }
+
     /// store 实际文件路径(供 `--store-path` debug 子命令 / 错误信息用)。
     pub fn path(&self) -> &Utf8PathBuf {
         &self.path
@@ -147,6 +154,9 @@ pub enum StoreError {
     // `project_repo::StoreError` 转发
     #[error("项目仓库错误: {0}")]
     Project(#[from] project_repo::StoreError),
+
+    #[error("投影账本仓库错误: {0}")]
+    Projection(#[from] projection_repo::StoreError),
 
     // 给 `?` 用的 from impl(rusqlite error 在 project_repo 内部已转)
     #[error("SQLite 错误: {0}")]
