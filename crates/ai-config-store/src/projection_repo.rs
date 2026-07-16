@@ -276,4 +276,36 @@ mod tests {
         assert_eq!(ledger.get(&existing.id).unwrap(), Some(existing));
         assert_eq!(ledger.get(&new.id).unwrap(), None);
     }
+
+    #[test]
+    fn sqlite_batch_rolls_back_when_a_later_write_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::Store::open_at(&directory.path().join("store.sqlite")).unwrap();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_failing_projection
+                 BEFORE INSERT ON projection_ledger
+                 WHEN NEW.name = 'failing'
+                 BEGIN
+                    SELECT RAISE(ABORT, 'fixture rejects later projection');
+                 END;",
+            )
+            .unwrap();
+        let ledger = store.projections();
+        let first = record("first");
+        let failing = record("failing");
+
+        assert!(ledger
+            .apply_batch(&[
+                LedgerMutation::Upsert(first.clone()),
+                LedgerMutation::Upsert(failing.clone()),
+            ])
+            .is_err());
+
+        assert_eq!(ledger.get(&first.id).unwrap(), None);
+        assert_eq!(ledger.get(&failing.id).unwrap(), None);
+    }
 }

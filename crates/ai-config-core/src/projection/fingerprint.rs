@@ -85,7 +85,18 @@ pub fn path_content_digest(path: &Utf8Path) -> Result<String, CoreError> {
 /// `digest` 仍是语义内容摘要；entry type、link target 与 Unix mode 则让 executor
 /// 能在写入前拒绝目标自 plan 后发生的形态变化。
 pub fn path_fingerprint(path: &Utf8Path) -> Result<PathFingerprint, CoreError> {
-    let metadata = fs::symlink_metadata(path.as_std_path())?;
+    let metadata = match fs::symlink_metadata(path.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PathFingerprint {
+                entry_type: FingerprintType::Missing,
+                digest: None,
+                link_target: None,
+                mode: None,
+            });
+        }
+        Err(error) => return Err(CoreError::Io(error)),
+    };
     let file_type = metadata.file_type();
     let entry_type = if file_type.is_file() {
         FingerprintType::File
@@ -244,5 +255,23 @@ mod tests {
 
         assert_eq!(before.digest, after.digest);
         assert_ne!(before.mode, after.mode);
+    }
+
+    #[test]
+    fn path_fingerprint_returns_missing_precondition_for_absent_path() {
+        let temp = TempDir::new().unwrap();
+        let missing = Utf8Path::from_path(temp.path())
+            .unwrap()
+            .join("missing-target");
+
+        assert_eq!(
+            path_fingerprint(&missing).unwrap(),
+            PathFingerprint {
+                entry_type: FingerprintType::Missing,
+                digest: None,
+                link_target: None,
+                mode: None,
+            }
+        );
     }
 }

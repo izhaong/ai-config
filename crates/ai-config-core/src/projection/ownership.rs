@@ -212,4 +212,40 @@ mod tests {
             ProjectionState::ManagedGenerated
         );
     }
+
+    #[test]
+    fn unreadable_target_is_foreign_without_ownership_inference() {
+        let expected = expectation(Utf8PathBuf::from("/canonical/source/demo"));
+
+        assert_eq!(
+            classify_projection(&expected, &ProjectionObservation::Unreadable, None),
+            ProjectionState::Foreign
+        );
+    }
+
+    #[test]
+    fn wrong_source_link_with_mismatched_ledger_mode_is_foreign() {
+        let expected = expectation(Utf8PathBuf::from("/canonical/source/demo"));
+        let record = ProjectionRecord {
+            id: expected.id.clone(),
+            mode: ProjectionMode::GeneratedJson,
+            source_path: expected.canonical_source.clone(),
+            target_path: Utf8PathBuf::from("/platform/demo"),
+            entry_key: None,
+            source_fingerprint: expected.source_content_digest.clone(),
+            target_fingerprint: "old-target-fingerprint".to_owned(),
+            applied_at: chrono::Utc::now(),
+        };
+
+        assert_eq!(
+            classify_projection(
+                &expected,
+                &ProjectionObservation::Link {
+                    canonical_target: Utf8PathBuf::from("/foreign/source/demo"),
+                },
+                Some(&record),
+            ),
+            ProjectionState::Foreign
+        );
+    }
 }

@@ -66,6 +66,33 @@ pub enum DeploymentScope {
     Project,
 }
 
+/// Overlay 决议后的唯一有效资产；`layer` 是可审计 provenance，而非部署范围。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EffectiveAsset {
+    pub kind: AssetKind,
+    pub name: String,
+    pub source_path: Utf8PathBuf,
+    pub layer: SourceLayer,
+    pub fingerprint: String,
+}
+
+impl EffectiveAsset {
+    pub fn source_ref(&self) -> SourceRef {
+        SourceRef {
+            layer: self.layer,
+            absolute_path: self.source_path.clone(),
+            fingerprint: self.fingerprint.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceRef {
+    pub layer: SourceLayer,
+    pub absolute_path: Utf8PathBuf,
+    pub fingerprint: String,
+}
+
 /// Adapter 给 planner 返回的目标路径。聚合容器使用 `entry_key` 标识唯一受管条目。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectionTarget {
@@ -117,6 +144,47 @@ mod tests {
             serde_json::to_value(fingerprint).unwrap(),
             serde_json::json!({"entry_type":"directory","digest":"digest","link_target":null,"mode":null})
         );
+    }
+
+    #[test]
+    fn effective_asset_preserves_the_winning_source_layer() {
+        let asset = EffectiveAsset {
+            kind: AssetKind::Command,
+            name: "review".to_owned(),
+            source_path: Utf8PathBuf::from("/repo/.ai-config/commands/review.md"),
+            layer: SourceLayer::Project,
+            fingerprint: "digest".to_owned(),
+        };
+
+        let source = asset.source_ref();
+        assert_eq!(source.layer, SourceLayer::Project);
+        assert_eq!(
+            source.absolute_path,
+            Utf8PathBuf::from("/repo/.ai-config/commands/review.md")
+        );
+        assert_eq!(source.fingerprint, "digest");
+    }
+
+    #[test]
+    fn projection_identity_round_trips_for_each_surface() {
+        let surfaces = [
+            ProjectionSurface::Platform(PlatformId::Claude),
+            ProjectionSurface::ProjectEntry,
+            ProjectionSurface::SharedTarget {
+                key: "cursor-codex-skills".to_owned(),
+            },
+        ];
+
+        for surface in surfaces {
+            let id = ProjectionId {
+                scope_key: "project:/repo".to_owned(),
+                kind: AssetKind::Skill,
+                name: "demo".to_owned(),
+                surface,
+            };
+            let encoded = serde_json::to_string(&id).unwrap();
+            assert_eq!(serde_json::from_str::<ProjectionId>(&encoded).unwrap(), id);
+        }
     }
 }
 
