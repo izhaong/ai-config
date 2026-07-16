@@ -453,6 +453,35 @@ fn ledger_failure_rolls_back_a_created_link() {
     assert!(fs::symlink_metadata(target.as_std_path()).is_err());
 }
 
+#[test]
+fn later_action_failure_removes_prior_links_and_their_new_empty_parents() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let alpha = skill(root, "alpha");
+    let bravo = skill(root, "bravo");
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![alpha.clone(), bravo.clone()],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    fs::remove_dir_all(bravo.source_path.as_std_path()).unwrap();
+
+    let result = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    );
+
+    assert!(result.is_err());
+    assert!(fs::symlink_metadata(request.deploy_base.join(".agents").as_std_path()).is_err());
+}
+
 #[cfg(unix)]
 #[test]
 fn ledger_failure_restores_a_retracted_link() {

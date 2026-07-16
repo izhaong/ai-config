@@ -84,6 +84,7 @@ enum FileUndo {
     RemoveCreated {
         target: Utf8PathBuf,
         source: Utf8PathBuf,
+        created_parents: Vec<Utf8PathBuf>,
     },
     RestoreRemoved {
         target: Utf8PathBuf,
@@ -94,6 +95,17 @@ enum FileUndo {
         source: Utf8PathBuf,
         backup: Utf8PathBuf,
     },
+}
+
+struct CreatedLink {
+    target: Utf8PathBuf,
+    source: Utf8PathBuf,
+    created_parents: Vec<Utf8PathBuf>,
+}
+
+struct SafeParent {
+    path: Utf8PathBuf,
+    created_parents: Vec<Utf8PathBuf>,
 }
 
 /// The manifest deliberately has no asset body or rendered bytes. It is enough to audit a
@@ -177,8 +189,9 @@ pub fn apply_projection_plan(
                     let created = apply_create_link(action, context)?;
                     mutations.push(direct_record_mutation(action)?);
                     undo.push(FileUndo::RemoveCreated {
-                        target: created.0,
-                        source: created.1,
+                        target: created.target,
+                        source: created.source,
+                        created_parents: created.created_parents,
                     });
                     report.changed += 1;
                 }
@@ -259,7 +272,7 @@ fn validate_selected_action_ids(
 fn apply_create_link(
     action: &ProjectionAction,
     context: &ExecutorContext<'_>,
-) -> Result<(Utf8PathBuf, Utf8PathBuf), CoreError> {
+) -> Result<CreatedLink, CoreError> {
     let target = action
         .target
         .as_ref()
@@ -295,8 +308,12 @@ fn apply_create_link(
     ensure_source_matches_plan(action, source)?;
 
     let parent = ensure_safe_target_parent(&target.path, &context.deploy_base)?;
-    create_sibling_symlink(source, &target.path, &parent)?;
-    Ok((target.path.clone(), source.clone()))
+    create_sibling_symlink(source, &target.path, &parent.path)?;
+    Ok(CreatedLink {
+        target: target.path.clone(),
+        source: source.clone(),
+        created_parents: parent.created_parents,
+    })
 }
 
 /// Remove only the exact link captured by a retract plan.
@@ -386,7 +403,7 @@ fn apply_adopt_equivalent(
             return Err(error);
         }
     };
-    if let Err(error) = create_sibling_symlink(source, &target.path, &parent) {
+    if let Err(error) = create_sibling_symlink(source, &target.path, &parent.path) {
         let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
         return Err(error);
     }
@@ -480,12 +497,25 @@ fn direct_record_mutation(action: &ProjectionAction) -> Result<LedgerMutation, C
 fn rollback(undo: &[FileUndo], context: &ExecutorContext<'_>) {
     for operation in undo.iter().rev() {
         match operation {
-            FileUndo::RemoveCreated { target, source } => {
+            FileUndo::RemoveCreated {
+                target,
+                source,
+                created_parents,
+            } => {
                 if let Ok(fingerprint) = path_fingerprint(target) {
                     if fingerprint.entry_type == super::model::FingerprintType::Symlink
                         && fingerprint.link_target.as_ref() == Some(source)
                     {
                         let _ = fs::remove_file(target.as_std_path());
+                    }
+                }
+                for parent in created_parents.iter().rev() {
+                    let is_empty = fs::read_dir(parent.as_std_path())
+                        .ok()
+                        .and_then(|mut entries| entries.next())
+                        .is_none();
+                    if is_empty {
+                        let _ = fs::remove_dir(parent.as_std_path());
                     }
                 }
             }
@@ -500,7 +530,7 @@ fn rollback(undo: &[FileUndo], context: &ExecutorContext<'_>) {
                     .unwrap_or(false);
                 if target_is_missing {
                     if let Ok(parent) = ensure_safe_target_parent(target, &context.deploy_base) {
-                        let _ = create_sibling_symlink(raw_link_target, target, &parent);
+                        let _ = create_sibling_symlink(raw_link_target, target, &parent.path);
                     }
                 }
             }
@@ -556,7 +586,7 @@ fn ensure_target_is_allowed(target: &Utf8Path, deploy_base: &Utf8Path) -> Result
 fn ensure_safe_target_parent(
     target: &Utf8Path,
     deploy_base: &Utf8Path,
-) -> Result<Utf8PathBuf, CoreError> {
+) -> Result<SafeParent, CoreError> {
     let base = fs::canonicalize(deploy_base.as_std_path())?;
     let base = Utf8PathBuf::from_path_buf(base)
         .map_err(|path| CoreError::InvalidPath(path.to_string_lossy().into_owned()))?;
@@ -569,6 +599,7 @@ fn ensure_safe_target_parent(
         )
     })?;
     let mut cursor = base;
+    let mut created_parents = Vec::new();
     for component in relative.components() {
         match component {
             Utf8Component::Normal(name) => {
@@ -588,6 +619,7 @@ fn ensure_safe_target_parent(
                     Ok(_) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         fs::create_dir(&cursor)?;
+                        created_parents.push(cursor.clone());
                     }
                     Err(error) => return Err(CoreError::Io(error)),
                 }
@@ -600,7 +632,10 @@ fn ensure_safe_target_parent(
             }
         }
     }
-    Ok(cursor)
+    Ok(SafeParent {
+        path: cursor,
+        created_parents,
+    })
 }
 
 fn create_sibling_symlink(
