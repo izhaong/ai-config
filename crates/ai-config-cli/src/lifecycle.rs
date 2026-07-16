@@ -1,6 +1,10 @@
 //! Phase 1 业务子命令(PRD §5 / §10):
 //! `install` / `uninstall` / `sync` / `status` / `list` / `show` / `doctor`。
 //!
+//! T009 keeps the old execute-loop helpers reachable only through the MCP bridge until T009.5
+//! migrates that API. The public CLI lifecycle now routes through projection plan/apply.
+#![allow(dead_code)]
+//!
 //! ## 退出码契约(PRD §9.1)
 //!
 //! | code | 含义                            |

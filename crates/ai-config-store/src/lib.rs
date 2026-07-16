@@ -91,6 +91,15 @@ impl Store {
         for stmt in schema::DDL {
             conn.execute_batch(stmt)?;
         }
+        // Older stores predate per-entry generated-container ownership. SQLite has no
+        // ADD COLUMN IF NOT EXISTS, so tolerate the duplicate-column result on fresh stores.
+        if let Err(error) =
+            conn.execute_batch("ALTER TABLE projection_ledger ADD COLUMN entry_fingerprint TEXT")
+        {
+            if !error.to_string().contains("duplicate column name") {
+                return Err(StoreError::Sqlite(error));
+            }
+        }
         Ok(())
     }
 

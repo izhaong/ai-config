@@ -17,6 +17,7 @@ mod daemon;
 mod lifecycle;
 mod mcp;
 mod output;
+mod projection;
 mod secrets;
 mod serve;
 
@@ -50,11 +51,23 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Cmd {
     /// 一键安装(取代旧 install.sh,PRD §5 场景 A)
-    Install,
+    Install {
+        /// Render the reviewed projection plan transactionally.
+        #[arg(long)]
+        apply: bool,
+    },
     /// 卸载(保留用户手写配置,备份 mcp.json)
-    Uninstall,
+    Uninstall {
+        /// Apply the reviewed retract plan.
+        #[arg(long)]
+        apply: bool,
+    },
     /// 手工同步一次(守护进程未跑时使用,PRD §10 A-5)
-    Sync,
+    Sync {
+        /// Render the reviewed projection plan transactionally.
+        #[arg(long)]
+        apply: bool,
+    },
     /// 当前同步状态
     Status,
     /// 列出已纳管资产
@@ -329,12 +342,9 @@ fn main() -> ExitCode {
             };
             daemon::run(mapped, mode)
         }
-        Cmd::Install => lifecycle::run_install(&default_root, cli.workspace, mode),
-        Cmd::Uninstall => {
-            // Phase 1 不区分 interactive(无 stdin 提示);force 始终为 true。
-            lifecycle::run_uninstall(&default_root, true, mode)
-        }
-        Cmd::Sync => lifecycle::run_sync(&default_root, cli.workspace, mode),
+        Cmd::Install { apply } => projection::run(&default_root, cli.workspace, apply, false, mode),
+        Cmd::Uninstall { apply } => projection::run(&default_root, cli.workspace, apply, true, mode),
+        Cmd::Sync { apply } => projection::run(&default_root, cli.workspace, apply, false, mode),
         Cmd::Status => lifecycle::run_status(&default_root, mode),
         Cmd::List => lifecycle::run_list(&default_root, mode),
         Cmd::Show { name } => lifecycle::run_show(&default_root, &name, mode),

@@ -2301,7 +2301,13 @@ fn append_orphan_candidates(
 ) -> Result<(), CoreError> {
     let planned_ids = actions
         .iter()
-        .flat_map(|action| action.members.iter().map(|member| member.id.clone()))
+        .flat_map(|action| {
+            action
+                .members
+                .iter()
+                .map(|member| member.id.clone())
+                .chain(action.mcp_members.iter().map(|member| member.id.clone()))
+        })
         .collect::<HashSet<_>>();
     let records = match context.ledger.list_scope(&request.scope_key) {
         Ok(records) => records,

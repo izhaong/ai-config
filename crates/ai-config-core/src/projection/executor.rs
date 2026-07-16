@@ -456,6 +456,13 @@ pub fn apply_projection_plan(
                     report.set_status(index, ApplyActionStatus::Applied);
                     Ok(())
                 }),
+            ProjectionActionKind::Noop if action.members.is_empty() => {
+                // Generated MCP-only batches already proved every named entry against the
+                // persistent ledger during planning. They have no direct-link member from which
+                // a direct record mutation could be derived, and must remain no-op.
+                report.set_status(index, ApplyActionStatus::Unchanged);
+                Ok(())
+            }
             ProjectionActionKind::Noop => record_mutation_for_action(action).map(|mutation| {
                 mutations.push(mutation);
                 report.set_status(index, ApplyActionStatus::Unchanged);

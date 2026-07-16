@@ -51,6 +51,7 @@ pub const DDL: &[&str] = &[
         target_path        TEXT NOT NULL,
         entry_key          TEXT,
         source_fingerprint TEXT NOT NULL,
+        entry_fingerprint  TEXT,
         target_fingerprint TEXT NOT NULL,
         applied_at         TEXT NOT NULL,
         PRIMARY KEY (scope_key, kind, name, surface_json)

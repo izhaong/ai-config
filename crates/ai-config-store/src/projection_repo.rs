@@ -34,7 +34,7 @@ impl<'a> ProjectionRepo<'a> {
         self.with_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
-                 entry_key, source_fingerprint, target_fingerprint, applied_at \
+                 entry_key, source_fingerprint, entry_fingerprint, target_fingerprint, applied_at \
                  FROM projection_ledger \
                  WHERE scope_key = ?1 AND kind = ?2 AND name = ?3 AND surface_json = ?4",
             )?;
@@ -52,7 +52,7 @@ impl<'a> ProjectionRepo<'a> {
         self.with_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
-                 entry_key, source_fingerprint, target_fingerprint, applied_at \
+                 entry_key, source_fingerprint, entry_fingerprint, target_fingerprint, applied_at \
                  FROM projection_ledger \
                  WHERE scope_key = ?1 AND kind = ?2 AND name = ?3 AND surface_json = ?4",
             )?;
@@ -77,7 +77,7 @@ impl<'a> ProjectionRepo<'a> {
         self.with_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
-                 entry_key, source_fingerprint, target_fingerprint, applied_at \
+                 entry_key, source_fingerprint, entry_fingerprint, target_fingerprint, applied_at \
                  FROM projection_ledger WHERE scope_key = ?1 \
                  ORDER BY kind, name, surface_json",
             )?;
@@ -148,11 +148,12 @@ fn upsert(
         .map_err(|error| StoreError::Serialization(error.to_string()))?;
     transaction.execute(
         "INSERT INTO projection_ledger (scope_key, kind, name, surface_json, mode, source_path, \
-         target_path, entry_key, source_fingerprint, target_fingerprint, applied_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+         target_path, entry_key, source_fingerprint, entry_fingerprint, target_fingerprint, applied_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
          ON CONFLICT(scope_key, kind, name, surface_json) DO UPDATE SET \
            mode = excluded.mode, source_path = excluded.source_path, target_path = excluded.target_path, \
            entry_key = excluded.entry_key, source_fingerprint = excluded.source_fingerprint, \
+           entry_fingerprint = excluded.entry_fingerprint, \
            target_fingerprint = excluded.target_fingerprint, applied_at = excluded.applied_at",
         params![
             key.scope_key,
@@ -164,6 +165,7 @@ fn upsert(
             record.target_path.as_str(),
             record.entry_key.as_deref(),
             record.source_fingerprint,
+            record.entry_fingerprint,
             record.target_fingerprint,
             record.applied_at.to_rfc3339(),
         ],
@@ -184,7 +186,7 @@ fn row_to_record(row: &Row<'_>) -> Result<ProjectionRecord, StoreError> {
     let kind: String = row.get(1)?;
     let surface_json: String = row.get(3)?;
     let mode: String = row.get(4)?;
-    let applied_at: String = row.get(10)?;
+    let applied_at: String = row.get(11)?;
     Ok(ProjectionRecord {
         id: ProjectionId {
             scope_key: row.get(0)?,
@@ -200,7 +202,8 @@ fn row_to_record(row: &Row<'_>) -> Result<ProjectionRecord, StoreError> {
         target_path: row.get::<_, String>(6)?.into(),
         entry_key: row.get(7)?,
         source_fingerprint: row.get(8)?,
-        target_fingerprint: row.get(9)?,
+        entry_fingerprint: row.get(9)?,
+        target_fingerprint: row.get(10)?,
         applied_at: chrono::DateTime::parse_from_rfc3339(&applied_at)
             .map_err(|error| StoreError::Serialization(error.to_string()))?
             .with_timezone(&chrono::Utc),
@@ -270,6 +273,7 @@ mod tests {
             target_path: Utf8PathBuf::from("/target"),
             entry_key: Some(name.to_owned()),
             source_fingerprint: "source".to_owned(),
+            entry_fingerprint: None,
             target_fingerprint: "target".to_owned(),
             applied_at: chrono::Utc::now(),
         }
