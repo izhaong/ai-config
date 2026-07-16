@@ -49,6 +49,9 @@ pub fn parse_kind(s: &str) -> Result<AssetKind, String> {
         "agent" | "agents" => Ok(AssetKind::Agent),
         "command" | "commands" => Ok(AssetKind::Command),
         "mcp" => Ok(AssetKind::Mcp),
+        "prompt" | "prompts" => Err(
+            "Prompt 仅能经 source-first projection planner；旧 API lifecycle 已禁用".to_string(),
+        ),
         other => Err(format!(
             "未知资产类型 `{other}`；可用: skill, rule, agent, command, mcp"
         )),
@@ -177,5 +180,11 @@ mod tests {
         } else {
             std::env::remove_var("AI_CONFIG_ROOT");
         }
+    }
+
+    #[test]
+    fn prompt_kind_is_reserved_for_the_projection_planner() {
+        let err = parse_kind("prompt").expect_err("Prompt must not enter the legacy API");
+        assert!(err.contains("source-first projection planner"));
     }
 }

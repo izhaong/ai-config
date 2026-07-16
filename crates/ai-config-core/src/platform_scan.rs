@@ -80,6 +80,11 @@ pub fn scan_platform_assets(
     default_root: &Utf8Path,
     asset_root: &Utf8Path,
 ) -> Result<Vec<PlatformAssetEntry>, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧扫描 lifecycle 已禁用".into(),
+        ));
+    }
     if plat == PlatformId::AiConfig {
         return scan_aiconfig_assets(kind, default_root, asset_root);
     }
@@ -134,6 +139,11 @@ fn scan_aiconfig_assets(
     default_root: &Utf8Path,
     asset_root: &Utf8Path,
 ) -> Result<Vec<PlatformAssetEntry>, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧扫描 lifecycle 已禁用".into(),
+        ));
+    }
     let deploy_base = if asset_root == default_root {
         crate::paths::global_deploy_base()
     } else {
@@ -249,6 +259,9 @@ fn scan_platform_raw(
         AssetKind::Command => scan_platform_commands(adapter),
         AssetKind::Hook => scan_platform_hooks(adapter),
         AssetKind::Mcp => scan_platform_mcp(adapter),
+        AssetKind::Prompt => Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧扫描 lifecycle 已禁用".into(),
+        )),
     }
 }
 
@@ -698,6 +711,7 @@ pub fn find_source_path(
             .iter()
             .find(|item| item.script_filename == name)
             .map(|item| item.script_path.clone()),
+        AssetKind::Prompt => None,
     }
 }
 
@@ -858,6 +872,7 @@ fn platform_mirror_link_state(
                 LinkState::Missing
             };
         }
+        AssetKind::Prompt => return LinkState::Unlinked,
     };
     if fs::symlink_metadata(dest.as_std_path()).is_err() {
         return LinkState::Missing;
@@ -872,6 +887,7 @@ fn platform_mirror_link_state(
         }
         AssetKind::Mcp => false,
         AssetKind::Hook => unreachable!("handled above"),
+        AssetKind::Prompt => false,
     };
     if !matches {
         return LinkState::Unlinked;
@@ -1203,6 +1219,11 @@ pub fn copy_asset_to_asset_root(
     to_default: &Utf8Path,
     to_root: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧复制 lifecycle 已禁用".into(),
+        ));
+    }
     if from_root == to_root {
         return Err(CoreError::InvalidPath(
             "源项目与目标项目相同，无法复制".into(),
@@ -1310,6 +1331,7 @@ pub fn copy_asset_to_asset_root(
             crate::hook::merge_bindings_into_manifest(to_root, &script_filename, &bindings)?;
             dest_script
         }
+        AssetKind::Prompt => unreachable!("Prompt is rejected before copy"),
     };
     Ok(dest)
 }
@@ -1383,6 +1405,22 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn prompt_scan_is_rejected_before_opening_platform_directories() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(tmp.path()).unwrap();
+        let err = scan_platform_assets(
+            PlatformId::Cursor,
+            AssetKind::Prompt,
+            root,
+            &root.join(".ai-config"),
+            &root.join(".ai-config"),
+        )
+        .expect_err("Prompt must not enter the legacy scanner");
+        assert!(err.to_string().contains("source-first projection planner"));
+        assert!(!root.join(".cursor").exists());
+    }
 
     fn touch(path: &Utf8Path, content: &str) {
         if let Some(parent) = path.parent() {

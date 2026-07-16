@@ -593,7 +593,10 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
     // 1. 收回所有本工具创建的 symlink(Create → unlink)
     for action in &ctx.actions {
         if let SyncAction::Create {
-            platform, dest, src, ..
+            platform,
+            dest,
+            src,
+            ..
         } = action
         {
             let kind = infer_kind_from_dest(dest);
@@ -890,6 +893,9 @@ fn describe_for(
     platform: PlatformId,
     default_root: &Utf8Path,
 ) -> (String, camino::Utf8PathBuf) {
+    if kind == AssetKind::Prompt {
+        return ("unsupported".to_string(), camino::Utf8PathBuf::new());
+    }
     let adapter = match platform::for_id(platform) {
         Ok(a) => a,
         Err(_) => return ("unmanaged".to_string(), camino::Utf8PathBuf::new()),
@@ -936,6 +942,7 @@ fn describe_for(
             };
             return (state.to_string(), dest);
         }
+        AssetKind::Prompt => unreachable!("Prompt is rejected before path resolution"),
     };
     if !dest.exists() && dest.as_std_path().symlink_metadata().is_err() {
         return ("missing".to_string(), dest);
@@ -1164,6 +1171,7 @@ fn kind_to_str(k: AssetKind) -> &'static str {
         AssetKind::Mcp => "mcp",
         AssetKind::Agent => "agent",
         AssetKind::Command => "command",
+        AssetKind::Prompt => "prompt",
         AssetKind::Hook => "hook",
     }
 }

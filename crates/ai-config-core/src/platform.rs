@@ -46,6 +46,7 @@ pub trait PlatformAdapter: Send + Sync {
             AssetKind::Skill | AssetKind::Mcp | AssetKind::Agent | AssetKind::Hook => true,
             AssetKind::Rule => self.id() != PlatformId::Codex,
             AssetKind::Command => matches!(self.id(), PlatformId::Cursor | PlatformId::Claude),
+            AssetKind::Prompt => false,
         }
     }
 }
@@ -238,7 +239,7 @@ impl PlatformAdapter for HermesAdapter {
             // Hermes 仅在项目 CWD 读 `.cursor/rules/*.mdc`（与 Cursor 项目级路径一致）
             AssetKind::Rule => self.deploy_base != home(),
             // 无 `~/.hermes/agents`；子代理为运行时 delegate_task
-            AssetKind::Agent | AssetKind::Command => false,
+            AssetKind::Agent | AssetKind::Command | AssetKind::Prompt => false,
         }
     }
     fn skills_dir(&self) -> Utf8PathBuf {
@@ -337,6 +338,7 @@ pub fn kind_asset_path(
         AssetKind::Agent => Some(adapter.agents_dir()),
         AssetKind::Command => Some(adapter.commands_dir()),
         AssetKind::Mcp => Some(adapter.mcp_deploy_path()),
+        AssetKind::Prompt => None,
         AssetKind::Hook => Some(match plat {
             PlatformId::Cursor => deploy_base.join(".cursor/hooks"),
             PlatformId::Codex => deploy_base.join(".codex/hooks"),
@@ -416,6 +418,7 @@ pub fn asset_kind_label(kind: AssetKind) -> &'static str {
         AssetKind::Mcp => "mcp",
         AssetKind::Agent => "agent",
         AssetKind::Command => "command",
+        AssetKind::Prompt => "prompt",
         AssetKind::Hook => "hook",
     }
 }
@@ -459,6 +462,9 @@ pub fn capability_skip_reason(plat: PlatformId, kind: AssetKind) -> String {
             "Hermes 无静态 agents 目录；请用项目 AGENTS.md 或 delegate_task 子代理".into()
         }
         (PlatformId::Codex, AssetKind::Command) => "Codex 无斜杠 commands 目录，不支持下发".into(),
+        (_, AssetKind::Prompt) => {
+            "Prompt 仅能经 source-first projection planner；旧 lifecycle 已禁用".into()
+        }
         (PlatformId::Hermes, AssetKind::Command) => "Hermes 无斜杠 commands，不支持下发".into(),
         _ => format!(
             "platform `{}` 不支持 asset kind `{}`",

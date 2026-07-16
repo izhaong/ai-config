@@ -76,6 +76,9 @@ pub fn asset_dest_for_at_base(
     src: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Option<camino::Utf8PathBuf> {
+    if kind == AssetKind::Prompt {
+        return None;
+    }
     let plat_root = platform_dest_root(plat, kind, deploy_base)?;
     let entry_name = match kind {
         AssetKind::Skill => return Some(plat_root.join(name)),
@@ -99,6 +102,7 @@ pub fn asset_dest_for_at_base(
                 .unwrap_or_else(|| "md".to_string());
             format!("{name}.{ext}")
         }
+        AssetKind::Prompt => return None,
     };
     Some(plat_root.join(entry_name))
 }
@@ -119,6 +123,7 @@ pub fn link_src_for_create(kind: AssetKind, src: &Utf8Path) -> camino::Utf8PathB
         AssetKind::Rule | AssetKind::Command | AssetKind::Mcp | AssetKind::Hook => {
             src.to_path_buf()
         }
+        AssetKind::Prompt => src.to_path_buf(),
     }
 }
 
@@ -154,6 +159,7 @@ fn platform_dest_root(
             PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
             PlatformId::AiConfig => deploy_base.join("hooks"),
         },
+        AssetKind::Prompt => return None,
     })
 }
 
@@ -264,6 +270,7 @@ fn compute_actions(
                     })
                     .collect()
             }
+            AssetKind::Prompt => vec![],
         };
 
         for (name, src) in entries {

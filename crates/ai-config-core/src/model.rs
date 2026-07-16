@@ -48,6 +48,8 @@ pub enum AssetKind {
     Mcp,
     Agent,
     Command,
+    /// Canonical prompt source; legacy lifecycle must reject it until T008.
+    Prompt,
     Hook,
 }
 
@@ -483,6 +485,7 @@ mod tests {
             (AssetKind::Mcp, "\"mcp\""),
             (AssetKind::Agent, "\"agent\""),
             (AssetKind::Command, "\"command\""),
+            (AssetKind::Prompt, "\"prompt\""),
             (AssetKind::Hook, "\"hook\""),
         ] {
             assert_eq!(serde_json::to_string(&k).unwrap(), expected);

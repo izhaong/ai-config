@@ -66,6 +66,10 @@ pub fn capability_for(
     }
 
     match (platform, kind) {
+        (_, AssetKind::Prompt) => PlatformCapability::Unsupported {
+            reason: "Prompt requires the source-first projection planner; legacy lifecycle is disabled"
+                .to_owned(),
+        },
         (PlatformId::Cursor | PlatformId::Codex, AssetKind::Skill) => {
             PlatformCapability::DirectLink {
                 target: ProjectionTarget {
@@ -348,6 +352,20 @@ mod tests {
     use crate::model::{AssetKind, PlatformId};
     use crate::projection::model::{DeploymentScope, ProjectionMode, ProjectionSurface};
     use camino::Utf8PathBuf;
+
+    #[test]
+    fn prompt_is_explicitly_reserved_for_the_source_first_planner() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/tmp/projection-contract"),
+        };
+        let capability = capability_for(PlatformId::Cursor, AssetKind::Prompt, "review", &context);
+        assert!(matches!(
+            capability,
+            PlatformCapability::Unsupported { ref reason }
+                if reason.contains("source-first projection planner")
+        ));
+    }
 
     #[test]
     fn codex_user_skills_use_agents_skills() {

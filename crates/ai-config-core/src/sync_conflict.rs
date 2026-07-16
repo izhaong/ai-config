@@ -47,6 +47,11 @@ pub fn detect_sync_conflict(
     baseline_plat: PlatformId,
     target_plat: PlatformId,
 ) -> Result<Option<SyncConflictReport>, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧冲突检测 lifecycle 已禁用".into(),
+        ));
+    }
     if baseline_plat == target_plat {
         return Ok(None);
     }
@@ -101,6 +106,11 @@ pub fn apply_sync_choice(
     source_plat: PlatformId,
     target_plat: PlatformId,
 ) -> Result<String, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧同步 lifecycle 已禁用".into(),
+        ));
+    }
     if source_plat == target_plat {
         return Err(CoreError::InvalidPath("来源与目标平台不能相同".into()));
     }
@@ -173,6 +183,11 @@ fn import_to_source(
             )?;
             return Ok(format!("Hook `{name}` 已导入到 {path}"));
         }
+        AssetKind::Prompt => {
+            return Err(CoreError::InvalidPath(
+                "Prompt 仅能经 source-first projection planner；旧导入 lifecycle 已禁用".into(),
+            ));
+        }
     };
     Ok(format!(
         "{kind:?} `{name}` 已从 {} 导入到 {dest}",
@@ -240,6 +255,11 @@ fn resolve_platform_asset(
             }
             path
         }
+        AssetKind::Prompt => {
+            return Err(CoreError::InvalidPath(
+                "Prompt 仅能经 source-first projection planner；旧解析 lifecycle 已禁用".into(),
+            ));
+        }
     };
 
     let normalized = normalized_asset_fingerprint(scope, kind, name, plat, &preview_path)?;
@@ -293,6 +313,9 @@ fn normalized_asset_fingerprint(
             }
         }
         AssetKind::Hook => read_file_normalized(preview_path),
+        AssetKind::Prompt => Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧指纹 lifecycle 已禁用".into(),
+        )),
     }
 }
 
