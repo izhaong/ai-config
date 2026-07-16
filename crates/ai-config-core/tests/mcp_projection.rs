@@ -1,6 +1,9 @@
 use std::fs;
 
 use ai_config_core::model::PlatformId;
+use ai_config_core::projection::mcp::claude_json::{
+    render_claude_mcp_json, ClaudeJsonServerIntent,
+};
 use ai_config_core::projection::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
 use ai_config_core::projection::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
 use ai_config_core::projection::mcp::source::{
@@ -253,6 +256,30 @@ fn cursor_renderer_removes_only_the_explicitly_owned_unchanged_server() {
 
     assert!(rendered["mcpServers"].get("owned").is_none());
     assert_eq!(rendered["mcpServers"]["foreign"]["command"], "foreign-mcp");
+}
+
+#[test]
+fn claude_renderer_preserves_projects_settings_and_foreign_servers() {
+    let existing = r#"{
+      "mcpServers": {"foreign": {"command": "foreign-mcp"}},
+      "projects": {"/workspace": {"allowedTools": ["Read"]}},
+      "settings": {"theme": "dark"}
+    }"#;
+    let intents = vec![ClaudeJsonServerIntent::new(
+        "alpha",
+        serde_json::json!({"command": "alpha-mcp"}),
+    )];
+
+    let rendered = render_claude_mcp_json(existing, &intents, &[]).unwrap();
+    let rendered: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(
+        rendered["projects"]["/workspace"]["allowedTools"][0],
+        "Read"
+    );
+    assert_eq!(rendered["settings"]["theme"], "dark");
+    assert_eq!(rendered["mcpServers"]["foreign"]["command"], "foreign-mcp");
+    assert_eq!(rendered["mcpServers"]["alpha"]["command"], "alpha-mcp");
 }
 
 #[test]
