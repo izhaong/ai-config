@@ -3,6 +3,7 @@
 //! Platform containers are never sources here. Each `mcp/servers/<name>.json` is parsed as one
 //! server and security-sensitive fields are accepted only as exact `${VAR}` references.
 
+use std::collections::BTreeMap;
 use std::fs;
 
 use camino::Utf8Path;
@@ -10,6 +11,9 @@ use serde_json::Value;
 
 use crate::error::CoreError;
 use crate::model::{McpServer, PlatformId};
+use crate::projection::fingerprint::path_content_digest;
+use crate::projection::model::{SourceLayer, SourceRef};
+use crate::projection::source::OverlayRoots;
 use crate::template::parse_server;
 
 /// One canonical MCP server together with its explicit platform routing policy.
@@ -20,6 +24,13 @@ pub struct McpDefinition {
     pub targets: Vec<PlatformId>,
 }
 
+/// An effective MCP definition retains the canonical layer and exact path that won overlay.
+#[derive(Debug, Clone)]
+pub struct EffectiveMcpDefinition {
+    pub definition: McpDefinition,
+    pub source: SourceRef,
+}
+
 impl McpDefinition {
     pub fn enabled_for(&self, platform: PlatformId) -> bool {
         self.server.enabled && self.targets.contains(&platform)
@@ -28,11 +39,49 @@ impl McpDefinition {
 
 /// Load all canonical per-server definitions in a stable filename order.
 pub fn load_mcp_definitions(asset_root: &Utf8Path) -> Result<Vec<McpDefinition>, CoreError> {
+    definition_paths(asset_root)?
+        .into_iter()
+        .map(|path| parse_definition(&path))
+        .collect()
+}
+
+/// Resolve complete server entries by `project > workspace > global`; no field-level merging is
+/// allowed because a lower-layer credential or target policy must not leak into an override.
+pub fn resolve_effective_mcp_definitions(
+    roots: &OverlayRoots,
+) -> Result<Vec<EffectiveMcpDefinition>, CoreError> {
+    let mut resolved = BTreeMap::new();
+    for (root, layer) in [
+        (Some(&roots.global), SourceLayer::Global),
+        (roots.workspace.as_ref(), SourceLayer::Workspace),
+        (Some(&roots.project), SourceLayer::Project),
+    ] {
+        let Some(root) = root else {
+            continue;
+        };
+        for path in definition_paths(root)? {
+            let definition = parse_definition(&path)?;
+            let source = SourceRef {
+                layer,
+                absolute_path: path.clone(),
+                fingerprint: path_content_digest(&path)?,
+            };
+            resolved.insert(
+                definition.server.name.clone(),
+                EffectiveMcpDefinition { definition, source },
+            );
+        }
+    }
+    Ok(resolved.into_values().collect())
+}
+
+fn definition_paths(asset_root: &Utf8Path) -> Result<Vec<camino::Utf8PathBuf>, CoreError> {
     let servers_root = asset_root.join("mcp/servers");
     if !servers_root.is_dir() {
         return Ok(Vec::new());
     }
-    let mut paths = fs::read_dir(servers_root.as_std_path())?
+    let entries = fs::read_dir(servers_root.as_std_path())?;
+    let mut paths = entries
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let path = camino::Utf8PathBuf::from_path_buf(entry.path()).ok()?;
@@ -40,19 +89,17 @@ pub fn load_mcp_definitions(asset_root: &Utf8Path) -> Result<Vec<McpDefinition>,
         })
         .collect::<Vec<_>>();
     paths.sort();
+    Ok(paths)
+}
 
-    paths
-        .into_iter()
-        .map(|path| {
-            let server = parse_server(&path)?;
-            let raw: Value = serde_json::from_str(&fs::read_to_string(path.as_std_path())?)?;
-            validate_secret_references(&server.config, &path)?;
-            Ok(McpDefinition {
-                server,
-                targets: parse_targets(&raw, &path)?,
-            })
-        })
-        .collect()
+fn parse_definition(path: &Utf8Path) -> Result<McpDefinition, CoreError> {
+    let server = parse_server(path)?;
+    let raw: Value = serde_json::from_str(&fs::read_to_string(path.as_std_path())?)?;
+    validate_secret_references(&server.config, path)?;
+    Ok(McpDefinition {
+        server,
+        targets: parse_targets(&raw, path)?,
+    })
 }
 
 fn parse_targets(raw: &Value, path: &Utf8Path) -> Result<Vec<PlatformId>, CoreError> {

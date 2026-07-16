@@ -1,7 +1,11 @@
 use std::fs;
 
 use ai_config_core::model::PlatformId;
-use ai_config_core::projection::mcp::source::load_mcp_definitions;
+use ai_config_core::projection::mcp::source::{
+    load_mcp_definitions, resolve_effective_mcp_definitions,
+};
+use ai_config_core::projection::model::SourceLayer;
+use ai_config_core::projection::source::OverlayRoots;
 use camino::Utf8Path;
 use tempfile::TempDir;
 
@@ -166,4 +170,46 @@ fn load_mcp_definitions_rejects_suspected_credential_arguments_without_echoing_t
 
     assert!(error.contains("credential"));
     assert!(!error.contains("do-not-log-argument-secret"));
+}
+
+#[test]
+fn resolve_effective_mcp_definitions_overrides_the_whole_server_entry_by_layer() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let global = root.join("global");
+    let workspace = root.join("workspace");
+    let project = root.join("project");
+    write_server(
+        &global,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"global-catalog"}}"#,
+    );
+    write_server(
+        &workspace,
+        "search",
+        r#"{"targets":["codex"],"config":{"command":"workspace-search"}}"#,
+    );
+    write_server(
+        &project,
+        "catalog",
+        r#"{"targets":["claude"],"config":{"command":"project-catalog"}}"#,
+    );
+
+    let resolved = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: global.clone(),
+        workspace: Some(workspace.clone()),
+        project: project.clone(),
+    })
+    .unwrap();
+
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(resolved[0].definition.server.name, "catalog");
+    assert_eq!(resolved[0].source.layer, SourceLayer::Project);
+    assert_eq!(
+        resolved[0].source.absolute_path,
+        project.join("mcp/servers/catalog.json")
+    );
+    assert_eq!(resolved[0].definition.targets, vec![PlatformId::Claude]);
+    assert_eq!(resolved[1].definition.server.name, "search");
+    assert_eq!(resolved[1].source.layer, SourceLayer::Workspace);
 }
