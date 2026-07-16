@@ -1,6 +1,7 @@
 use std::fs;
 
 use ai_config_core::model::PlatformId;
+use ai_config_core::projection::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
 use ai_config_core::projection::mcp::source::{
     load_mcp_definitions, resolve_effective_mcp_definitions,
 };
@@ -212,4 +213,43 @@ fn resolve_effective_mcp_definitions_overrides_the_whole_server_entry_by_layer()
     assert_eq!(resolved[0].definition.targets, vec![PlatformId::Claude]);
     assert_eq!(resolved[1].definition.server.name, "search");
     assert_eq!(resolved[1].source.layer, SourceLayer::Workspace);
+}
+
+#[test]
+fn cursor_renderer_merges_two_owned_servers_once_and_preserves_foreign_and_top_level_fields() {
+    let existing = r#"{
+      "mcpServers": {"foreign": {"command": "foreign-mcp"}},
+      "unknownTopLevel": {"keep": true}
+    }"#;
+    let intents = vec![
+        JsonServerIntent::new("alpha", serde_json::json!({"command": "alpha-mcp"})),
+        JsonServerIntent::new("beta", serde_json::json!({"url": "https://beta.test/mcp"})),
+    ];
+
+    let rendered = render_cursor_mcp_json(existing, &intents, &[]).unwrap();
+    let rendered: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert_eq!(rendered["unknownTopLevel"]["keep"], true);
+    assert_eq!(rendered["mcpServers"]["foreign"]["command"], "foreign-mcp");
+    assert_eq!(rendered["mcpServers"]["alpha"]["command"], "alpha-mcp");
+    assert_eq!(
+        rendered["mcpServers"]["beta"]["url"],
+        "https://beta.test/mcp"
+    );
+}
+
+#[test]
+fn cursor_renderer_removes_only_the_explicitly_owned_unchanged_server() {
+    let existing = r#"{
+      "mcpServers": {
+        "owned": {"command": "owned-mcp"},
+        "foreign": {"command": "foreign-mcp"}
+      }
+    }"#;
+
+    let rendered = render_cursor_mcp_json(existing, &[], &["owned".to_owned()]).unwrap();
+    let rendered: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+    assert!(rendered["mcpServers"].get("owned").is_none());
+    assert_eq!(rendered["mcpServers"]["foreign"]["command"], "foreign-mcp");
 }
