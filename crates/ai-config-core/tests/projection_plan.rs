@@ -10,8 +10,8 @@ use ai_config_core::projection::model::{
     ProjectionRecord, ProjectionSurface, SourceLayer,
 };
 use ai_config_core::projection::planner::{
-    build_projection_plan, PlannerContext, ProjectionActionKind, ProjectionOperation,
-    ProjectionRequest,
+    build_projection_plan, GeneratedContainerRenderer, PlannerContext, ProjectionActionKind,
+    ProjectionOperation, ProjectionRequest,
 };
 use ai_config_core::projection::platform_adapter::TrustRequirement;
 use camino::Utf8Path;
@@ -213,6 +213,11 @@ fn generated_members_for_one_container_are_batched_without_writing() {
         ProjectionActionKind::UpsertGeneratedBatch
     ));
     assert_eq!(plan.actions[0].members.len(), 2);
+    assert_eq!(
+        plan.actions[0].generated_renderer,
+        Some(GeneratedContainerRenderer::McpJson),
+        "the reviewed plan must bind a generated action to one container renderer"
+    );
     assert_eq!(plan.actions[0].target.as_ref().unwrap().path, target);
     assert_eq!(
         plan.actions[0]
@@ -347,7 +352,10 @@ fn unchanged_generated_entry_with_matching_ledger_is_a_noop() {
 
     assert!(matches!(plan.actions[0].kind, ProjectionActionKind::Noop));
     assert_eq!(plan.actions[0].reason_code, "managed_generated_noop");
-    assert_eq!(plan.actions[0].members[0].entry_key.as_deref(), Some("mcpServers.catalog"));
+    assert_eq!(
+        plan.actions[0].members[0].entry_key.as_deref(),
+        Some("mcpServers.catalog")
+    );
     assert_eq!(plan.actions[0].target.as_ref().unwrap().entry_key, None);
 }
 
@@ -560,16 +568,25 @@ fn cleanup_orphans_requires_unchanged_ledger_owned_target_and_stays_read_only() 
         ProjectionActionKind::CleanupOrphan
     ));
     assert_eq!(
-        cleanup.actions[0].ownership_fingerprint.as_ref().map(String::len),
+        cleanup.actions[0]
+            .ownership_fingerprint
+            .as_ref()
+            .map(String::len),
         Some(64),
         "the cleanup selector is a hash of the full ownership record"
     );
-    assert!(target.exists(), "planning must not delete the orphan target");
+    assert!(
+        target.exists(),
+        "planning must not delete the orphan target"
+    );
 
     fs::remove_file(target.as_std_path()).unwrap();
     fs::write(target.as_std_path(), "drifted external content").unwrap();
     let drifted = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
-    assert!(matches!(drifted.actions[0].kind, ProjectionActionKind::ReportOnly));
+    assert!(matches!(
+        drifted.actions[0].kind,
+        ProjectionActionKind::ReportOnly
+    ));
     assert_eq!(drifted.actions[0].state.as_deref(), Some("drifted"));
     assert!(target.exists(), "drifted target must remain untouched");
 }
@@ -604,7 +621,10 @@ fn cleanup_orphans_never_authorizes_a_regular_file_from_a_direct_link_record() {
 
     let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
 
-    assert!(matches!(plan.actions[0].kind, ProjectionActionKind::ReportOnly));
+    assert!(matches!(
+        plan.actions[0].kind,
+        ProjectionActionKind::ReportOnly
+    ));
     assert_eq!(plan.actions[0].state.as_deref(), Some("drifted"));
     assert!(target.exists(), "planning must not delete a regular file");
 }

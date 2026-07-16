@@ -74,6 +74,25 @@ pub enum ProjectionActionKind {
     ReportOnly,
 }
 
+/// The one parser/renderer family permitted to own a generated container. This is explicit plan
+/// metadata rather than a transient planner string, so apply can never select a renderer that was
+/// not part of the reviewed plan digest.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedContainerRenderer {
+    McpJson,
+    McpToml,
+    McpYaml,
+    HookJson,
+    HookToml,
+    HookYaml,
+    GenericJson,
+    GenericToml,
+    GenericYaml,
+    Markdown,
+    ExternalDirectory,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProjectionMember {
     pub id: ProjectionId,
@@ -89,6 +108,9 @@ pub struct ProjectionAction {
     pub precondition: Option<PathFingerprint>,
     /// Required for a cleanup candidate; copied from the ledger and included in its action ID.
     pub ownership_fingerprint: Option<String>,
+    /// Present only for generated container actions. Direct links and report-only actions have no
+    /// renderer and therefore cannot accidentally become generated writes at apply time.
+    pub generated_renderer: Option<GeneratedContainerRenderer>,
     pub members: Vec<ProjectionMember>,
     pub consumers: Vec<PlatformId>,
     /// Stable reason code; does not contain source body, rendered config or secret values.
@@ -143,6 +165,7 @@ pub fn build_projection_plan(
                     target: None,
                     precondition: None,
                     ownership_fingerprint: None,
+                    generated_renderer: None,
                     members: vec![ProjectionMember {
                         id: projection_id(request, asset, ProjectionSurface::Platform(*platform)),
                         source: asset.source_ref(),
@@ -240,7 +263,7 @@ pub fn build_projection_plan(
                         &mut generated,
                         target,
                         mode,
-                        generated_renderer_id(asset.kind, mode),
+                        generated_renderer(asset.kind, mode),
                         contract.consumers,
                         ProjectionMember {
                             id,
@@ -254,6 +277,7 @@ pub fn build_projection_plan(
                     target: None,
                     precondition: None,
                     ownership_fingerprint: None,
+                    generated_renderer: None,
                     members: vec![ProjectionMember {
                         id: projection_id(request, asset, ProjectionSurface::Platform(*platform)),
                         source: asset.source_ref(),
@@ -280,6 +304,7 @@ pub fn build_projection_plan(
                 target: Some(batch.target),
                 precondition: Some(precondition),
                 ownership_fingerprint: None,
+                generated_renderer: None,
                 members: batch.members,
                 consumers: batch.consumers,
                 state: Some("conflict".to_owned()),
@@ -299,6 +324,7 @@ pub fn build_projection_plan(
                     target: Some(batch.target),
                     precondition: Some(precondition),
                     ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
                     members: batch.members,
                     consumers: batch.consumers,
                     state: Some("missing".to_owned()),
@@ -314,6 +340,7 @@ pub fn build_projection_plan(
                     target: Some(batch.target),
                     precondition: Some(precondition),
                     ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
                     members: batch.members,
                     consumers: batch.consumers,
                     state: Some("managed_generated".to_owned()),
@@ -329,6 +356,7 @@ pub fn build_projection_plan(
                     target: Some(batch.target),
                     precondition: Some(precondition),
                     ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
                     members: batch.members,
                     consumers: batch.consumers,
                     state: Some("drifted".to_owned()),
@@ -344,6 +372,7 @@ pub fn build_projection_plan(
                     target: Some(batch.target),
                     precondition: Some(precondition),
                     ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
                     members: batch.members,
                     consumers: batch.consumers,
                     state: Some("foreign".to_owned()),
@@ -356,6 +385,7 @@ pub fn build_projection_plan(
                         target: Some(batch.target),
                         precondition: Some(precondition),
                         ownership_fingerprint: None,
+                        generated_renderer: Some(batch.renderer),
                         members: batch.members,
                         consumers: batch.consumers,
                         state: Some("missing".to_owned()),
@@ -368,6 +398,7 @@ pub fn build_projection_plan(
                     target: Some(batch.target),
                     precondition: Some(precondition),
                     ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
                     members: batch.members,
                     consumers: batch.consumers,
                     state: Some("managed_generated".to_owned()),
@@ -380,6 +411,7 @@ pub fn build_projection_plan(
                         target: Some(batch.target),
                         precondition: Some(precondition),
                         ownership_fingerprint: None,
+                        generated_renderer: Some(batch.renderer),
                         members: batch.members,
                         consumers: batch.consumers,
                         state: Some("managed_generated".to_owned()),
@@ -392,6 +424,7 @@ pub fn build_projection_plan(
                     target: Some(batch.target),
                     precondition: Some(precondition),
                     ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
                     members: batch.members,
                     consumers: batch.consumers,
                     state: Some("drifted".to_owned()),
@@ -403,6 +436,7 @@ pub fn build_projection_plan(
                     target: Some(batch.target),
                     precondition: Some(precondition),
                     ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
                     members: batch.members,
                     consumers: batch.consumers,
                     state: Some("foreign".to_owned()),
@@ -416,9 +450,7 @@ pub fn build_projection_plan(
                     _,
                     _,
                 ) => {
-                    unreachable!(
-                        "cleanup/import/migrate return before generated batching"
-                    )
+                    unreachable!("cleanup/import/migrate return before generated batching")
                 }
             }
         };
@@ -470,7 +502,7 @@ fn finish_plan(
 struct GeneratedBatch {
     target: ProjectionTarget,
     mode: ProjectionMode,
-    renderer_id: String,
+    renderer: GeneratedContainerRenderer,
     consumers: Vec<PlatformId>,
     members: Vec<ProjectionMember>,
     renderer_conflict: bool,
@@ -480,7 +512,7 @@ fn register_generated_member(
     generated: &mut BTreeMap<String, GeneratedBatch>,
     mut target: ProjectionTarget,
     mode: ProjectionMode,
-    renderer_id: String,
+    renderer: GeneratedContainerRenderer,
     consumers: Vec<PlatformId>,
     mut member: ProjectionMember,
 ) {
@@ -493,12 +525,12 @@ fn register_generated_member(
             entry_key: None,
         },
         mode,
-        renderer_id: renderer_id.clone(),
+        renderer,
         consumers: consumers.clone(),
         members: Vec::new(),
         renderer_conflict: false,
     });
-    if batch.mode != mode || batch.renderer_id != renderer_id {
+    if batch.mode != mode || batch.renderer != renderer {
         batch.renderer_conflict = true;
     }
     merge_consumers(&mut batch.consumers, &consumers);
@@ -511,10 +543,26 @@ fn register_generated_member(
     }
 }
 
-/// T005 不承担跨 domain renderer 合并；只有同一 domain+format 才可进入同一 batch。
-/// T007/T008 引入共享 container renderer 后，可将兼容 domain 显式映射到相同 ID。
-fn generated_renderer_id(kind: AssetKind, mode: ProjectionMode) -> String {
-    format!("{kind:?}:{mode:?}")
+/// T007 keeps MCP and Hook renderers separate even where they happen to target the same format.
+/// T008 may explicitly introduce a shared cross-domain adapter only after it can preserve both
+/// schemas in one parse/render transaction.
+fn generated_renderer(kind: AssetKind, mode: ProjectionMode) -> GeneratedContainerRenderer {
+    match (kind, mode) {
+        (AssetKind::Mcp, ProjectionMode::GeneratedJson) => GeneratedContainerRenderer::McpJson,
+        (AssetKind::Mcp, ProjectionMode::GeneratedToml) => GeneratedContainerRenderer::McpToml,
+        (AssetKind::Mcp, ProjectionMode::GeneratedYaml) => GeneratedContainerRenderer::McpYaml,
+        (AssetKind::Hook, ProjectionMode::GeneratedJson) => GeneratedContainerRenderer::HookJson,
+        (AssetKind::Hook, ProjectionMode::GeneratedToml) => GeneratedContainerRenderer::HookToml,
+        (AssetKind::Hook, ProjectionMode::GeneratedYaml) => GeneratedContainerRenderer::HookYaml,
+        (_, ProjectionMode::GeneratedJson) => GeneratedContainerRenderer::GenericJson,
+        (_, ProjectionMode::GeneratedToml) => GeneratedContainerRenderer::GenericToml,
+        (_, ProjectionMode::GeneratedYaml) => GeneratedContainerRenderer::GenericYaml,
+        (_, ProjectionMode::GeneratedMarkdown) => GeneratedContainerRenderer::Markdown,
+        (_, ProjectionMode::ExternalDirectory) => GeneratedContainerRenderer::ExternalDirectory,
+        (_, ProjectionMode::DirectLink | ProjectionMode::CopyFallback) => {
+            unreachable!("direct/copy modes are not generated containers")
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -563,7 +611,7 @@ fn plan_hook_asset(
                     generated,
                     binding_target,
                     binding_mode,
-                    generated_renderer_id(AssetKind::Hook, binding_mode),
+                    generated_renderer(AssetKind::Hook, binding_mode),
                     contract.consumers.clone(),
                     ProjectionMember {
                         id: projection_id(
@@ -603,6 +651,7 @@ fn plan_hook_asset(
                 target: None,
                 precondition: None,
                 ownership_fingerprint: None,
+                generated_renderer: None,
                 members: vec![ProjectionMember {
                     id: projection_id(request, asset, ProjectionSurface::Platform(*platform)),
                     source: asset.source_ref(),
@@ -630,6 +679,7 @@ fn hook_report_only(
         target: None,
         precondition: None,
         ownership_fingerprint: None,
+        generated_renderer: None,
         members: vec![ProjectionMember {
             id: projection_id(request, asset, ProjectionSurface::Platform(platform)),
             source: asset.source_ref(),
@@ -665,6 +715,7 @@ fn plan_project_entry_prompt(
             target: None,
             precondition: None,
             ownership_fingerprint: None,
+            generated_renderer: None,
             members: vec![ProjectionMember {
                 id: projection_id(request, asset, ProjectionSurface::ProjectEntry),
                 source: asset.source_ref(),
@@ -777,6 +828,7 @@ fn plan_direct_link(
         target: Some(intent.target),
         precondition: Some(precondition),
         ownership_fingerprint: None,
+        generated_renderer: None,
         members: vec![ProjectionMember {
             id: intent.id,
             source: intent.source,
@@ -894,6 +946,7 @@ fn append_orphan_candidates(
             }),
             precondition: Some(path_fingerprint(&record.target_path)?),
             ownership_fingerprint: None,
+            generated_renderer: None,
             members: Vec::new(),
             consumers: Vec::new(),
             state: Some("orphan_candidate".to_owned()),
@@ -943,13 +996,13 @@ fn build_orphan_cleanup_plan(
             entry_key: record.entry_key.clone(),
         };
         match path_fingerprint(&record.target_path) {
-            Ok(precondition) if orphan_cleanup_is_proven(&record, &precondition) =>
-            {
+            Ok(precondition) if orphan_cleanup_is_proven(&record, &precondition) => {
                 actions.push(ProjectionAction {
                     kind: ProjectionActionKind::CleanupOrphan,
                     target: Some(target),
                     precondition: Some(precondition),
                     ownership_fingerprint: Some(orphan_ownership_fingerprint(&record)),
+                    generated_renderer: None,
                     members: Vec::new(),
                     consumers: Vec::new(),
                     state: Some("managed_orphan".to_owned()),
@@ -963,6 +1016,7 @@ fn build_orphan_cleanup_plan(
                 target: Some(target),
                 precondition: Some(precondition),
                 ownership_fingerprint: None,
+                generated_renderer: None,
                 members: Vec::new(),
                 consumers: Vec::new(),
                 state: Some("drifted".to_owned()),
@@ -975,6 +1029,7 @@ fn build_orphan_cleanup_plan(
                 target: Some(target),
                 precondition: None,
                 ownership_fingerprint: None,
+                generated_renderer: None,
                 members: Vec::new(),
                 consumers: Vec::new(),
                 state: Some("conflict".to_owned()),
@@ -1201,6 +1256,7 @@ struct PlanDigestAction<'a> {
     target: &'a Option<ProjectionTarget>,
     precondition: &'a Option<PathFingerprint>,
     ownership_fingerprint: &'a Option<String>,
+    generated_renderer: &'a Option<GeneratedContainerRenderer>,
     members: &'a [ProjectionMember],
     consumers: &'a [PlatformId],
     state: &'a Option<String>,
@@ -1214,6 +1270,7 @@ impl<'a> PlanDigestAction<'a> {
             target: &action.target,
             precondition: &action.precondition,
             ownership_fingerprint: &action.ownership_fingerprint,
+            generated_renderer: &action.generated_renderer,
             members: &action.members,
             consumers: &action.consumers,
             state: &action.state,
@@ -1238,7 +1295,10 @@ mod tests {
         ProjectionId, ProjectionMode, ProjectionSurface, ProjectionTarget, SourceLayer, SourceRef,
     };
 
-    use super::{normalized_target_path, register_generated_member, GeneratedBatch, ProjectionMember};
+    use super::{
+        normalized_target_path, register_generated_member, GeneratedBatch,
+        GeneratedContainerRenderer, ProjectionMember,
+    };
 
     #[test]
     fn target_normalization_collapses_separator_and_current_directory_only() {
@@ -1278,7 +1338,7 @@ mod tests {
                 entry_key: Some("mcpServers.catalog".to_owned()),
             },
             ProjectionMode::GeneratedJson,
-            "Mcp:GeneratedJson".to_owned(),
+            GeneratedContainerRenderer::McpJson,
             vec![PlatformId::Cursor],
             member("catalog"),
         );
@@ -1289,14 +1349,17 @@ mod tests {
                 entry_key: Some("mcpServers.search".to_owned()),
             },
             ProjectionMode::GeneratedJson,
-            "Mcp:GeneratedJson".to_owned(),
+            GeneratedContainerRenderer::McpJson,
             vec![PlatformId::Cursor],
             member("search"),
         );
 
         assert_eq!(batches.len(), 1);
         let batch = batches.values().next().unwrap();
-        assert_eq!(batch.target.path, Utf8PathBuf::from("/tmp/deploy/.cursor/mcp.json"));
+        assert_eq!(
+            batch.target.path,
+            Utf8PathBuf::from("/tmp/deploy/.cursor/mcp.json")
+        );
         assert_eq!(batch.target.entry_key, None);
         assert_eq!(
             batch
