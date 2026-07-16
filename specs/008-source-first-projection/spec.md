@@ -163,7 +163,7 @@ Canonical skill 是 `skills/<name>/` 整目录，`SKILL.md` 必须存在；脚�
 
 | 平台 | 用户全局目标 | 项目目标 | 加载/调用语义 | ai-config 投影决策 |
 | --- | --- | --- | --- | --- |
-| Cursor | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持嵌套项目 skills。 | 与 Codex 共用 `shared_target + direct_link`。`.cursor/skills` 是官方兼容位置，但只作为 alternate/legacy inventory，不作为新默认目标。 |
+| Cursor | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持嵌套项目 skills。 | 与 Codex 共用 `shared_target + direct_link`。`.cursor/skills` 仍是官方支持的 alternate location；为避免同一 skill 被投影两次，ai-config 只盘点/兼容该位置，不作为新默认目标。 |
 | Codex | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/`，按 CWD 到 repo root 发现 | 默认允许 implicit invocation；用户可 `$skill-name`；支持链接后的 skill 目录。 | 与 Cursor 共用 `shared_target + direct_link`。`~/.codex/skills` 和 `<repo>/.codex/skills` 只作 legacy inventory。 |
 | Claude | `~/.claude/skills/<name>/` | `<repo>/.claude/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持父级、嵌套目录和目录软链。 | `direct_link`。 |
 | Hermes | `~/.hermes/config.yaml` 的 `skills.external_dirs` | 无官方 project-scoped skill target | 自动进入 skill index，也可 `/skill-name`；本地 `~/.hermes/skills` 优先于 external dir 同名项。 | 全局为 `external_directory`，指向 canonical global skills root；项目为 `unsupported`，不得把项目 skill 写进全局 Hermes 命名空间。 |
