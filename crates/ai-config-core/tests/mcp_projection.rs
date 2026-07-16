@@ -1,6 +1,7 @@
 use std::fs;
 
 use ai_config_core::model::PlatformId;
+use ai_config_core::projection::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
 use ai_config_core::projection::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
 use ai_config_core::projection::mcp::source::{
     load_mcp_definitions, resolve_effective_mcp_definitions,
@@ -252,4 +253,80 @@ fn cursor_renderer_removes_only_the_explicitly_owned_unchanged_server() {
 
     assert!(rendered["mcpServers"].get("owned").is_none());
     assert_eq!(rendered["mcpServers"]["foreign"]["command"], "foreign-mcp");
+}
+
+#[test]
+fn codex_renderer_preserves_comments_unknown_tables_and_foreign_servers() {
+    let existing = r#"# user comment
+model = "gpt-5"
+
+[features]
+keep = true
+
+[mcp_servers.foreign] # foreign comment
+command = "foreign-mcp"
+"#;
+    let intents = vec![
+        TomlServerIntent::new(
+            "alpha",
+            serde_json::json!({
+                "command": "alpha-mcp",
+                "args": ["--serve", "alpha"],
+                "env": {"ALPHA_TOKEN": "${ALPHA_TOKEN}"}
+            }),
+        ),
+        TomlServerIntent::new(
+            "beta",
+            serde_json::json!({
+                "url": "https://beta.test/mcp",
+                "headers": {"X-Trace": "trace"}
+            }),
+        ),
+    ];
+
+    let rendered = render_codex_mcp_toml(existing, &intents, &[]).unwrap();
+    let parsed: toml::Value = toml::from_str(&rendered).unwrap();
+
+    assert!(rendered.contains("# user comment"));
+    assert!(rendered.contains("# foreign comment"));
+    assert_eq!(parsed["model"].as_str(), Some("gpt-5"));
+    assert_eq!(parsed["features"]["keep"].as_bool(), Some(true));
+    assert_eq!(
+        parsed["mcp_servers"]["foreign"]["command"].as_str(),
+        Some("foreign-mcp")
+    );
+    assert_eq!(
+        parsed["mcp_servers"]["alpha"]["command"].as_str(),
+        Some("alpha-mcp")
+    );
+    assert_eq!(
+        parsed["mcp_servers"]["alpha"]["env"]["ALPHA_TOKEN"].as_str(),
+        Some("${ALPHA_TOKEN}")
+    );
+    assert_eq!(
+        parsed["mcp_servers"]["beta"]["headers"]["X-Trace"].as_str(),
+        Some("trace")
+    );
+}
+
+#[test]
+fn codex_renderer_removes_only_explicit_owned_server_and_rejects_non_table_container() {
+    let existing = r#"mcp_servers = "not-a-table""#;
+    assert!(render_codex_mcp_toml(existing, &[], &[]).is_err());
+
+    let existing = r#"
+[mcp_servers.owned]
+command = "owned-mcp"
+
+[mcp_servers.foreign]
+command = "foreign-mcp"
+"#;
+    let rendered = render_codex_mcp_toml(existing, &[], &["owned".to_owned()]).unwrap();
+    let parsed: toml::Value = toml::from_str(&rendered).unwrap();
+
+    assert!(parsed["mcp_servers"].get("owned").is_none());
+    assert_eq!(
+        parsed["mcp_servers"]["foreign"]["command"].as_str(),
+        Some("foreign-mcp")
+    );
 }
