@@ -241,6 +241,351 @@ fn mcp_apply_updates_only_the_planned_cursor_entry_and_records_entry_ownership()
 }
 
 #[test]
+fn mcp_retract_removes_only_the_ledger_proven_entry_and_preserves_foreign_content() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#,
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let install_plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    apply_projection_plan(
+        &install_plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&install_plan),
+    )
+    .unwrap();
+
+    let mut retract_request = request.clone();
+    retract_request.operation = ProjectionOperation::Retract;
+    let retract_plan = build_mcp_projection_plan(
+        &retract_request,
+        &definitions,
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    assert!(matches!(
+        retract_plan.actions[0].kind,
+        ProjectionActionKind::RemoveGeneratedEntries
+    ));
+
+    let report = apply_projection_plan(
+        &retract_plan,
+        &ExecutorContext::new(
+            &ledger,
+            retract_request.deploy_base.clone(),
+            root.join("retract-backups"),
+        ),
+        ApplyOptions::for_plan(&retract_plan),
+    )
+    .unwrap();
+
+    assert_eq!(report.changed, 1);
+    let rendered: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(target.as_std_path()).unwrap()).unwrap();
+    assert_eq!(rendered["userField"], true);
+    assert_eq!(rendered["mcpServers"]["foreign"]["command"], "external");
+    assert!(rendered["mcpServers"].get("catalog").is_none());
+    assert!(ledger
+        .get(&retract_plan.actions[0].mcp_members[0].id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn mcp_retract_keeps_ledger_owned_entries_addressable_after_disable_or_target_removal() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"enabled":true,"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let initial_definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let install_plan = build_mcp_projection_plan(
+        &request,
+        &initial_definitions,
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    apply_projection_plan(
+        &install_plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&install_plan),
+    )
+    .unwrap();
+
+    let mut retract_request = request.clone();
+    retract_request.operation = ProjectionOperation::Retract;
+    for replacement in [
+        r#"{"enabled":false,"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+        r#"{"enabled":true,"targets":["codex"],"config":{"command":"catalog-mcp"}}"#,
+    ] {
+        write_server(root, "catalog", replacement);
+        let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+            global: root.to_path_buf(),
+            workspace: None,
+            project: root.join("empty-project"),
+        })
+        .unwrap();
+        let plan = build_mcp_projection_plan(
+            &retract_request,
+            &definitions,
+            &PlannerContext::new(&ledger),
+        )
+        .unwrap();
+
+        assert_eq!(plan.actions.len(), 1);
+        assert!(matches!(
+            plan.actions[0].kind,
+            ProjectionActionKind::RemoveGeneratedEntries
+        ));
+    }
+}
+
+#[test]
+fn mcp_retract_refuses_a_stale_entry_fingerprint_without_writing() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{},"userField":true}"#,
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let install_plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    apply_projection_plan(
+        &install_plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&install_plan),
+    )
+    .unwrap();
+    let stale = r#"{"mcpServers":{"catalog":{"command":"changed-by-user"}},"userField":true}"#;
+    fs::write(target.as_std_path(), stale).unwrap();
+
+    let mut retract_request = request.clone();
+    retract_request.operation = ProjectionOperation::Retract;
+    let plan = build_mcp_projection_plan(
+        &retract_request,
+        &definitions,
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    assert!(matches!(
+        plan.actions[0].kind,
+        ProjectionActionKind::ReportOnly
+    ));
+    assert_eq!(plan.actions[0].reason_code, "generated_target_drifted");
+
+    let error = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(
+            &ledger,
+            request.deploy_base.clone(),
+            root.join("retract-backups"),
+        ),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error
+            .report
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("blocking_conflict")
+    );
+    assert_eq!(fs::read_to_string(target.as_std_path()).unwrap(), stale);
+}
+
+#[test]
+fn mcp_retract_refuses_a_legacy_record_without_entry_fingerprint_without_writing() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{},"userField":true}"#,
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let install_plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    apply_projection_plan(
+        &install_plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&install_plan),
+    )
+    .unwrap();
+    let id = install_plan.actions[0].mcp_members[0].id.clone();
+    let mut legacy = ledger.get(&id).unwrap().unwrap();
+    legacy.entry_fingerprint = None;
+    ledger
+        .apply_batch(&[LedgerMutation::Upsert(legacy)])
+        .unwrap();
+    let before = fs::read_to_string(target.as_std_path()).unwrap();
+
+    let mut retract_request = request.clone();
+    retract_request.operation = ProjectionOperation::Retract;
+    let plan = build_mcp_projection_plan(
+        &retract_request,
+        &definitions,
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+    assert!(matches!(
+        plan.actions[0].kind,
+        ProjectionActionKind::ReportOnly
+    ));
+    assert_eq!(plan.actions[0].reason_code, "generated_ownership_unproven");
+
+    let error = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(
+            &ledger,
+            request.deploy_base.clone(),
+            root.join("retract-backups"),
+        ),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error
+            .report
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("blocking_conflict")
+    );
+    assert_eq!(fs::read_to_string(target.as_std_path()).unwrap(), before);
+}
+
+#[test]
+fn mcp_retract_restores_the_original_container_when_ledger_commit_fails() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#,
+    )
+    .unwrap();
+    let planning_ledger = MemoryProjectionLedger::default();
+    let install_plan = build_mcp_projection_plan(
+        &request,
+        &definitions,
+        &PlannerContext::new(&planning_ledger),
+    )
+    .unwrap();
+    apply_projection_plan(
+        &install_plan,
+        &ExecutorContext::new(
+            &planning_ledger,
+            request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&install_plan),
+    )
+    .unwrap();
+    let original = fs::read_to_string(target.as_std_path()).unwrap();
+
+    let mut retract_request = request.clone();
+    retract_request.operation = ProjectionOperation::Retract;
+    let plan = build_mcp_projection_plan(
+        &retract_request,
+        &definitions,
+        &PlannerContext::new(&planning_ledger),
+    )
+    .unwrap();
+    let error = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(
+            &FailingMcpLedger,
+            retract_request.deploy_base.clone(),
+            root.join("retract-backups"),
+        ),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error
+            .report
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("ledger_apply_failed")
+    );
+    assert_eq!(fs::read_to_string(target.as_std_path()).unwrap(), original);
+}
+
+#[test]
 fn mcp_apply_refuses_a_source_that_changed_after_planning_before_writing() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();

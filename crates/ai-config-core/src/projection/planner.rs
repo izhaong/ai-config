@@ -706,9 +706,21 @@ pub fn build_mcp_projection_plan(
     let mut warnings = Vec::new();
     for definition in &definitions {
         let server = &definition.definition.server;
-        let missing_secret_keys = context.missing_mcp_secret_keys(&server.secret_keys)?;
+        // Retraction is deliberately secret-free. A disabled server or an unavailable resolver
+        // must not prevent removal of an already ledger-proven entry.
+        let missing_secret_keys = if request.operation == ProjectionOperation::Sync {
+            context.missing_mcp_secret_keys(&server.secret_keys)?
+        } else {
+            Vec::new()
+        };
         for platform in &platforms {
-            if !definition.definition.enabled_for(*platform) {
+            let active_for_platform = definition.definition.enabled_for(*platform);
+            if !active_for_platform
+                && !matches!(
+                    request.operation,
+                    ProjectionOperation::Retract | ProjectionOperation::Uninstall
+                )
+            {
                 continue;
             }
             let asset = EffectiveAsset {
@@ -737,7 +749,18 @@ pub fn build_mcp_projection_plan(
                         ));
                         continue;
                     };
-                    if !missing_secret_keys.is_empty() {
+                    let id = projection_id(request, &asset, surface);
+                    if !active_for_platform
+                        && !mcp_retract_has_ledger_candidate(context, &id, &mut warnings)
+                    {
+                        // A currently disabled/non-targeted source must not manufacture a
+                        // retract candidate. Only its existing ledger identity can make it
+                        // addressable for an explicit retract/uninstall operation.
+                        continue;
+                    }
+                    if request.operation == ProjectionOperation::Sync
+                        && !missing_secret_keys.is_empty()
+                    {
                         actions.push(mcp_missing_secret_report_only(
                             request,
                             &definition.source,
@@ -759,7 +782,7 @@ pub fn build_mcp_projection_plan(
                         generated_renderer(AssetKind::Mcp, mode),
                         contract.consumers,
                         McpProjectionMember {
-                            id: projection_id(request, &asset, surface),
+                            id,
                             name: server.name.clone(),
                             source: definition.source.clone(),
                             entry_key,
@@ -803,6 +826,32 @@ pub fn build_mcp_projection_plan(
         )?);
     }
     finish_plan(request, actions, warnings)
+}
+
+fn mcp_retract_has_ledger_candidate(
+    context: &PlannerContext<'_>,
+    id: &ProjectionId,
+    warnings: &mut Vec<PlanWarning>,
+) -> bool {
+    match context.ledger.get(id) {
+        Ok(Some(_)) => true,
+        Ok(None) => false,
+        Err(_) => {
+            if !warnings
+                .iter()
+                .any(|warning| warning.code == "ledger_unavailable")
+            {
+                warnings.push(PlanWarning {
+                    code: "ledger_unavailable".to_owned(),
+                    message: "projection ledger is unavailable; ownership is not proven".to_owned(),
+                });
+            }
+            // Continue to the regular entry-level ownership check, which becomes report-only
+            // when the ledger cannot provide proof. This is safer than silently hiding a
+            // requested retract candidate.
+            true
+        }
+    }
 }
 
 fn mcp_report_only(

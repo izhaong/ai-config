@@ -487,11 +487,20 @@ pub fn apply_projection_plan(
                     }
                 })
             }
-            ProjectionActionKind::RemoveGeneratedEntries | ProjectionActionKind::CleanupOrphan => {
-                Err(CoreError::NotImplemented(
-                    "projection action requires its dedicated transactional executor slice",
-                ))
+            ProjectionActionKind::RemoveGeneratedEntries => {
+                apply_mcp_generated_retraction(action, context).map(|applied| {
+                    mutations.extend(applied.mutations);
+                    if let Some(undo_action) = applied.undo {
+                        undo.push((index, undo_action));
+                        report.set_status(index, ApplyActionStatus::Applied);
+                    } else {
+                        report.set_status(index, ApplyActionStatus::Skipped);
+                    }
+                })
             }
+            ProjectionActionKind::CleanupOrphan => Err(CoreError::NotImplemented(
+                "projection action requires its dedicated transactional executor slice",
+            )),
             ProjectionActionKind::ReportOnly => {
                 report.set_status(index, ApplyActionStatus::Skipped);
                 Ok(())
@@ -972,7 +981,7 @@ fn apply_mcp_generated_upsert(
         super::model::FingerprintType::File => fs::read_to_string(target.path.as_std_path())?,
         _ => unreachable!("validated above"),
     };
-    let rendered = render_mcp_container(renderer, &existing, &intents)?;
+    let rendered = render_mcp_container(renderer, &existing, &intents, &[])?;
     let entry_fingerprints = inspect_mcp_entries(renderer, &rendered)?
         .into_iter()
         .map(|entry| (entry.name, entry.digest))
@@ -1051,6 +1060,113 @@ fn apply_mcp_generated_upsert(
             created_parents: parent.created_parents,
         }),
         skipped_members,
+    })
+}
+
+/// Retract only entries that the reviewed plan already proved against the ledger. This never
+/// reads canonical source definitions or secrets: deletion is based on the plan-bound entry
+/// names, the target precondition, and the entry-level ownership proof established by planning.
+fn apply_mcp_generated_retraction(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<AppliedGeneratedMcp, CoreError> {
+    if !action.members.is_empty() || action.mcp_members.is_empty() {
+        return Err(CoreError::InvalidPath(
+            "generated removal is not a source-first MCP batch".to_owned(),
+        ));
+    }
+    let renderer = action
+        .generated_renderer
+        .ok_or_else(|| CoreError::InvalidPath("MCP generated action has no renderer".to_owned()))?;
+    if !matches!(
+        renderer,
+        GeneratedContainerRenderer::McpJson
+            | GeneratedContainerRenderer::McpToml
+            | GeneratedContainerRenderer::McpYaml
+    ) {
+        return Err(CoreError::InvalidPath(
+            "generated removal renderer is not an MCP container renderer".to_owned(),
+        ));
+    }
+    let target = action
+        .target
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("MCP generated action has no target".to_owned()))?;
+    let expected = action.precondition.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("MCP generated action has no target precondition".to_owned())
+    })?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected {
+        return Err(CoreError::InvalidPath(
+            "projection target changed after the plan was created".to_owned(),
+        ));
+    }
+    if actual.entry_type != super::model::FingerprintType::File {
+        return Err(CoreError::InvalidPath(
+            "MCP generated removal requires an existing regular target file".to_owned(),
+        ));
+    }
+
+    let existing = fs::read_to_string(target.path.as_std_path())?;
+    let mut removals = action
+        .mcp_members
+        .iter()
+        .map(|member| member.name.clone())
+        .collect::<Vec<_>>();
+    removals.sort();
+    removals.dedup();
+    let rendered = render_mcp_container(renderer, &existing, &[], &removals)?;
+    let remaining_entries = inspect_mcp_entries(renderer, &rendered)?;
+    if remaining_entries
+        .iter()
+        .any(|entry| removals.binary_search(&entry.name).is_ok())
+    {
+        return Err(CoreError::InvalidPath(
+            "MCP renderer did not remove every planned server entry".to_owned(),
+        ));
+    }
+
+    let parent = ensure_safe_target_parent(&target.path, &context.deploy_base)?;
+    let temporary = generated_temporary_path(&parent.path, &target.path)?;
+    if let Err(error) = write_private_generated_file(&temporary, rendered.as_bytes()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    let rendered_digest = path_fingerprint(&temporary)?
+        .digest
+        .ok_or_else(|| CoreError::InvalidPath("rendered MCP target has no digest".to_owned()))?;
+    let mutations = action
+        .mcp_members
+        .iter()
+        .map(|member| LedgerMutation::Remove(member.id.clone()))
+        .collect::<Vec<_>>();
+    let backup = allocate_backup_path(&context.backup_root, &target.path)?;
+    write_backup_manifest(&backup, &target.path, expected)?;
+    if let Err(error) = fs::rename(target.path.as_std_path(), backup.as_std_path()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+    if let Err(error) = set_private_file_permissions(&backup) {
+        let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    if let Err(error) = fs::rename(temporary.as_std_path(), target.path.as_std_path()) {
+        let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+
+    Ok(AppliedGeneratedMcp {
+        mutations,
+        undo: Some(FileUndo::RestoreGenerated {
+            target: target.path.clone(),
+            rendered_digest,
+            backup: Some(backup),
+            created_parents: parent.created_parents,
+        }),
+        skipped_members: Vec::new(),
     })
 }
 
@@ -1199,6 +1315,7 @@ fn render_mcp_container(
     renderer: GeneratedContainerRenderer,
     existing: &str,
     intents: &[HydratedMcpIntent],
+    removals: &[String],
 ) -> Result<String, CoreError> {
     match renderer {
         GeneratedContainerRenderer::McpJson => render_cursor_mcp_json(
@@ -1207,7 +1324,7 @@ fn render_mcp_container(
                 .iter()
                 .map(|intent| JsonServerIntent::new(&intent.name, intent.config.clone()))
                 .collect::<Vec<_>>(),
-            &[],
+            removals,
         ),
         GeneratedContainerRenderer::McpToml => render_codex_mcp_toml(
             existing,
@@ -1215,7 +1332,7 @@ fn render_mcp_container(
                 .iter()
                 .map(|intent| TomlServerIntent::new(&intent.name, intent.config.clone()))
                 .collect::<Vec<_>>(),
-            &[],
+            removals,
         ),
         GeneratedContainerRenderer::McpYaml => render_hermes_mcp_yaml(
             existing,
@@ -1223,7 +1340,7 @@ fn render_mcp_container(
                 .iter()
                 .map(|intent| YamlServerIntent::new(&intent.name, intent.config.clone()))
                 .collect::<Vec<_>>(),
-            &[],
+            removals,
         ),
         _ => Err(CoreError::InvalidPath(
             "generated upsert renderer is not an MCP container renderer".to_owned(),
