@@ -500,12 +500,14 @@ Planner 必须先规范化 target path，再按 `target.path` 聚合所有 gener
 
 ### 2. Platform contract matrix
 
-| Platform | Skills | Rules / entry prompt | Agents | MCP | Strategy |
-| --- | --- | --- | --- | --- | --- |
-| Cursor | `.cursor/skills/<name>` | `.cursor/rules/<name>.mdc`；消费 project-entry `AGENTS.md` | `.cursor/agents/<name>` | `.cursor/mcp.json` | direct link + shared entry + JSON merge |
-| Codex | user/repo `.agents/skills/<name>` | 消费 project-entry `AGENTS.md`；不写 `.codex/rules` | `$CODEX_HOME/agents/*.toml` / project `.codex/agents` | `.codex/config.toml#mcp_servers` | direct link + shared entry + TOML merge |
-| Claude | `.claude/skills/<name>` | `.claude/rules/<name>.md`；`CLAUDE.md` 最小引用 `AGENTS.md` | `.claude/agents/<name>.md` | user `~/.claude.json`；project `.mcp.json` | direct/generated + JSON merge |
-| Hermes | user `config.yaml#skills.external_dirs` 指向 canonical global skills；project skill unsupported | project 可消费 shared `AGENTS.md`；global prompt unsupported | static agent unsupported | user `config.yaml#mcp_servers`；workspace/project unsupported | user YAML batch + shared entry；project 不写 global config |
+`spec.md` 的“平台资产契约”是路径、scope、格式和 unsupported 边界的权威来源；本表只记录实现摘要，不得独立扩展平台路径。
+
+| Platform | Skills | Rules | MCP | Agents | Commands | Hooks |
+| --- | --- | --- | --- | --- | --- | --- |
+| Cursor | user/repo `.agents/skills/<name>`，与 Codex 共享 target | global User Rules 无文件投影；project `.cursor/rules/<name>.mdc` | user/project `.cursor/mcp.json#mcpServers` | user/project `.cursor/agents/<name>.md` | user/project `.cursor/commands/<name>.md` | user/project `.cursor/hooks.json` + hooks unit |
+| Codex | user/repo `.agents/skills/<name>`，与 Cursor 共享 target | instruction rule unsupported；项目指导走 `AGENTS.md`，绝不写 `.codex/rules` | user/project `.codex/config.toml#mcp_servers` | user/project `.codex/agents/<name>.toml` | unsupported；仅盘点 legacy `~/.codex/prompts` | user/project `.codex/hooks.json` + hooks unit |
+| Claude | user/project `.claude/skills/<name>` | user/project `.claude/rules/<name>.md` | user `~/.claude.json`；project `.mcp.json` | user/project `.claude/agents/<name>.md` | user/project `.claude/commands/<name>.md`（legacy-compatible） | user/project `.claude/settings.json#hooks` + hooks unit |
+| Hermes | user `config.yaml#skills.external_dirs`；project unsupported | global unsupported；project 兼容消费 `.cursor/rules` shared target | user `config.yaml#mcp_servers`；workspace/project unsupported | static agent unsupported | unsupported，转为 Skill | user `config.yaml#hooks`；workspace/project unsupported |
 
 Legacy `.codex/skills`、`.codex/mcp.json`、`.claude/mcp.json` 只进入 inventory，不再作为 deploy target。
 
@@ -672,6 +674,8 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - [x] **T001.5 Add secret diagnostics without values**：doctor 仅报告 asset-root 中 literal env/header 数、历史 `mcp-secrets.env*` 路径和 mode；不得读取后输出值。增加 sentinel test 扫描 stdout/stderr/JSON。
 - [x] **T001.6 Verify GREEN**：运行 `cargo test -p ai-config-core -p ai-config-cli`；预期全部通过，且 `git status --short` 只包含本任务源码/测试变更。
 - [x] **T001.7 Commit checkpoint**：`git commit -m "fix(core): 封死未托管资产误删与只读写入"`。
+- [x] **T001.8 Audit regression closure**：补充并先验证 RED：删除 source 时保留未托管普通目录、第三方软链接和无 ownership 的同名平台 MCP；`materialize::retract` 无 expected source 时拒绝任何软链接，只有 canonical-equivalent 的精确 legacy symlink 可收回。验证：`cargo test -p ai-config-core source_delete_preserves_ -- --nocapture`、`cargo test -p ai-config-core retract_ -- --nocapture`、`cargo test -p ai-config-core -p ai-config-cli -- --test-threads=1`。
+- [ ] **T001.9 Follow-up commit checkpoint**：仅提交 T001.8 的安全回归、最小修复和计划记录；不得夹带当前 GUI 或其它 feature 的工作树改动。
 
 ### T002 — 统一 projection model、fingerprint 与 optional ledger
 
@@ -709,7 +713,7 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 
 **Produces:** `TargetContext`、`PlatformCapability`、新 `PlatformAdapter` trait。
 
-- [ ] **T003.1 Write failing contract tests**：`codex_user_skills_use_agents_skills`、`codex_mcp_uses_config_toml`、`claude_user_mcp_uses_claude_json`、`claude_project_mcp_uses_project_dot_mcp_json`、`hermes_uses_external_dirs_for_global_skills`、`hermes_project_skill_is_unsupported`、`hermes_project_mcp_is_unsupported_and_never_touches_global_config`、`hermes_project_hook_is_unsupported_and_never_touches_global_config`、`legacy_paths_are_inventory_only`、`platform_target_cannot_escape_scope`、`global_source_project_projection_stays_under_project_root`、`workspace_or_project_generated_target_never_escapes_deploy_base`。
+- [ ] **T003.1 Write failing contract tests in fixed asset order**：按 `Skills → Rules → MCP → Agents → Commands → Hooks` 逐类覆盖 `spec.md` 中四个平台的 global/project target、格式、projection mode、shared target、trust 与 unsupported 边界；至少保留 `codex_user_skills_use_agents_skills`、`cursor_and_codex_share_one_agents_skill_target`、`codex_instruction_rule_never_uses_execution_rules`、`codex_mcp_uses_config_toml`、`claude_user_mcp_uses_claude_json`、`claude_project_mcp_uses_project_dot_mcp_json`、`codex_agent_uses_toml_not_subagents`、`codex_command_is_unsupported_not_codex_commands`、`hermes_uses_external_dirs_for_global_skills`、`hermes_project_skill_is_unsupported`、`hermes_project_mcp_is_unsupported_and_never_touches_global_config`、`hermes_project_hook_is_unsupported_and_never_touches_global_config`、`legacy_paths_are_inventory_only`、`platform_target_cannot_escape_scope`、`global_source_project_projection_stays_under_project_root`、`workspace_or_project_generated_target_never_escapes_deploy_base`。每一类先记录 RED 证据，上一类未通过不得进入下一类。
 - [ ] **T003.2 Verify RED**：`cargo test -p ai-config-core platform::`；预期 Codex/Claude 当前旧路径断言失败。
 - [ ] **T003.3 Implement scoped adapters**：平台对象只返回 capability/target；不创建目录、不读取 secret、不写配置。Codex rules 不映射 `.codex/rules`；Hermes workspace/project skills、MCP、Hook 不再写全局。
 - [ ] **T003.4 Record official contracts**：文档写明 URL、verified date、global/project path、format、symlink guarantee、legacy discovery path；测试 fixture 与文档表保持一致。
@@ -923,7 +927,7 @@ ai-config adopt --plan <file> --select <action-id>... --apply
 - [ ] **T013.6 Sentinel secret scan**：以唯一哨兵运行所有 CLI JSON/MCP API/GUI bridge error paths；对 captured stdout/stderr/log/DB/plan/manifest/source 扫描，预期 0 命中。
 - [ ] **T013.7 Real-HOME inventory-only**：`./target/debug/ai-config migrate inventory --json`、`sync --json`、`doctor --json`、`status --json`；执行前后 HOME allowlisted roots tree hash 必须完全一致。
 - [ ] **T013.8 One-skill canary**：经用户再次确认后，只选择一个无 secret、非关键、无 conflict skill 执行 `--apply`；Cursor/Codex/Claude/Hermes 新会话确认发现；第二次 plan changed=0。
-- [ ] **T013.9 Final review**：运行 requesting-code-review；逐项对照 39 条 FR 与 12 条 SC，确认 CLI/MCP/GUI digest contract、1,000-item 性能样本、platform contract snapshot、无 placeholder/接口漂移、rollback 证据齐全。
+- [ ] **T013.9 Final review**：运行 requesting-code-review；逐项对照 42 条 FR 与 12 条 SC，确认 CLI/MCP/GUI digest contract、1,000-item 性能样本、platform contract snapshot、无 placeholder/接口漂移、rollback 证据齐全。
 - [ ] **T013.10 Commit checkpoint**：`git commit -m "test(projection): 完成单一源迁移验证闭环"`。
 
 ## Post-release 本机迁移顺序
@@ -936,5 +940,5 @@ ai-config adopt --plan <file> --select <action-id>... --apply
 4. 先迁移 canonical MCP 到 per-server + secret references，验证 0600 与四平台 renderer；不删旧文件。
 5. 对同名 assets 按 `conflict > external_owned > equivalent > legacy_managed` 顺序人工处理；不批量 take-over `.cc-switch`。
 6. 选择一个普通 skill canary，备份后将平台旧副本替换为逐项 link；验证四平台。
-7. 按 kind 分批迁移 skills → rules/commands/agents → hooks → MCP；每批运行 second-plan-noop 和 uninstall-preserves-foreign。
+7. 按 kind 分批迁移 Skills → Rules → MCP → Agents → Commands → Hooks；每批先留 RED 证据、再最小迁移并运行定向测试、second-plan-noop 和 uninstall-preserves-foreign；每个计划任务验证通过后提交 checkpoint。
 8. 连续两个版本 inventory 不再发现 legacy managed copy 后，才清理备份和只读 legacy reader。
