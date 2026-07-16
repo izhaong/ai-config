@@ -288,28 +288,17 @@ pub fn deploy_between_platforms(
 
 /// 从平台导入到 ai-config 源：拷贝脚本并合并 `hooks.json`。
 pub fn import_to_source(
-    asset_root: &Utf8Path,
-    deploy_base: &Utf8Path,
-    script_filename: &str,
-    from_plat: PlatformId,
+    _asset_root: &Utf8Path,
+    _deploy_base: &Utf8Path,
+    _script_filename: &str,
+    _from_plat: PlatformId,
 ) -> Result<Utf8PathBuf, CoreError> {
-    let from_script = platform_script_path(deploy_base, from_plat, script_filename);
-    if !from_script.is_file() {
-        return Err(CoreError::AssetNotFound {
-            kind: crate::model::AssetKind::Hook,
-            name: script_filename.into(),
-            hint: format!("平台 `{}` 无脚本", platform::platform_label(from_plat)),
-        });
-    }
-    let bindings = read_platform_bindings(deploy_base, from_plat, script_filename)?;
-    let dest = hook::script_path(asset_root, script_filename);
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent.as_std_path()).map_err(CoreError::Io)?;
-    }
-    fs::copy(from_script.as_std_path(), dest.as_std_path()).map_err(CoreError::Io)?;
-    set_executable(&dest)?;
-    hook::merge_bindings_into_manifest(asset_root, script_filename, &bindings)?;
-    Ok(dest)
+    // Source-first migration is not implemented by this legacy facade.  In particular, do not
+    // copy a platform script over an existing canonical asset unless a transactional migration
+    // has first recorded a private backup and an ownership decision.
+    Err(CoreError::NotImplemented(
+        "legacy Hook import is disabled; use an explicit transactional migration with backup",
+    ))
 }
 
 /// 在 IDE 平台配置中为某脚本开关单个生命周期绑定。

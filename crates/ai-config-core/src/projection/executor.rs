@@ -25,7 +25,7 @@ use super::mcp::entry_fingerprint::{
 };
 use super::mcp::hermes_yaml::{render_hermes_mcp_yaml, YamlServerIntent};
 use super::mcp::source::load_mcp_definition_at;
-use super::model::{LedgerMutation, ProjectionMode, ProjectionRecord};
+use super::model::{LedgerMutation, ProjectionMode, ProjectionRecord, ProjectionSurface};
 use super::planner::{
     GeneratedContainerRenderer, McpProjectionMember, ProjectionAction, ProjectionActionKind,
     ProjectionPlan,
@@ -377,6 +377,13 @@ pub fn apply_projection_plan(
             ),
         ));
     }
+    if let Err(error) = fs::create_dir_all(context.deploy_base.as_std_path()) {
+        return Err(preflight_failure(
+            report,
+            "deploy_base_unavailable",
+            CoreError::Io(error),
+        ));
+    }
     let _lock = match ApplyLock::acquire(&context.deploy_base) {
         Ok(lock) => lock,
         Err(error) => return Err(preflight_failure(report, "apply_lock_unavailable", error)),
@@ -475,8 +482,19 @@ pub fn apply_projection_plan(
                     Ok(())
                 }
             }
-            ProjectionActionKind::UpsertGeneratedBatch => {
-                apply_mcp_generated_upsert(action, context).map(|applied| {
+            ProjectionActionKind::UpsertGeneratedBatch => match action.generated_renderer {
+                Some(GeneratedContainerRenderer::HookJson) => {
+                    apply_hook_generated_upsert(action, context).map(|applied| {
+                        mutations.extend(applied.mutations);
+                        if let Some(undo_action) = applied.undo {
+                            undo.push((index, undo_action));
+                            report.set_status(index, ApplyActionStatus::Applied);
+                        } else {
+                            report.set_status(index, ApplyActionStatus::Skipped);
+                        }
+                    })
+                }
+                _ => apply_mcp_generated_upsert(action, context).map(|applied| {
                     mutations.extend(applied.mutations);
                     report.mcp_skipped_members.extend(applied.skipped_members);
                     if let Some(undo_action) = applied.undo {
@@ -485,10 +503,21 @@ pub fn apply_projection_plan(
                     } else {
                         report.set_status(index, ApplyActionStatus::Skipped);
                     }
-                })
-            }
-            ProjectionActionKind::RemoveGeneratedEntries => {
-                apply_mcp_generated_retraction(action, context).map(|applied| {
+                }),
+            },
+            ProjectionActionKind::RemoveGeneratedEntries => match action.generated_renderer {
+                Some(GeneratedContainerRenderer::HookJson) => {
+                    apply_hook_generated_retraction(action, context).map(|applied| {
+                        mutations.extend(applied.mutations);
+                        if let Some(undo_action) = applied.undo {
+                            undo.push((index, undo_action));
+                            report.set_status(index, ApplyActionStatus::Applied);
+                        } else {
+                            report.set_status(index, ApplyActionStatus::Skipped);
+                        }
+                    })
+                }
+                _ => apply_mcp_generated_retraction(action, context).map(|applied| {
                     mutations.extend(applied.mutations);
                     if let Some(undo_action) = applied.undo {
                         undo.push((index, undo_action));
@@ -496,8 +525,8 @@ pub fn apply_projection_plan(
                     } else {
                         report.set_status(index, ApplyActionStatus::Skipped);
                     }
-                })
-            }
+                }),
+            },
             ProjectionActionKind::CleanupOrphan => Err(CoreError::NotImplemented(
                 "projection action requires its dedicated transactional executor slice",
             )),
@@ -895,6 +924,274 @@ struct AppliedGeneratedMcp {
     mutations: Vec<LedgerMutation>,
     undo: Option<FileUndo>,
     skipped_members: Vec<McpSkippedMemberReport>,
+}
+
+struct AppliedGeneratedHook {
+    mutations: Vec<LedgerMutation>,
+    undo: Option<FileUndo>,
+}
+
+/// Hook bindings are source-free generated entries: the canonical script/bundle is represented
+/// by the paired direct-link action, while this action owns only a named, marked binding.
+fn apply_hook_generated_upsert(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<AppliedGeneratedHook, CoreError> {
+    let (target, expected, actual, existing) = hook_target_for_write(action, context)?;
+    for member in &action.members {
+        ensure_hook_member_source_matches_plan(member)?;
+    }
+    let rendered = render_hook_json(&existing, &action.members, &[])?;
+    replace_hook_target(action, context, target, expected, actual, rendered, false)
+}
+
+fn apply_hook_generated_retraction(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<AppliedGeneratedHook, CoreError> {
+    let (target, expected, actual, existing) = hook_target_for_write(action, context)?;
+    let removals = action
+        .members
+        .iter()
+        .map(|member| member.id.name.clone())
+        .collect::<Vec<_>>();
+    let rendered = render_hook_json(&existing, &[], &removals)?;
+    replace_hook_target(action, context, target, expected, actual, rendered, true)
+}
+
+fn hook_target_for_write<'a>(
+    action: &'a ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<
+    (
+        &'a super::model::ProjectionTarget,
+        &'a super::model::PathFingerprint,
+        super::model::PathFingerprint,
+        String,
+    ),
+    CoreError,
+> {
+    if action.members.is_empty()
+        || !action.mcp_members.is_empty()
+        || action.generated_renderer != Some(GeneratedContainerRenderer::HookJson)
+    {
+        return Err(CoreError::InvalidPath(
+            "generated Hook action is not a source-first Hook JSON batch".to_owned(),
+        ));
+    }
+    let target = action
+        .target
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("Hook generated action has no target".to_owned()))?;
+    let expected = action.precondition.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("Hook generated action has no target precondition".to_owned())
+    })?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected {
+        return Err(CoreError::InvalidPath(
+            "projection target changed after the plan was created".to_owned(),
+        ));
+    }
+    if !matches!(
+        actual.entry_type,
+        super::model::FingerprintType::Missing | super::model::FingerprintType::File
+    ) {
+        return Err(CoreError::InvalidPath(
+            "Hook generated target must be a regular file or be absent".to_owned(),
+        ));
+    }
+    let existing = match actual.entry_type {
+        super::model::FingerprintType::Missing => "{\"hooks\":{}}".to_owned(),
+        super::model::FingerprintType::File => fs::read_to_string(target.path.as_std_path())?,
+        _ => unreachable!("validated above"),
+    };
+    Ok((target, expected, actual, existing))
+}
+
+fn ensure_hook_member_source_matches_plan(
+    member: &super::planner::ProjectionMember,
+) -> Result<(), CoreError> {
+    if path_content_digest(&member.source.absolute_path)? != member.source.fingerprint {
+        return Err(CoreError::InvalidPath(
+            "canonical Hook source changed after the plan was created".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn render_hook_json(
+    existing: &str,
+    additions: &[super::planner::ProjectionMember],
+    removals: &[String],
+) -> Result<String, CoreError> {
+    let mut document: Value = serde_json::from_str(existing).map_err(|_| {
+        CoreError::InvalidPath("Hook generated container must be valid JSON".to_owned())
+    })?;
+    let root = document.as_object_mut().ok_or_else(|| {
+        CoreError::InvalidPath("Hook generated container must be a JSON object".to_owned())
+    })?;
+    let hooks = root
+        .entry("hooks".to_owned())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| CoreError::InvalidPath("Hook `hooks` field must be an object".to_owned()))?;
+    let removals = removals.iter().collect::<BTreeSet<_>>();
+    for entries in hooks.values_mut() {
+        let entries = entries.as_array_mut().ok_or_else(|| {
+            CoreError::InvalidPath("Hook lifecycle entries must be arrays".to_owned())
+        })?;
+        entries.retain(|entry| !hook_entry_is_owned_by(entry, &removals));
+    }
+    hooks.retain(|_, entries| {
+        entries
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty())
+    });
+
+    for member in additions {
+        let platform = match &member.id.surface {
+            ProjectionSurface::PlatformBinding { platform, .. } => *platform,
+            _ => {
+                return Err(CoreError::InvalidPath(
+                    "Hook generated member has no platform binding surface".to_owned(),
+                ))
+            }
+        };
+        let lifecycle = match platform {
+            crate::model::PlatformId::Cursor => "afterShellExecution",
+            crate::model::PlatformId::Codex | crate::model::PlatformId::Claude => "PostToolUse",
+            crate::model::PlatformId::Hermes | crate::model::PlatformId::AiConfig => {
+                return Err(CoreError::NotImplemented(
+                    "Hook YAML projection requires its dedicated transactional renderer",
+                ))
+            }
+        };
+        let command = match platform {
+            crate::model::PlatformId::Cursor => format!(".cursor/hooks/{}", member.id.name),
+            crate::model::PlatformId::Codex => format!(".codex/hooks/{}", member.id.name),
+            crate::model::PlatformId::Claude => format!(".claude/hooks/{}", member.id.name),
+            crate::model::PlatformId::Hermes | crate::model::PlatformId::AiConfig => unreachable!(),
+        };
+        let entry = if platform == crate::model::PlatformId::Cursor {
+            serde_json::json!({
+                "command": command,
+                "managedBy": "ai-config",
+                "hook": member.id.name,
+            })
+        } else {
+            serde_json::json!({
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "managedBy": "ai-config",
+                    "hook": member.id.name,
+                }]
+            })
+        };
+        hooks
+            .entry(lifecycle.to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| {
+                CoreError::InvalidPath("Hook lifecycle entries must be arrays".to_owned())
+            })?
+            .push(entry);
+    }
+    serde_json::to_string_pretty(&document)
+        .map_err(|error| CoreError::InvalidPath(error.to_string()))
+}
+
+fn hook_entry_is_owned_by(entry: &Value, removals: &BTreeSet<&String>) -> bool {
+    let owned = |entry: &Value| {
+        entry.get("managedBy").and_then(Value::as_str) == Some("ai-config")
+            && entry
+                .get("hook")
+                .and_then(Value::as_str)
+                .is_some_and(|name| removals.iter().any(|candidate| candidate.as_str() == name))
+    };
+    owned(entry)
+        || entry
+            .get("hooks")
+            .and_then(Value::as_array)
+            .is_some_and(|nested| nested.iter().any(owned))
+}
+
+fn replace_hook_target(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+    target: &super::model::ProjectionTarget,
+    expected: &super::model::PathFingerprint,
+    actual: super::model::PathFingerprint,
+    rendered: String,
+    retract: bool,
+) -> Result<AppliedGeneratedHook, CoreError> {
+    let parent = ensure_safe_target_parent(&target.path, &context.deploy_base)?;
+    let temporary = generated_temporary_path(&parent.path, &target.path)?;
+    if let Err(error) = write_private_generated_file(&temporary, rendered.as_bytes()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    let rendered_digest = path_fingerprint(&temporary)?
+        .digest
+        .ok_or_else(|| CoreError::InvalidPath("rendered Hook target has no digest".to_owned()))?;
+    let mutations = if retract {
+        action
+            .members
+            .iter()
+            .map(|member| LedgerMutation::Remove(member.id.clone()))
+            .collect()
+    } else {
+        action
+            .members
+            .iter()
+            .map(|member| {
+                Ok(LedgerMutation::Upsert(ProjectionRecord {
+                    id: member.id.clone(),
+                    mode: ProjectionMode::GeneratedJson,
+                    source_path: member.source.absolute_path.clone(),
+                    target_path: target.path.clone(),
+                    entry_key: member.entry_key.clone(),
+                    source_fingerprint: member.source.fingerprint.clone(),
+                    entry_fingerprint: None,
+                    target_fingerprint: rendered_digest.clone(),
+                    applied_at: Utc::now(),
+                }))
+            })
+            .collect::<Result<Vec<_>, CoreError>>()?
+    };
+    let backup = if actual.entry_type == super::model::FingerprintType::File {
+        let backup = allocate_backup_path(&context.backup_root, &target.path)?;
+        write_backup_manifest(&backup, &target.path, expected)?;
+        if let Err(error) = fs::rename(target.path.as_std_path(), backup.as_std_path()) {
+            let _ = fs::remove_file(temporary.as_std_path());
+            return Err(CoreError::Io(error));
+        }
+        if let Err(error) = set_private_file_permissions(&backup) {
+            let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+            let _ = fs::remove_file(temporary.as_std_path());
+            return Err(error);
+        }
+        Some(backup)
+    } else {
+        None
+    };
+    if let Err(error) = fs::rename(temporary.as_std_path(), target.path.as_std_path()) {
+        if let Some(backup) = &backup {
+            let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        }
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+    Ok(AppliedGeneratedHook {
+        mutations,
+        undo: Some(FileUndo::RestoreGenerated {
+            target: target.path.clone(),
+            rendered_digest,
+            backup,
+            created_parents: parent.created_parents,
+        }),
+    })
 }
 
 /// Apply exactly one plan-bound MCP container batch. Non-MCP generated actions stay fail-closed

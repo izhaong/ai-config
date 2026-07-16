@@ -479,8 +479,16 @@ pub fn build_projection_plan(
                 reason: "multiple generated renderers claim one normalized target".to_owned(),
             }
         } else {
-            let ownership =
-                generated_batch_ownership(&batch, &precondition, &mut warnings, context);
+            let ownership = if matches!(
+                batch.renderer,
+                GeneratedContainerRenderer::HookJson
+                    | GeneratedContainerRenderer::HookToml
+                    | GeneratedContainerRenderer::HookYaml
+            ) {
+                hook_generated_batch_ownership(&batch, &precondition, &mut warnings, context)
+            } else {
+                generated_batch_ownership(&batch, &precondition, &mut warnings, context)
+            };
             match (request.operation, precondition.entry_type, ownership) {
                 (
                     ProjectionOperation::Retract | ProjectionOperation::Uninstall,
@@ -591,6 +599,23 @@ pub fn build_projection_plan(
                         state: Some("managed_generated".to_owned()),
                         reason_code: "generated_source_changed".to_owned(),
                         reason: "canonical source changed since the recorded projection".to_owned(),
+                    }
+                }
+                (ProjectionOperation::Sync, _, GeneratedOwnership::Missing)
+                    if matches!(batch.renderer, GeneratedContainerRenderer::HookJson) =>
+                {
+                    ProjectionAction {
+                        kind: ProjectionActionKind::UpsertGeneratedBatch,
+                        target: Some(batch.target),
+                        precondition: Some(precondition),
+                        ownership_fingerprint: None,
+                        generated_renderer: Some(batch.renderer),
+                        members: batch.members,
+                        mcp_members: batch.mcp_members,
+                        consumers: batch.consumers,
+                        state: Some("missing".to_owned()),
+                        reason_code: "hook_binding_missing".to_owned(),
+                        reason: "the named Hook binding is absent; foreign container entries are preserved".to_owned(),
                     }
                 }
                 (_, _, GeneratedOwnership::Missing) => ProjectionAction {
@@ -1610,6 +1635,100 @@ fn generated_batch_ownership(
     } else {
         GeneratedOwnership::Managed
     }
+}
+
+/// Hook ownership is per managed binding, while container drift remains deliberately strict.
+/// A foreign hooks.json may therefore receive a missing named binding, but retract still needs
+/// both the managed binding and an unchanged container digest recorded in the ledger.
+fn hook_generated_batch_ownership(
+    batch: &GeneratedBatch,
+    precondition: &PathFingerprint,
+    warnings: &mut Vec<PlanWarning>,
+    context: &PlannerContext<'_>,
+) -> GeneratedOwnership {
+    if precondition.entry_type == super::model::FingerprintType::Missing {
+        return GeneratedOwnership::Foreign;
+    }
+    if precondition.entry_type != super::model::FingerprintType::File
+        || batch.renderer != GeneratedContainerRenderer::HookJson
+    {
+        return GeneratedOwnership::Foreign;
+    }
+    let Some(digest) = precondition.digest.as_deref() else {
+        return GeneratedOwnership::Foreign;
+    };
+    let document = match fs::read_to_string(batch.target.path.as_std_path())
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+    {
+        Some(document) => document,
+        None => {
+            warnings.push(PlanWarning {
+                code: "hook_target_uninspectable".to_owned(),
+                message: "Hook target cannot be read; ownership is not proven".to_owned(),
+            });
+            return GeneratedOwnership::Drifted;
+        }
+    };
+    let mut source_changed = false;
+    let mut missing = false;
+    for member in &batch.members {
+        if !hook_document_contains_managed_binding(&document, &member.id.name) {
+            if let Some(record) = ledger_record(context, &member.id, warnings) {
+                if record.target_fingerprint != digest {
+                    return GeneratedOwnership::Drifted;
+                }
+            }
+            missing = true;
+            continue;
+        }
+        let Some(record) = ledger_record(context, &member.id, warnings) else {
+            return GeneratedOwnership::Foreign;
+        };
+        if record.mode != batch.mode
+            || record.target_path != batch.target.path
+            || record.entry_key != member.entry_key
+            || record.target_fingerprint != digest
+        {
+            return GeneratedOwnership::Drifted;
+        }
+        if record.source_path != member.source.absolute_path
+            || record.source_fingerprint != member.source.fingerprint
+        {
+            source_changed = true;
+        }
+    }
+    if missing {
+        GeneratedOwnership::Missing
+    } else if source_changed {
+        GeneratedOwnership::SourceChanged
+    } else {
+        GeneratedOwnership::Managed
+    }
+}
+
+fn hook_document_contains_managed_binding(document: &serde_json::Value, name: &str) -> bool {
+    document
+        .get("hooks")
+        .and_then(serde_json::Value::as_object)
+        .into_iter()
+        .flat_map(|hooks| hooks.values())
+        .filter_map(serde_json::Value::as_array)
+        .flatten()
+        .any(|entry| {
+            entry.get("hook").and_then(serde_json::Value::as_str) == Some(name)
+                && entry.get("managedBy").and_then(serde_json::Value::as_str) == Some("ai-config")
+                || entry
+                    .get("hooks")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|nested| {
+                        nested.iter().any(|nested| {
+                            nested.get("hook").and_then(serde_json::Value::as_str) == Some(name)
+                                && nested.get("managedBy").and_then(serde_json::Value::as_str)
+                                    == Some("ai-config")
+                        })
+                    })
+        })
 }
 
 /// MCP generated ownership is per named server entry, not per container. In particular, the
