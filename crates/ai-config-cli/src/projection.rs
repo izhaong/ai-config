@@ -3,6 +3,7 @@
 //! Planning is always read-only. The first persistent ownership ledger is created only after
 //! the caller supplies --apply, so a default invocation cannot initialize a platform target.
 
+use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 use ai_config_core::error::{exit_code, CoreError};
@@ -19,10 +20,11 @@ use ai_config_core::projection::model::{
 };
 use ai_config_core::projection::planner::{
     build_hermes_cross_domain_projection_plan, build_mcp_projection_plan, build_projection_plan,
-    PlannerContext, ProjectionActionKind, ProjectionOperation, ProjectionPlan,
-    ProjectionRequest, PROJECTION_PLAN_SCHEMA_VERSION,
+    McpSecretAvailability, PlannerContext, ProjectionActionKind, ProjectionOperation,
+    ProjectionPlan, ProjectionRequest, PROJECTION_PLAN_SCHEMA_VERSION,
 };
 use ai_config_core::projection::source::{resolve_effective_assets, OverlayRoots};
+use ai_config_core::secrets;
 use ai_config_store::Store;
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::JsonSchema;
@@ -50,6 +52,20 @@ pub struct ApplySummary {
     pub rolled_back: usize,
     pub rollback_failed: usize,
     pub not_applied: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp_skipped_members: Vec<McpSkippedMemberSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct McpSkippedMemberSummary {
+    pub entry_key: String,
+    pub missing_secret_keys: Vec<String>,
+}
+
+impl ApplySummary {
+    fn has_missing_mcp_secrets(&self) -> bool {
+        !self.mcp_skipped_members.is_empty()
+    }
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -98,11 +114,33 @@ struct WorkspaceBundle {
     bundle: PlanBundle,
 }
 
-struct EmptySecretProvider;
+struct LifecycleMcpSecrets {
+    values: BTreeMap<String, String>,
+}
 
-impl McpSecretProvider for EmptySecretProvider {
-    fn resolve(&self, _key: &str) -> Result<Option<String>, CoreError> {
-        Ok(None)
+impl LifecycleMcpSecrets {
+    fn load() -> Result<Self, CoreError> {
+        Ok(Self {
+            values: secrets::load_from(&secrets::default_path())?
+                .into_iter()
+                .collect(),
+        })
+    }
+}
+
+impl McpSecretAvailability for LifecycleMcpSecrets {
+    fn missing_secret_keys(&self, declared_keys: &[String]) -> Result<Vec<String>, CoreError> {
+        Ok(declared_keys
+            .iter()
+            .filter(|key| !self.values.contains_key(key.as_str()))
+            .cloned()
+            .collect())
+    }
+}
+
+impl McpSecretProvider for LifecycleMcpSecrets {
+    fn resolve(&self, key: &str) -> Result<Option<String>, CoreError> {
+        Ok(self.values.get(key).cloned())
     }
 }
 
@@ -216,7 +254,8 @@ pub fn execute(
     let ledger_path = roots
         .deploy_base
         .join(".ai-config/projection-ledger.sqlite");
-    let bundle = build_with_existing_ledger(&roots, operation, &ledger_path)?;
+    let secrets = LifecycleMcpSecrets::load()?;
+    let bundle = build_with_existing_ledger(&roots, operation, &ledger_path, &secrets)?;
     let blocking = blocking_reason(&bundle);
     if !apply {
         return Ok(LifecycleExecution {
@@ -242,15 +281,23 @@ pub fn execute(
     let store = Store::open_at(ledger_path.as_std_path())
         .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
     let ledger = store.projections();
-    let (report, exit_code) = match apply_bundle(&bundle, &ledger, &roots) {
-        Ok(summary) => (
-            LifecycleReport {
-                plan: bundle.public,
-                apply: Some(summary),
-                blocking_reason: None,
-            },
-            exit_code::SUCCESS,
-        ),
+    let (report, exit_code) = match apply_bundle(&bundle, &ledger, &roots, &secrets) {
+        Ok(summary) => {
+            let missing_mcp_secrets = summary.has_missing_mcp_secrets();
+            (
+                LifecycleReport {
+                    plan: bundle.public,
+                    apply: Some(summary),
+                    blocking_reason: missing_mcp_secrets
+                        .then_some("mcp_missing_secret_keys".to_owned()),
+                },
+                if missing_mcp_secrets {
+                    exit_code::SECRETS_MISSING
+                } else {
+                    exit_code::SUCCESS
+                },
+            )
+        }
         Err(error) => (
             LifecycleReport {
                 plan: bundle.public,
@@ -275,13 +322,14 @@ fn execute_workspace(
         ProjectionOperation::Sync
     };
     let ledger_path = workspace_root.join(".ai-config/projection-ledger.sqlite");
+    let secrets = LifecycleMcpSecrets::load()?;
     let bundles = if ledger_path.is_file() {
         let store = Store::open_at(ledger_path.as_std_path())
             .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
-        build_workspace_bundles(&workspace_root, operation, &store.projections())?
+        build_workspace_bundles(&workspace_root, operation, &store.projections(), &secrets)?
     } else {
         let ledger = MemoryProjectionLedger::default();
-        build_workspace_bundles(&workspace_root, operation, &ledger)?
+        build_workspace_bundles(&workspace_root, operation, &ledger, &secrets)?
     };
 
     if !apply {
@@ -299,14 +347,28 @@ fn execute_workspace(
 
     let store = Store::open_at(ledger_path.as_std_path())
         .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
-    let summaries = apply_workspace_bundles(&bundles, &store.projections(), &workspace_root)?;
-    Ok((workspace_report(bundles, Some(summaries)), exit_code::SUCCESS))
+    let summaries = apply_workspace_bundles(
+        &bundles,
+        &store.projections(),
+        &workspace_root,
+        &secrets,
+    )?;
+    let missing_mcp_secrets = summaries.iter().any(ApplySummary::has_missing_mcp_secrets);
+    Ok((
+        workspace_report(bundles, Some(summaries)),
+        if missing_mcp_secrets {
+            exit_code::SECRETS_MISSING
+        } else {
+            exit_code::SUCCESS
+        },
+    ))
 }
 
 fn build_workspace_bundles(
     workspace_root: &Utf8Path,
     operation: ProjectionOperation,
     ledger: &dyn ProjectionLedger,
+    secrets: &LifecycleMcpSecrets,
 ) -> Result<Vec<WorkspaceBundle>, CoreError> {
     let global_default = paths::discover_global_asset_root_read_only();
     ai_config_core::workspace::discover_members(workspace_root)?
@@ -327,7 +389,7 @@ fn build_workspace_bundles(
             };
             Ok(WorkspaceBundle {
                 member,
-                bundle: build_bundle(&roots, operation, ledger)?,
+                bundle: build_bundle(&roots, operation, ledger, secrets)?,
             })
         })
         .collect()
@@ -341,7 +403,12 @@ fn workspace_report(
         .into_iter()
         .enumerate()
         .map(|(index, bundle)| {
-            let blocking_reason = blocking_reason(&bundle.bundle);
+            let blocking_reason = summaries
+                .as_ref()
+                .and_then(|summaries| summaries.get(index))
+                .filter(|summary| summary.has_missing_mcp_secrets())
+                .map(|_| "mcp_missing_secret_keys".to_owned())
+                .or_else(|| blocking_reason(&bundle.bundle));
             WorkspaceMemberReport {
                 member: bundle.member.to_string(),
                 plan: bundle.bundle.public,
@@ -357,6 +424,7 @@ fn apply_workspace_bundles(
     bundles: &[WorkspaceBundle],
     ledger: &dyn ProjectionLedger,
     workspace_root: &Utf8Path,
+    secrets: &LifecycleMcpSecrets,
 ) -> Result<Vec<ApplySummary>, CoreError> {
     let plan_members = bundles
         .iter()
@@ -371,9 +439,8 @@ fn apply_workspace_bundles(
         })
         .collect::<Vec<_>>();
     let backup_root = workspace_root.join(".ai-config/projection-backups");
-    let secrets = EmptySecretProvider;
     let context = ExecutorContext::new(ledger, workspace_root.to_path_buf(), backup_root)
-        .with_mcp_secret_provider(&secrets);
+        .with_mcp_secret_provider(secrets);
     let reports = apply_projection_plans_transactionally(
         plan_members
             .iter()
@@ -416,14 +483,15 @@ fn build_with_existing_ledger(
     roots: &SyncRoots,
     operation: ProjectionOperation,
     ledger_path: &Utf8Path,
+    secrets: &LifecycleMcpSecrets,
 ) -> Result<PlanBundle, CoreError> {
     if ledger_path.is_file() {
         let store = Store::open_at(ledger_path.as_std_path())
             .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
-        build_bundle(roots, operation, &store.projections())
+        build_bundle(roots, operation, &store.projections(), secrets)
     } else {
         let ledger = MemoryProjectionLedger::default();
-        build_bundle(roots, operation, &ledger)
+        build_bundle(roots, operation, &ledger, secrets)
     }
 }
 
@@ -431,6 +499,7 @@ fn build_bundle(
     roots: &SyncRoots,
     operation: ProjectionOperation,
     ledger: &dyn ProjectionLedger,
+    secrets: &LifecycleMcpSecrets,
 ) -> Result<PlanBundle, CoreError> {
     let scope = if paths::is_project_deploy_base(&roots.deploy_base) {
         DeploymentScope::Project
@@ -469,8 +538,8 @@ fn build_bundle(
     let non_mcp_ledger = NonMcpLedger { inner: ledger };
     let mcp_ledger = McpOnlyLedger { inner: ledger };
     let normal_context = PlannerContext::new(&non_mcp_ledger);
-    let mcp_context = PlannerContext::new(&mcp_ledger);
-    let context = PlannerContext::new(ledger);
+    let mcp_context = PlannerContext::new(&mcp_ledger).with_mcp_secret_availability(secrets);
+    let context = PlannerContext::new(ledger).with_mcp_secret_availability(secrets);
     let mut plans = vec![
         build_projection_plan(&normal_request, &normal_context)?,
         build_mcp_projection_plan(&mcp_request, &definitions, &mcp_context)?,
@@ -531,20 +600,32 @@ fn blocking_reason(bundle: &PlanBundle) -> Option<String> {
         .plans
         .iter()
         .flat_map(|plan| plan.actions.iter())
-        .find(|action| action.kind == ProjectionActionKind::ReportOnly)
+        .find(|action| {
+            action.kind == ProjectionActionKind::ReportOnly && !is_missing_secret_skip(action)
+        })
         .map(|action| action.reason_code.clone())
+}
+
+fn is_missing_secret_skip(action: &ai_config_core::projection::planner::ProjectionAction) -> bool {
+    action.state.as_deref() == Some("skipped")
+        && action.reason_code == "mcp_missing_secret_keys"
+        && !action.mcp_members.is_empty()
+        && action
+            .mcp_members
+            .iter()
+            .all(|member| !member.missing_secret_keys.is_empty())
 }
 
 fn apply_bundle(
     bundle: &PlanBundle,
     ledger: &dyn ProjectionLedger,
     roots: &SyncRoots,
+    secrets: &LifecycleMcpSecrets,
 ) -> Result<ApplySummary, CoreError> {
     let mut summary = ApplySummary::default();
-    let secrets = EmptySecretProvider;
     let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
     let context = ExecutorContext::new(ledger, roots.deploy_base.clone(), backup_root)
-        .with_mcp_secret_provider(&secrets);
+        .with_mcp_secret_provider(secrets);
     let reports = apply_projection_plans_transactionally(
         bundle
             .plans
@@ -568,4 +649,13 @@ fn add_apply_report(summary: &mut ApplySummary, report: ApplyReport) {
     summary.rolled_back += report.rolled_back;
     summary.rollback_failed += report.rollback_failed;
     summary.not_applied += report.not_applied;
+    summary.mcp_skipped_members.extend(
+        report
+            .mcp_skipped_members
+            .into_iter()
+            .map(|member| McpSkippedMemberSummary {
+                entry_key: member.entry_key,
+                missing_secret_keys: member.missing_secret_keys,
+            }),
+    );
 }

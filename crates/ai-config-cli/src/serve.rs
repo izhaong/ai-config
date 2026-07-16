@@ -242,12 +242,46 @@ pub fn run(default_root: Utf8PathBuf) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::fs;
 
     use ai_config_core::paths;
     use tempfile::TempDir;
 
     use super::*;
+
+    const MISSING_SECRET_KEY: &str = "T009_MISSING_CATALOG_TOKEN";
+    const SECRET_VALUE_SENTINEL: &str = "t009-mcp-secret-value-must-not-leak";
+
+    static MCP_SYNC_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     fn projection_fixture() -> TempDir {
         let repo = TempDir::new().expect("temporary project");
@@ -394,6 +428,85 @@ mod tests {
         assert!(
             !repo.path().join(".agents/skills/demo").exists(),
             "foreign guard must prevent all plan actions, not only the conflicting prompt"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_handler_missing_mcp_secret_returns_a_safe_partial_report_and_applies_direct_assets(
+    ) {
+        let _lock = MCP_SYNC_ENV_LOCK.lock().await;
+        let home = TempDir::new().expect("temporary HOME");
+        let _home = EnvVarGuard::set("HOME", home.path());
+        let _asset_root = EnvVarGuard::remove("AI_CONFIG_ROOT");
+        let secrets = TempDir::new().expect("temporary secret directory");
+        let secret_path = Utf8PathBuf::from_path_buf(secrets.path().join("secrets.env"))
+            .expect("temporary secret path is UTF-8");
+        ai_config_core::secrets::save_to(
+            &[(
+                "UNRELATED_TEST_SECRET".to_owned(),
+                SECRET_VALUE_SENTINEL.to_owned(),
+            )],
+            &secret_path,
+        )
+        .expect("seed strict temporary secret store");
+        let _secret_dir = EnvVarGuard::set("AI_CONFIG_SECRETS_DIR", secrets.path());
+
+        let repo = projection_fixture();
+        let source = repo.path().join(".ai-config/mcp/servers/catalog.json");
+        fs::create_dir_all(source.parent().expect("MCP source parent")).expect("MCP source parent");
+        fs::write(
+            source,
+            format!(
+                r#"{{
+  "enabled": true,
+  "targets": ["cursor"],
+  "config": {{
+    "command": "catalog-mcp",
+    "env": {{ "{MISSING_SECRET_KEY}": "${{{MISSING_SECRET_KEY}}}" }}
+  }}
+}}"#
+            ),
+        )
+        .expect("write missing-secret canonical MCP source");
+        let root = Utf8PathBuf::from_path_buf(repo.path().to_path_buf()).expect("UTF-8 repo");
+        let server = AiConfigMcpServer::new(root);
+
+        let report = server
+            .ai_config_sync(Parameters(RootParam {
+                root: None,
+                apply: true,
+            }))
+            .await
+            .expect("MCP sync must return a partial report, not a retryable error")
+            .0;
+        let report_json = serde_json::to_value(&report).expect("serialize MCP lifecycle report");
+        let serialized = serde_json::to_string(&report_json).expect("serialize report text");
+
+        assert_eq!(
+            report.blocking_reason.as_deref(),
+            Some("mcp_missing_secret_keys"),
+            "MCP missing-secret state must take precedence over unrelated report-only actions: {report_json:?}"
+        );
+        assert!(
+            report_json["apply"]["skipped"].as_u64().unwrap_or_default() > 0,
+            "MCP sync must report the missing server as skipped: {report_json:?}"
+        );
+        assert_eq!(
+            report_json["apply"]["mcp_skipped_members"][0]["missing_secret_keys"],
+            serde_json::json!([MISSING_SECRET_KEY]),
+            "MCP reports may name unavailable keys but not their values"
+        );
+        assert!(
+            !serialized.contains(SECRET_VALUE_SENTINEL),
+            "MCP lifecycle report must not leak values from the caller-owned secret store"
+        );
+        assert!(
+            repo.path().join(".agents/skills/demo").exists(),
+            "a skipped MCP member must not prevent direct assets from applying"
+        );
+        assert!(
+            !repo.path().join(".cursor/mcp.json").exists(),
+            "a missing-secret MCP member must not render a platform container"
         );
     }
 }

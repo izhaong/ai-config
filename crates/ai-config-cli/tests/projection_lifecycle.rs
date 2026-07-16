@@ -13,6 +13,8 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 const BIN: &str = "ai-config";
+const MISSING_SECRET_KEY: &str = "T009_MISSING_CATALOG_TOKEN";
+const SECRET_VALUE_SENTINEL: &str = "t009-secret-value-must-not-leak";
 
 struct Fixture {
     home: TempDir,
@@ -96,6 +98,36 @@ impl Fixture {
                 path.display()
             );
         }
+    }
+
+    fn configure_missing_mcp_secret(&self) {
+        write(
+            &self.asset_root().join("mcp/servers/catalog.json"),
+            &format!(
+                r#"{{
+  "enabled": true,
+  "targets": ["cursor"],
+  "config": {{
+    "command": "catalog-mcp",
+    "env": {{ "{MISSING_SECRET_KEY}": "${{{MISSING_SECRET_KEY}}}" }}
+  }}
+}}"#
+            ),
+        );
+        let secret_path = Utf8PathBuf::from_path_buf(
+            self.home
+                .path()
+                .join(".config/ai-config/secrets.env"),
+        )
+        .expect("temporary secret path is UTF-8");
+        ai_config_core::secrets::save_to(
+            &[(
+                "UNRELATED_TEST_SECRET".to_owned(),
+                SECRET_VALUE_SENTINEL.to_owned(),
+            )],
+            &secret_path,
+        )
+        .expect("seed strict temporary secret store");
     }
 }
 
@@ -197,6 +229,61 @@ fn sync_apply_projects_direct_mcp_hook_and_prompt_through_one_projection_plan() 
     assert!(
         fixture.root().join("AGENTS.md").exists(),
         "Prompt must be projected once as the project entry"
+    );
+}
+
+#[test]
+fn sync_apply_missing_mcp_secret_exits_four_reports_key_without_value_and_applies_direct_assets() {
+    let fixture = Fixture::new();
+    fixture.configure_missing_mcp_secret();
+
+    let output = fixture
+        .cmd()
+        .args(["--json", "sync", "--apply"])
+        .output()
+        .expect("run sync --apply with a missing MCP secret");
+
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "missing MCP secrets must use the secrets exit code: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stdout.contains(SECRET_VALUE_SENTINEL) && !stderr.contains(SECRET_VALUE_SENTINEL),
+        "neither lifecycle report nor diagnostic may expose secret values"
+    );
+
+    let report: Value = serde_json::from_slice(&output.stdout).expect("lifecycle report JSON");
+    assert_eq!(report["blocking_reason"], "mcp_missing_secret_keys");
+    assert!(
+        report["apply"]["skipped"].as_u64().unwrap_or_default() > 0,
+        "the missing MCP server must be represented as skipped: {report:?}"
+    );
+    assert_eq!(
+        report["apply"]["mcp_skipped_members"][0]["missing_secret_keys"],
+        serde_json::json!([MISSING_SECRET_KEY]),
+        "the apply report may expose only the missing key name"
+    );
+    assert!(
+        report["plan"]["actions"].as_array().is_some_and(|actions| actions.iter().any(|action| {
+            action["reason_code"] == "mcp_missing_secret_keys"
+                && action["state"] == "skipped"
+                && action["mcp_members"][0]["missing_secret_keys"]
+                    == serde_json::json!([MISSING_SECRET_KEY])
+        })),
+        "the reviewed plan must make the MCP-only skip inspectable"
+    );
+    assert!(
+        fixture.root().join(".agents/skills/demo").exists(),
+        "a missing MCP secret must not prevent unrelated direct assets from applying"
+    );
+    assert!(
+        !fixture.root().join(".cursor/mcp.json").exists(),
+        "the missing MCP server must not create a generated container"
     );
 }
 
