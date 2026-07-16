@@ -1,4 +1,4 @@
-//! 集成测试:`mcp migrate` — legacy `mcp/servers/` 或模板 → 单一 `mcp.json`。
+//! 集成测试：legacy MCP migration must remain read-only until source-first apply exists.
 
 use std::fs;
 use std::path::Path;
@@ -58,33 +58,32 @@ fn mcp_migrate_dry_run_creates_no_files() {
 }
 
 #[test]
-fn mcp_migrate_writes_servers_into_mcp_json() {
+fn mcp_migrate_refuses_legacy_write_and_preserves_the_source_tree() {
     let (home, root) = setup_with_template();
     let mcp_json = root.path().join("mcp.json");
+    let template = root.path().join(ASSET_TEMPLATE_REL);
+    let before = fs::read(&template).expect("read source template before migration");
 
     let assert = cmd(home.path(), root.path())
         .args(["mcp", "migrate"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
-    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8");
     assert!(
-        stdout.contains("已迁移 3 个 / 跳过 0 个 / 失败 0 个"),
-        "expected 18/0/0 report, got: {stdout}"
+        stderr.contains("source-first") && stderr.contains("只读"),
+        "expected a source-first read-only refusal, got: {stderr}"
     );
 
-    assert!(mcp_json.is_file(), "mcp.json should exist");
+    assert!(!mcp_json.exists(), "refusal must not create mcp.json");
     assert!(
-        !root.path().join("mcp").exists(),
-        "legacy mcp/ directory should be removed"
+        root.path().join("mcp").is_dir(),
+        "refusal must not delete the source mcp/ directory"
     );
-
-    let body = fs::read_to_string(&mcp_json).expect("read mcp.json");
-    let v: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
-    let servers = v["mcpServers"].as_object().expect("mcpServers object");
-    assert_eq!(servers.len(), 3);
-
-    assert!(servers.contains_key("example-http"));
-    let http = servers.get("example-http").expect("example-http entry");
-    assert!(http.get("url").is_some());
+    assert_eq!(
+        fs::read(&template).expect("read source template after migration"),
+        before,
+        "refusal must not mutate canonical source input"
+    );
 }

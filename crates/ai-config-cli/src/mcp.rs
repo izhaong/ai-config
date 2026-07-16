@@ -330,7 +330,7 @@ fn upsert_server(root: &Utf8Path, name: &str, config: &Value) -> Result<(), Stri
     mcp_json::upsert_server_in_document(root, name, config.clone()).map_err(|e| e.to_string())
 }
 
-// ── migrate(legacy mcp/servers 或模板 → mcp.json)────────────────
+// ── migrate(legacy inputs → source-first plan; writes are deliberately disabled) ──
 
 fn run_migrate(mode: OutputMode, root: &Utf8Path, source: Option<&str>, dry_run: bool) -> ExitCode {
     let rel_source = source.unwrap_or("mcp/cursor.mcp.template.json");
@@ -368,37 +368,13 @@ fn run_migrate(mode: OutputMode, root: &Utf8Path, source: Option<&str>, dry_run:
         return ExitCode::SUCCESS;
     }
 
-    if !legacy_servers.is_dir() && !template_path.is_file() && !root.join("mcp.json").is_file() {
-        let msg = format!("migrate 源不存在: 无 `mcp/servers/` 且无 `{template_path}`");
-        emit_error_envelope(
-            mode,
-            exit_code::FS_ERROR,
-            &msg,
-            Some("放置模板或 legacy servers"),
-        );
-        return ExitCode::from(exit_code::FS_ERROR);
-    }
-
-    if let Err(e) = mcp_json::migrate_legacy_mcp_layout(root) {
-        emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-        return ExitCode::from(e.exit_code());
-    }
-
-    let written = mcp_json::list_server_names(root).unwrap_or_default();
-    if mode.is_json() {
-        emit_json(
-            mode,
-            &serde_json::json!({
-                "written": written,
-                "skipped": [],
-                "errors": [],
-                "dry_run": false,
-            }),
-        );
-    } else {
-        println!("已迁移 {} 个 / 跳过 0 个 / 失败 0 个", written.len());
-    }
-    ExitCode::SUCCESS
+    emit_error_envelope(
+        mode,
+        exit_code::ARG_ERROR,
+        "legacy MCP migrate 只读：source-first apply 尚未就绪，拒绝写入或删除旧 MCP 资产",
+        Some("使用 `ai-config mcp migrate --dry-run` 盘点；待生成 source-first 计划后再执行单项 apply"),
+    );
+    ExitCode::from(exit_code::ARG_ERROR)
 }
 
 fn count_template_servers(path: &Utf8Path) -> Result<usize, String> {
