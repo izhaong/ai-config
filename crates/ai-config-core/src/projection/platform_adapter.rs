@@ -38,6 +38,20 @@ pub enum PlatformCapability {
     },
 }
 
+/// Hook 同时由聚合配置中的具名 binding 和可逐项链接的脚本单元组成。
+///
+/// 这只是纯目标描述；事件映射和配置合并将由后续 renderer/executor 处理。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookCapability {
+    Supported {
+        binding: PlatformCapability,
+        script: PlatformCapability,
+    },
+    Unsupported {
+        reason: String,
+    },
+}
+
 /// 返回一个资产的 projection 能力；不创建目录，也不读取现存配置。
 pub fn capability_for(
     platform: PlatformId,
@@ -45,6 +59,12 @@ pub fn capability_for(
     name: &str,
     context: &TargetContext,
 ) -> PlatformCapability {
+    if !is_safe_asset_name(name) {
+        return PlatformCapability::Unsupported {
+            reason: "asset name must be one safe path segment".to_owned(),
+        };
+    }
+
     match (platform, kind) {
         (PlatformId::Cursor | PlatformId::Codex, AssetKind::Skill) => {
             PlatformCapability::DirectLink {
@@ -250,6 +270,76 @@ pub fn capability_for(
             ),
         },
     }
+}
+
+/// 返回 Hook 的 binding 与脚本单元目标，避免出现“只写配置”或“只放脚本”的半投影。
+pub fn hook_capability_for(
+    platform: PlatformId,
+    script_name: &str,
+    context: &TargetContext,
+) -> HookCapability {
+    if !is_safe_asset_name(script_name) {
+        return HookCapability::Unsupported {
+            reason: "asset name must be one safe path segment".to_owned(),
+        };
+    }
+
+    let (config_path, hooks_dir, mode) = match platform {
+        PlatformId::Cursor => (
+            context.deploy_base.join(".cursor/hooks.json"),
+            context.deploy_base.join(".cursor/hooks"),
+            ProjectionMode::GeneratedJson,
+        ),
+        PlatformId::Codex => (
+            context.deploy_base.join(".codex/hooks.json"),
+            context.deploy_base.join(".codex/hooks"),
+            ProjectionMode::GeneratedJson,
+        ),
+        PlatformId::Claude => (
+            context.deploy_base.join(".claude/settings.json"),
+            context.deploy_base.join(".claude/hooks"),
+            ProjectionMode::GeneratedJson,
+        ),
+        PlatformId::Hermes if context.scope == DeploymentScope::User => (
+            context.deploy_base.join(".hermes/config.yaml"),
+            context.deploy_base.join(".hermes/hooks"),
+            ProjectionMode::GeneratedYaml,
+        ),
+        PlatformId::Hermes => {
+            return HookCapability::Unsupported {
+                reason: "Hermes project Hook is unsupported; do not modify global config.yaml"
+                    .to_owned(),
+            };
+        }
+        PlatformId::AiConfig => {
+            return HookCapability::Unsupported {
+                reason: "ai-config is canonical source, not a projection target".to_owned(),
+            };
+        }
+    };
+
+    HookCapability::Supported {
+        binding: PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: config_path,
+                entry_key: Some(format!("hooks.{script_name}")),
+            },
+            mode,
+            surface: ProjectionSurface::Platform(platform),
+        },
+        script: PlatformCapability::DirectLink {
+            target: ProjectionTarget {
+                path: hooks_dir.join(script_name),
+                entry_key: None,
+            },
+            mode: ProjectionMode::DirectLink,
+            surface: ProjectionSurface::Platform(platform),
+        },
+    }
+}
+
+fn is_safe_asset_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
 }
 
 #[cfg(test)]
@@ -725,6 +815,163 @@ mod tests {
             capability_for(PlatformId::Hermes, AssetKind::Command, "review", &context),
             PlatformCapability::Unsupported {
                 reason: "Hermes commands are unsupported; use Skills".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_project_hooks_pair_generated_binding_with_linked_script_unit() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            hook_capability_for(PlatformId::Cursor, "format.sh", &context),
+            HookCapability::Supported {
+                binding: PlatformCapability::Generated {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/repo/.cursor/hooks.json"),
+                        entry_key: Some("hooks.format.sh".to_owned()),
+                    },
+                    mode: ProjectionMode::GeneratedJson,
+                    surface: ProjectionSurface::Platform(PlatformId::Cursor),
+                },
+                script: PlatformCapability::DirectLink {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/repo/.cursor/hooks/format.sh"),
+                        entry_key: None,
+                    },
+                    mode: ProjectionMode::DirectLink,
+                    surface: ProjectionSurface::Platform(PlatformId::Cursor),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn codex_hooks_use_json_binding_and_linked_script_not_inline_toml() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            hook_capability_for(PlatformId::Codex, "format.sh", &context),
+            HookCapability::Supported {
+                binding: PlatformCapability::Generated {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/repo/.codex/hooks.json"),
+                        entry_key: Some("hooks.format.sh".to_owned()),
+                    },
+                    mode: ProjectionMode::GeneratedJson,
+                    surface: ProjectionSurface::Platform(PlatformId::Codex),
+                },
+                script: PlatformCapability::DirectLink {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/repo/.codex/hooks/format.sh"),
+                        entry_key: None,
+                    },
+                    mode: ProjectionMode::DirectLink,
+                    surface: ProjectionSurface::Platform(PlatformId::Codex),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn claude_user_hooks_keep_settings_and_script_unit_separate() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/claude-user"),
+        };
+
+        assert_eq!(
+            hook_capability_for(PlatformId::Claude, "format.sh", &context),
+            HookCapability::Supported {
+                binding: PlatformCapability::Generated {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/home/claude-user/.claude/settings.json"),
+                        entry_key: Some("hooks.format.sh".to_owned()),
+                    },
+                    mode: ProjectionMode::GeneratedJson,
+                    surface: ProjectionSurface::Platform(PlatformId::Claude),
+                },
+                script: PlatformCapability::DirectLink {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/home/claude-user/.claude/hooks/format.sh"),
+                        entry_key: None,
+                    },
+                    mode: ProjectionMode::DirectLink,
+                    surface: ProjectionSurface::Platform(PlatformId::Claude),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn hermes_user_hooks_use_yaml_and_project_hooks_are_rejected() {
+        let user = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/hermes-user"),
+        };
+        let project = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            hook_capability_for(PlatformId::Hermes, "format.sh", &user),
+            HookCapability::Supported {
+                binding: PlatformCapability::Generated {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/home/hermes-user/.hermes/config.yaml"),
+                        entry_key: Some("hooks.format.sh".to_owned()),
+                    },
+                    mode: ProjectionMode::GeneratedYaml,
+                    surface: ProjectionSurface::Platform(PlatformId::Hermes),
+                },
+                script: PlatformCapability::DirectLink {
+                    target: ProjectionTarget {
+                        path: Utf8PathBuf::from("/home/hermes-user/.hermes/hooks/format.sh"),
+                        entry_key: None,
+                    },
+                    mode: ProjectionMode::DirectLink,
+                    surface: ProjectionSurface::Platform(PlatformId::Hermes),
+                },
+            }
+        );
+        assert_eq!(
+            hook_capability_for(PlatformId::Hermes, "format.sh", &project),
+            HookCapability::Unsupported {
+                reason: "Hermes project Hook is unsupported; do not modify global config.yaml"
+                    .to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn asset_name_cannot_escape_the_projection_scope() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(
+                PlatformId::Cursor,
+                AssetKind::Command,
+                "../../outside",
+                &context
+            ),
+            PlatformCapability::Unsupported {
+                reason: "asset name must be one safe path segment".to_owned(),
+            }
+        );
+        assert_eq!(
+            hook_capability_for(PlatformId::Cursor, "../outside.sh", &context),
+            HookCapability::Unsupported {
+                reason: "asset name must be one safe path segment".to_owned(),
             }
         );
     }

@@ -1,8 +1,8 @@
-# vercel-labs/skills 平台 Skill 路径（上游参考）
+# vercel-labs/skills 路径快照（历史盘点）
 
-ai-config 维护的 4 个 IDE 平台 skill **下发目录**应以 [vercel-labs/skills](https://github.com/vercel-labs/skills) 为上游事实来源。该仓库是 `npx skills add` CLI 的实现；路径定义在 **`src/agents.ts`**，README 的 Supported Agents 表由 `scripts/sync-agents.ts` 从该文件生成。
+> **不是 ai-config 投影契约。** `vercel-labs/skills` 是第三方安装器；它的 `src/agents.ts` 只能帮助识别历史安装或做 migration inventory，不能决定 ai-config 的新写入路径。当前唯一需求来源是 [Spec 008](../../specs/008-source-first-projection/spec.md#平台资产契约实现与验收的权威边界)，便捷索引见 [platform-contracts.md](./platform-contracts.md)。
 
-> **何时更新**：vercel-labs/skills 发版或 Cursor/Codex/Claude/Hermes 官方改路径后，拉取最新 `src/agents.ts`，对照本文与 `manifests/vercel-skills-agents.snapshot.json`，再决定是否改 `crates/ai-config-core/src/platform.rs`。
+本文件保留旧 `npx skills add` 快照，便于解释旧目录为何出现。不要依据本页修改 `crates/ai-config-core/src/platform.rs`、新的 projection adapter 或 GUI；上游官方契约变化时，应先更新 Spec 008、契约测试和 `platform-contracts.md`。
 
 ## 上游文件
 

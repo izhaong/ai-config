@@ -4,7 +4,7 @@
 
 | 文档                                         | 说明                                                      |
 | -------------------------------------------- | --------------------------------------------------------- |
-| [PRD.md](./product/PRD.md)                   | 产品需求 v0.5：五平台对等、硬拷贝下发、icon/更新/删除语义 |
+| [PRD.md](./product/PRD.md)                   | 历史产品需求 v0.5（硬拷贝语义已被 Spec 008 取代，仅供迁移盘点） |
 | [ARCHITECTURE.md](./product/ARCHITECTURE.md) | 技术架构：crate 边界、materialize、数据流                 |
 | [DESIGN.md](./product/DESIGN.md)             | GUI 信息架构 + §19 已实现交互附录                         |
 | [SCHEDULE.md](./product/SCHEDULE.md)         | 里程碑与排期                                              |
@@ -13,15 +13,16 @@
 
 | 文档                                                                                 | 说明                                                                                                       |
 | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| [platform-contracts.md](./reference/platform-contracts.md)                           | **当前四平台资产契约索引**；唯一权威需求为 Spec 008                                                       |
 | [claudemarketplace-skills-top100.md](./reference/claudemarketplace-skills-top100.md) | [Claude Code Marketplace](https://www.claudemarketplace.net/skills) 下载量 / Stars Top 100                 |
-| [vercel-skills-agent-paths.md](./reference/vercel-skills-agent-paths.md)             | [vercel-labs/skills](https://github.com/vercel-labs/skills) 各平台 skill 下发路径（`npx skills add` 上游） |
+| [vercel-skills-agent-paths.md](./reference/vercel-skills-agent-paths.md)             | 第三方 CLI 历史快照，只作 legacy inventory，不能决定 ai-config 投影路径                                   |
 | [hooks-compatibility-matrix.md](./reference/hooks-compatibility-matrix.md)           | Hooks 在 Cursor / Claude / Codex 的事件映射、路径和 matcher 兼容策略                                       |
 
 ## 资产与配置
 
 | 文档                                          | 说明                                                   |
 | --------------------------------------------- | ------------------------------------------------------ |
-| 用户资产 `~/.ai-config/`                      | 全局 skills / rules / mcp / agents（本机，不在仓库内） |
+| 用户资产 `~/.ai-config/`                      | 全局 skills / rules / mcp / agents / commands / prompts / hooks（本机，不在仓库内） |
 | [manifests/README.md](../manifests/README.md) | 插件 skill 索引（不入库）                              |
 
 ## AI 协作（本仓工具开发）
