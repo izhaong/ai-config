@@ -788,14 +788,14 @@ source-first `ProjectionPlan` 降级后交给硬拷贝 executor；T009 在 T007/
 
 **Produces:** `apply_projection_plan`、transaction manifest、精确 link/unlink、rollback。
 
-- [ ] **T006.1 Write failing executor tests**：missing target creates per-asset link；正确 link noop；普通 file/dir、错源 link、symlinked parent escape 拒绝；blocking conflict 使整 plan 零写入；AdoptEquivalent 在 standard apply 零写入、错误 digest/action-id 拒绝、正确 selected action 先备份再替换；retract 只删精确 link；文件失败与 ledger batch 失败都回滚先前 action并报告 rolled_back/not_applied；ledger 不留部分 record；stale source/target plan 拒绝；并发 apply 锁；Windows fallback 状态明确。
-- [ ] **T006.2 Verify RED**：`cargo test -p ai-config-core --test projection_apply`。
-- [ ] **T006.3 Implement safe link primitives**：创建 sibling temp link 后 rename；target parent canonical path 必须在 allowlisted platform root；删除前用 `symlink_metadata + read_link` 再校验 expected source；禁止通用 `remove_dest_path` 进入正常路径。
-- [ ] **T006.4 Implement transaction**：排他锁、blocking preflight、source/target precondition、0700 backup dir、snapshot、apply、postcondition、ledger `apply_batch`、reverse rollback；ledger write error 必须回滚文件，不能像 planner read error 一样降级；backup manifest 只记录 hash/mode/path，不记录内容；报告最终状态而非中间成功。
-- [ ] **T006.5 Implement explicit copy fallback**：仅 adapter/policy 明确允许且平台不能建 link 时生成；使用 temp tree + backup-swap，不假设 rename-over-directory 原子；ledger 记录 `Copied` source/target digest，ledger 缺失或 digest 漂移时为 Foreign/Drifted 且不可删除；普通 sync 不自动启用。ExternalDirectory 的具名配置 entry 同 generated ownership 规则，ledger 缺失时不可 retract。
-- [ ] **T006.6 Verify immediate propagation**：修改 canonical SKILL.md 后通过平台 link 读取新正文，不再次 sync。
-- [ ] **T006.7 Verify**：`cargo test -p ai-config-core --test projection_apply`。
-- [ ] **T006.8 Commit checkpoint**：`git commit -m "feat(core): 实现事务化逐项链接投影"`。
+- [x] **T006.1 Write failing executor tests**：覆盖缺失/正确/冲突/陈旧 plan、精确 link retract、adopt、锁、ledger rollback 与显式 copy fallback；copy 测试另覆盖 adapter/policy/授权三重门禁、source/target symlink 拒绝、漂移拒删与 refresh rollback。
+- [x] **T006.2 Verify RED**：各 executor/copy contract 先以缺 action、错误 fallback 契约或错误 lifecycle 行为实际失败后再实现；证据保留在定向测试与对应 checkpoint。
+- [x] **T006.3 Implement safe link primitives**：创建 sibling temp link 后 rename；target parent canonical path 必须在 allowlisted platform root；删除前用 `symlink_metadata + read_link` 再校验 expected source；禁止通用 `remove_dest_path` 进入正常路径。
+- [x] **T006.4 Implement transaction**：排他锁、blocking preflight、source/target precondition、0700 backup dir、snapshot、apply、postcondition、ledger `apply_batch`、reverse rollback；ledger write error 回滚文件，backup manifest 只记录 hash/mode/path，报告最终状态而非中间成功。
+- [x] **T006.5 Implement explicit copy fallback**：仅 adapter 显式 `copy_fallback_allowed`、Windows policy、用户授权且 link unavailable 时生成；使用 temp path + backup-swap，拒绝 source/target tree symlink；ledger 记录 `CopyFallback` source/target digest，ledger 缺失或 digest 漂移时为 Foreign/Drifted 且不可删除；普通 sync 默认不启用。
+- [x] **T006.6 Verify immediate propagation**：修改 canonical SKILL.md 后平台 direct link 可读取新正文，不再次 sync。
+- [x] **T006.7 Verify**：`cargo test -p ai-config-core --test projection_apply`（25 passed），`projection_plan`（20 passed）与 `projection::platform_adapter`（42 passed）。
+- [x] **T006.8 Commit checkpoint**：`e3a0672 feat(core): 增加显式安全拷贝回退`；此前 direct transaction checkpoints 为 `b6e6adb`、`58ef496`、`57b70a3`。
 
 ### T007 — MCP per-server source、secret migration 与四平台 renderer
 
