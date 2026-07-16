@@ -859,6 +859,13 @@ public lifecycle 以及 Hermes cross-domain retract/uninstall；在此之前，�
 - [x] **T008.8 Verify**：`hermes_cross_domain_projection` 5 passed、`hook_projection` 11 passed、`prompt_projection` 6 passed、`mcp_projection` 35 passed；并回归 `projection_plan` 20 passed、`projection_apply` 25 passed及 core strict clippy。
 - [ ] **T008.9 Commit checkpoint**：`git commit -m "feat(hooks): 接入事务化生成投影与统一入口"`。
 
+**T008.5 / T009 handoff（2026-07-17）**：已移除无生产调用的
+`reconcile_orphan_hook_scripts` 隐式写源副作用（`5b99621`）。审计确认旧公开 lifecycle/GUI
+仍可经 `hook_adapter::deploy`、`asset_ops`、`hermes_config::after_skill_deploy` 直接写平台
+容器；这些调用必须在 T009 的同一次 public lifecycle 切换中替换为 plan/apply，不能在 T008
+单独禁用而制造功能空窗。故 T008.5 与最终 T008.9 保持未完成，T009.1 必须先以默认零写和
+显式 `--apply` 合同覆盖这些调用路径；T009 接通后回填 T008.5/9 验收。
+
 ### T009 — CLI 与 ai-config MCP API 统一走 plan/apply
 
 **Files:**
