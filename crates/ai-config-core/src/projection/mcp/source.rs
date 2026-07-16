@@ -93,9 +93,12 @@ fn definition_paths(asset_root: &Utf8Path) -> Result<Vec<camino::Utf8PathBuf>, C
 }
 
 fn parse_definition(path: &Utf8Path) -> Result<McpDefinition, CoreError> {
-    let server = parse_server(path)?;
+    let mut server = parse_server(path)?;
     let raw: Value = serde_json::from_str(&fs::read_to_string(path.as_std_path())?)?;
-    validate_secret_references(&server.config, path)?;
+    // `template::parse_server` historically collected placeholders from every config field.
+    // Source-first MCP only permits secret references in env/header values, so overwrite that
+    // legacy metadata with the validated, deployable key set here.
+    server.secret_keys = validate_secret_references(&server.config, path)?;
     Ok(McpDefinition {
         server,
         targets: parse_targets(&raw, path)?,
@@ -140,15 +143,16 @@ fn parse_targets(raw: &Value, path: &Utf8Path) -> Result<Vec<PlatformId>, CoreEr
     Ok(parsed)
 }
 
-fn validate_secret_references(config: &Value, path: &Utf8Path) -> Result<(), CoreError> {
+fn validate_secret_references(config: &Value, path: &Utf8Path) -> Result<Vec<String>, CoreError> {
+    let mut secret_keys = Vec::new();
     if let Some(env) = config.get("env").and_then(Value::as_object) {
         for (key, value) in env {
-            require_placeholder(value, key, "env", path)?;
+            secret_keys.push(require_placeholder(value, key, "env", path)?);
         }
     }
     if let Some(headers) = config.get("headers").and_then(Value::as_object) {
         for (key, value) in headers {
-            require_placeholder(value, key, "header", path)?;
+            secret_keys.push(require_placeholder(value, key, "header", path)?);
         }
     }
     if let Some(url) = config.get("url").and_then(Value::as_str) {
@@ -163,7 +167,43 @@ fn validate_secret_references(config: &Value, path: &Utf8Path) -> Result<(), Cor
     if let Some(args) = config.get("args").and_then(Value::as_array) {
         reject_suspected_credential_arguments(args, path)?;
     }
+    reject_placeholders_outside_secret_fields(config, path)?;
+    secret_keys.sort();
+    secret_keys.dedup();
+    Ok(secret_keys)
+}
+
+/// Values substituted into command/args/url are indistinguishable from credentials in process
+/// arguments or URLs. Keep secret interpolation at the explicit env/header boundary only.
+fn reject_placeholders_outside_secret_fields(
+    config: &Value,
+    path: &Utf8Path,
+) -> Result<(), CoreError> {
+    let Some(fields) = config.as_object() else {
+        return Ok(());
+    };
+    for (key, value) in fields {
+        if key == "env" || key == "headers" {
+            continue;
+        }
+        if contains_placeholder(value) {
+            return Err(source_error(
+                path,
+                &format!("{key} contains a secret placeholder outside env/header"),
+                "仅在 env 或 headers value 中使用 ${VAR}；command/args/url 必须是普通字面量",
+            ));
+        }
+    }
     Ok(())
+}
+
+fn contains_placeholder(value: &Value) -> bool {
+    match value {
+        Value::String(value) => value.contains("${"),
+        Value::Array(values) => values.iter().any(contains_placeholder),
+        Value::Object(values) => values.values().any(contains_placeholder),
+        Value::Null | Value::Bool(_) | Value::Number(_) => false,
+    }
 }
 
 fn reject_suspected_credential_arguments(args: &[Value], path: &Utf8Path) -> Result<(), CoreError> {
@@ -208,7 +248,7 @@ fn require_placeholder(
     key: &str,
     field: &str,
     path: &Utf8Path,
-) -> Result<(), CoreError> {
+) -> Result<String, CoreError> {
     let Some(value) = value.as_str() else {
         return Err(source_error(
             path,
@@ -216,14 +256,14 @@ fn require_placeholder(
             "将敏感字段改为合法的 ${VAR} 引用",
         ));
     };
-    if placeholder_name(value).is_none() {
+    let Some(name) = placeholder_name(value) else {
         return Err(source_error(
             path,
             &format!("{field} {key} contains a literal or invalid secret reference"),
             "将敏感字段改为合法的 ${VAR} 引用",
         ));
-    }
-    Ok(())
+    };
+    Ok(name.to_owned())
 }
 
 fn placeholder_name(value: &str) -> Option<&str> {
@@ -250,5 +290,43 @@ fn source_error(path: &Utf8Path, reason: &str, hint: &str) -> CoreError {
         template: path.to_string(),
         reason: reason.to_owned(),
         hint: hint.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use camino::Utf8Path;
+    use serde_json::json;
+
+    use super::validate_secret_references;
+
+    #[test]
+    fn validated_secret_keys_come_only_from_exact_env_or_header_references() {
+        let config = json!({
+            "command": "catalog-mcp",
+            "env": {"CATALOG_TOKEN": "${CATALOG_TOKEN}"},
+            "headers": {"X-Trace": "${TRACE_KEY}"}
+        });
+
+        assert_eq!(
+            validate_secret_references(&config, Utf8Path::new("mcp/servers/catalog.json")).unwrap(),
+            vec!["CATALOG_TOKEN", "TRACE_KEY"]
+        );
+    }
+
+    #[test]
+    fn secret_placeholders_in_command_args_or_url_are_rejected_without_echoing_values() {
+        for config in [
+            json!({"command": "catalog-${super-secret-sentinel}", "env": {}}),
+            json!({"command": "catalog", "args": ["--token=${super-secret-sentinel}"], "env": {}}),
+            json!({"url": "https://example.test/${super-secret-sentinel}", "headers": {}}),
+        ] {
+            let error =
+                validate_secret_references(&config, Utf8Path::new("mcp/servers/catalog.json"))
+                    .unwrap_err()
+                    .to_string();
+            assert!(error.contains("mcp/servers/catalog.json"));
+            assert!(!error.contains("super-secret-sentinel"));
+        }
     }
 }

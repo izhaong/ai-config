@@ -6,6 +6,7 @@ use ai_config_core::projection::mcp::claude_json::{
 };
 use ai_config_core::projection::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
 use ai_config_core::projection::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
+use ai_config_core::projection::mcp::hermes_yaml::{render_hermes_mcp_yaml, YamlServerIntent};
 use ai_config_core::projection::mcp::source::{
     load_mcp_definitions, resolve_effective_mcp_definitions,
 };
@@ -355,5 +356,99 @@ command = "foreign-mcp"
     assert_eq!(
         parsed["mcp_servers"]["foreign"]["command"].as_str(),
         Some("foreign-mcp")
+    );
+}
+
+#[test]
+fn hermes_renderer_preserves_provider_model_comments_and_foreign_server() {
+    let existing = r#"# user configuration
+provider: openai # preserve provider comment
+model: gpt-5
+
+mcp_servers: # managed entries only
+  foreign: # external server comment
+    command: foreign-mcp
+    env:
+      FOREIGN_MODE: preserve
+
+skills:
+  external_dirs:
+    - /opt/skills
+"#;
+    let intents = vec![YamlServerIntent::new(
+        "alpha",
+        serde_json::json!({
+            "command": "alpha-mcp",
+            "args": ["--serve", "alpha"],
+            "env": {"ALPHA_TOKEN": "${ALPHA_TOKEN}"}
+        }),
+    )];
+
+    let rendered = render_hermes_mcp_yaml(existing, &intents, &[]).unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
+
+    assert!(rendered.contains("# user configuration"));
+    assert!(rendered.contains("# preserve provider comment"));
+    assert!(rendered.contains("# managed entries only"));
+    assert!(rendered.contains("# external server comment"));
+    assert_eq!(parsed["provider"].as_str(), Some("openai"));
+    assert_eq!(parsed["model"].as_str(), Some("gpt-5"));
+    assert_eq!(
+        parsed["mcp_servers"]["foreign"]["env"]["FOREIGN_MODE"].as_str(),
+        Some("preserve")
+    );
+    assert_eq!(
+        parsed["mcp_servers"]["alpha"]["command"].as_str(),
+        Some("alpha-mcp")
+    );
+    assert_eq!(
+        parsed["mcp_servers"]["alpha"]["args"][0].as_str(),
+        Some("--serve")
+    );
+    assert_eq!(
+        parsed["mcp_servers"]["alpha"]["env"]["ALPHA_TOKEN"].as_str(),
+        Some("${ALPHA_TOKEN}")
+    );
+    assert_eq!(
+        parsed["skills"]["external_dirs"][0].as_str(),
+        Some("/opt/skills")
+    );
+}
+
+#[test]
+fn hermes_renderer_removes_only_explicit_owned_server() {
+    let existing = r#"provider: openai
+mcp_servers:
+  owned:
+    command: owned-mcp
+  foreign: # leave this alone
+    command: foreign-mcp
+"#;
+
+    let rendered = render_hermes_mcp_yaml(existing, &[], &["owned".to_owned()]).unwrap();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&rendered).unwrap();
+
+    assert!(parsed["mcp_servers"].get("owned").is_none());
+    assert_eq!(
+        parsed["mcp_servers"]["foreign"]["command"].as_str(),
+        Some("foreign-mcp")
+    );
+    assert!(rendered.contains("# leave this alone"));
+}
+
+#[test]
+fn hermes_renderer_rejects_a_non_mapping_container_without_rendering() {
+    let existing = "provider: openai\nmcp_servers: not-a-mapping\n";
+
+    assert!(render_hermes_mcp_yaml(existing, &[], &[]).is_err());
+}
+
+#[test]
+fn hermes_renderer_does_not_create_an_empty_container_for_a_retract_only_batch() {
+    let existing = "provider: openai\nmodel: gpt-5\n";
+
+    assert_eq!(
+        render_hermes_mcp_yaml(existing, &[], &["missing-owned".to_owned()]).unwrap(),
+        existing
     );
 }
