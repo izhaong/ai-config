@@ -1,8 +1,8 @@
 //! `ai-config mcp ...` 子命令(PRD §4.2 / §5.1 / §10 A-7 / A-8 / A-15)。
 //!
-//! T007 安全边界：source-first CRUD 仅变更 canonical source，绝不直接写平台容器；
-//! `deploy` / `retract` 在 generated executor 就绪前 fail-closed；legacy migration
-//! 仅允许显式 `--extract-secrets --apply` 的受控 source-first 路径。
+//! T007 安全边界：source-first CRUD 仅变更 canonical source；单项 `deploy` / `retract`
+//! 必须先构建经审核的 source-first projection plan，再交由 generated executor 事务执行。
+//! legacy migration 仅允许显式 `--extract-secrets --apply` 的受控 source-first 路径。
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -13,9 +13,22 @@ use serde::Serialize;
 use serde_json::Value;
 
 use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::model::McpServer;
+use ai_config_core::model::{McpServer, PlatformId};
 use ai_config_core::paths;
-use ai_config_core::projection::mcp::source::{load_mcp_definition_at, load_mcp_definitions};
+use ai_config_core::projection::executor::{
+    apply_projection_plan, ApplyOptions, ExecutorContext, McpSecretProvider,
+};
+use ai_config_core::projection::ledger::MemoryProjectionLedger;
+use ai_config_core::projection::mcp::source::{
+    load_mcp_definition_at, load_mcp_definitions, resolve_effective_mcp_definitions,
+    EffectiveMcpDefinition,
+};
+use ai_config_core::projection::model::DeploymentScope;
+use ai_config_core::projection::planner::{
+    build_mcp_projection_plan, McpSecretAvailability, PlannerContext, ProjectionActionKind,
+    ProjectionOperation, ProjectionRequest,
+};
+use ai_config_core::projection::source::OverlayRoots;
 use ai_config_core::secrets;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
@@ -78,13 +91,15 @@ impl McpCmd {
             McpCmd::Enable { name } => run_set_enabled(mode, default_root, &name, true),
             McpCmd::Disable { name } => run_set_enabled(mode, default_root, &name, false),
             McpCmd::Deploy { name, to } => {
-                let _ = (name, to);
-                refuse_legacy_write(mode, "deploy")
+                run_projection_command(mode, default_root, &name, &to, ProjectionOperation::Sync)
             }
-            McpCmd::Retract { name, from } => {
-                let _ = (name, from);
-                refuse_legacy_write(mode, "retract")
-            }
+            McpCmd::Retract { name, from } => run_projection_command(
+                mode,
+                default_root,
+                &name,
+                &from,
+                ProjectionOperation::Retract,
+            ),
             McpCmd::Migrate {
                 source,
                 dry_run,
@@ -100,6 +115,203 @@ impl McpCmd {
             ),
             McpCmd::MigrateHermes { dry_run } => run_migrate_hermes(mode, dry_run),
         }
+    }
+}
+
+/// CLI-owned secret boundary for a single source-first plan/apply invocation.  It is populated
+/// only through `secrets::load_from`, which rejects an existing store unless it is strict 0600.
+/// Neither planner nor executor receives the map itself, and no error/report serializes values.
+struct CliMcpSecrets {
+    values: BTreeMap<String, String>,
+}
+
+impl CliMcpSecrets {
+    fn load() -> Result<Self, CoreError> {
+        let pairs = secrets::load_from(&secrets::default_path())?;
+        Ok(Self {
+            values: pairs.into_iter().collect(),
+        })
+    }
+}
+
+impl McpSecretAvailability for CliMcpSecrets {
+    fn missing_secret_keys(&self, declared_keys: &[String]) -> Result<Vec<String>, CoreError> {
+        Ok(declared_keys
+            .iter()
+            .filter(|key| !self.values.contains_key(key.as_str()))
+            .cloned()
+            .collect())
+    }
+}
+
+impl McpSecretProvider for CliMcpSecrets {
+    fn resolve(&self, key: &str) -> Result<Option<String>, CoreError> {
+        Ok(self.values.get(key).cloned())
+    }
+}
+
+#[derive(Serialize)]
+struct McpProjectionCommandReport<'a> {
+    operation: &'a str,
+    server: &'a str,
+    platform: &'a str,
+    report: ai_config_core::projection::executor::ApplyReport,
+}
+
+/// The old CLI entrypoint is intentionally only an orchestration layer.  It never renders a
+/// platform container directly: source lookup -> read-only plan -> exact plan authorization ->
+/// transactional core executor.  `deploy_base` comes from the selected CLI scope, so all target
+/// writes remain inside the caller-selected user/project boundary.
+fn run_projection_command(
+    mode: OutputMode,
+    default_root: &Utf8Path,
+    name: &str,
+    platform_raw: &str,
+    operation: ProjectionOperation,
+) -> ExitCode {
+    let result = (|| -> Result<McpProjectionCommandReport<'_>, CoreError> {
+        let platform = parse_mcp_platform(platform_raw)?;
+        let roots = paths::resolve_sync_roots(default_root);
+        let scope = if paths::is_project_deploy_base(&roots.deploy_base) {
+            DeploymentScope::Project
+        } else {
+            DeploymentScope::User
+        };
+        let definitions = effective_mcp_definitions(&roots)?;
+        let definition = definitions
+            .into_iter()
+            .find(|definition| definition.definition.server.name == name)
+            .ok_or_else(|| missing_canonical_definition(name))?;
+        if operation == ProjectionOperation::Sync && !definition.definition.enabled_for(platform) {
+            return Err(CoreError::InvalidPath(format!(
+                "canonical MCP server `{name}` is disabled or does not target `{platform_raw}`"
+            )));
+        }
+
+        let secrets = CliMcpSecrets::load()?;
+        let request = ProjectionRequest {
+            operation,
+            scope_key: projection_scope_key(scope, &roots.deploy_base),
+            scope,
+            deploy_base: roots.deploy_base.clone(),
+            assets: Vec::new(),
+            platforms: vec![platform],
+        };
+        // A persistent projection ledger is deliberately not invented in the CLI.  Until the
+        // durable ledger slice lands, a later process can never prove ownership for retract and
+        // therefore turns it into a zero-write conflict rather than guessing from container data.
+        let ledger = MemoryProjectionLedger::default();
+        let plan = build_mcp_projection_plan(
+            &request,
+            &[definition],
+            &PlannerContext::new(&ledger).with_mcp_secret_availability(&secrets),
+        )?;
+        if plan.actions.is_empty() {
+            return Err(CoreError::InvalidPath(
+                "requested MCP server has no eligible source-first projection action".to_owned(),
+            ));
+        }
+        if let Some(conflict) = plan.actions.iter().find(|action| {
+            action.kind == ProjectionActionKind::ReportOnly
+                && !(action.state.as_deref() == Some("skipped")
+                    && action.reason_code == "mcp_missing_secret_keys")
+        }) {
+            return Err(CoreError::InvalidPath(format!(
+                "mcp_projection_plan_conflict:{}",
+                conflict.reason_code
+            )));
+        }
+        let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
+        let report = apply_projection_plan(
+            &plan,
+            &ExecutorContext::new(&ledger, roots.deploy_base.clone(), backup_root)
+                .with_mcp_secret_provider(&secrets),
+            ApplyOptions::for_plan(&plan),
+        )
+        .map_err(|error| error.error)?;
+        Ok(McpProjectionCommandReport {
+            operation: if operation == ProjectionOperation::Sync {
+                "deploy"
+            } else {
+                "retract"
+            },
+            server: name,
+            platform: platform_raw,
+            report,
+        })
+    })();
+
+    match result {
+        Ok(report) => {
+            if mode.is_json() {
+                emit_json(mode, &report);
+            } else {
+                emit_line(
+                    mode,
+                    format!(
+                        "mcp {} {} -> {}: changed={}, skipped={}, unchanged={}",
+                        report.operation,
+                        report.server,
+                        report.platform,
+                        report.report.changed,
+                        report.report.skipped,
+                        report.report.unchanged,
+                    ),
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+fn effective_mcp_definitions(
+    roots: &paths::SyncRoots,
+) -> Result<Vec<EffectiveMcpDefinition>, CoreError> {
+    let overlays = if paths::is_project_deploy_base(&roots.deploy_base) {
+        OverlayRoots {
+            global: roots.global_default.clone(),
+            workspace: None,
+            project: roots.asset_root.clone(),
+        }
+    } else {
+        // Do not load the same root twice: source provenance remains `Global` for a global CLI
+        // invocation and an absent project layer cannot shadow it.
+        OverlayRoots {
+            global: roots.asset_root.clone(),
+            workspace: None,
+            project: roots.asset_root.join(".ai-config-no-project-overlay"),
+        }
+    };
+    resolve_effective_mcp_definitions(&overlays)
+}
+
+fn missing_canonical_definition(name: &str) -> CoreError {
+    CoreError::InvalidPath(format!(
+        "source-first canonical MCP server `{name}` was not found; 拒绝写入 legacy MCP asset"
+    ))
+}
+
+fn projection_scope_key(scope: DeploymentScope, deploy_base: &Utf8Path) -> String {
+    match scope {
+        DeploymentScope::User => format!("user:{}", deploy_base),
+        DeploymentScope::Workspace => format!("workspace:{}", deploy_base),
+        DeploymentScope::Project => format!("project:{}", deploy_base),
+    }
+}
+
+fn parse_mcp_platform(raw: &str) -> Result<PlatformId, CoreError> {
+    match raw.to_ascii_lowercase().as_str() {
+        "cursor" => Ok(PlatformId::Cursor),
+        "codex" => Ok(PlatformId::Codex),
+        "claude" | "claudecode" | "claude-code" => Ok(PlatformId::Claude),
+        "hermes" => Ok(PlatformId::Hermes),
+        _ => Err(CoreError::InvalidPath(format!(
+            "unknown MCP deploy platform `{raw}`; use cursor, codex, claude, or hermes"
+        ))),
     }
 }
 
@@ -366,18 +578,6 @@ fn emit_crud_error(mode: OutputMode, error: anyhow::Error) -> ExitCode {
 }
 
 // ── legacy platform writes: fail closed until generated executor exists ─────
-
-fn refuse_legacy_write(mode: OutputMode, action: &str) -> ExitCode {
-    emit_error_envelope(
-        mode,
-        exit_code::ARG_ERROR,
-        &format!(
-            "legacy MCP `{action}` 已禁用：source-first per-server CRUD 与 generated executor 尚未就绪，拒绝写入旧 MCP 资产"
-        ),
-        Some("可使用 `ai-config mcp list` / `show` 或 migration 的 `--dry-run` 盘点；待 source-first apply 就绪后再执行单项变更"),
-    );
-    ExitCode::from(exit_code::ARG_ERROR)
-}
 
 // ── migrate(legacy container → source-first per-server sources) ────────────
 
