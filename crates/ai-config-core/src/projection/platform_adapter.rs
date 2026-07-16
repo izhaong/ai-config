@@ -28,6 +28,11 @@ pub enum PlatformCapability {
         mode: ProjectionMode,
         surface: ProjectionSurface,
     },
+    Generated {
+        target: ProjectionTarget,
+        mode: ProjectionMode,
+        surface: ProjectionSurface,
+    },
     Unsupported {
         reason: String,
     },
@@ -71,6 +76,60 @@ pub fn capability_for(
                 surface: ProjectionSurface::Platform(PlatformId::Hermes),
             }
         }
+        (PlatformId::Codex, AssetKind::Rule) => PlatformCapability::Unsupported {
+            reason:
+                "Codex instruction rules are unsupported; use canonical AGENTS prompt, never .codex/rules"
+                    .to_owned(),
+        },
+        (PlatformId::Cursor, AssetKind::Rule) if context.scope == DeploymentScope::User => {
+            PlatformCapability::Unsupported {
+                reason: "Cursor user rules have no stable file target".to_owned(),
+            }
+        }
+        (PlatformId::Cursor, AssetKind::Rule) if context.scope == DeploymentScope::Project => {
+            PlatformCapability::DirectLink {
+                target: ProjectionTarget {
+                    path: context
+                        .deploy_base
+                        .join(".cursor/rules")
+                        .join(format!("{name}.mdc")),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::DirectLink,
+                surface: ProjectionSurface::SharedTarget {
+                    key: "cursor_hermes_rules".to_owned(),
+                },
+            }
+        }
+        (PlatformId::Hermes, AssetKind::Rule) if context.scope == DeploymentScope::Project => {
+            PlatformCapability::DirectLink {
+                target: ProjectionTarget {
+                    path: context
+                        .deploy_base
+                        .join(".cursor/rules")
+                        .join(format!("{name}.mdc")),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::DirectLink,
+                surface: ProjectionSurface::SharedTarget {
+                    key: "cursor_hermes_rules".to_owned(),
+                },
+            }
+        }
+        (PlatformId::Hermes, AssetKind::Rule) => PlatformCapability::Unsupported {
+            reason: "Hermes user rules are unsupported; do not write SOUL.md".to_owned(),
+        },
+        (PlatformId::Claude, AssetKind::Rule) => PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: context
+                    .deploy_base
+                    .join(".claude/rules")
+                    .join(format!("{name}.md")),
+                entry_key: None,
+            },
+            mode: ProjectionMode::GeneratedMarkdown,
+            surface: ProjectionSurface::Platform(PlatformId::Claude),
+        },
         _ => PlatformCapability::Unsupported {
             reason: format!(
                 "projection adapter has no contract for platform {platform:?} and asset {kind:?}"
@@ -172,5 +231,125 @@ mod tests {
             capability_for(PlatformId::Hermes, AssetKind::Skill, "demo", &context),
             PlatformCapability::Unsupported { .. }
         ));
+    }
+
+    #[test]
+    fn codex_instruction_rules_never_target_execution_rules_directory() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Codex, AssetKind::Rule, "review", &context),
+            PlatformCapability::Unsupported {
+                reason: "Codex instruction rules are unsupported; use canonical AGENTS prompt, never .codex/rules".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_user_rules_are_unsupported_without_a_stable_file_target() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/cursor-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Rule, "review", &context),
+            PlatformCapability::Unsupported {
+                reason: "Cursor user rules have no stable file target".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_project_rules_use_native_mdc_target() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Rule, "review", &context),
+            PlatformCapability::DirectLink {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.cursor/rules/review.mdc"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::DirectLink,
+                surface: ProjectionSurface::SharedTarget {
+                    key: "cursor_hermes_rules".to_owned(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_and_hermes_project_rules_share_one_physical_target() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Rule, "review", &context),
+            capability_for(PlatformId::Hermes, AssetKind::Rule, "review", &context)
+        );
+    }
+
+    #[test]
+    fn claude_project_rules_require_generated_markdown() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Rule, "review", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.claude/rules/review.md"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::GeneratedMarkdown,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        );
+    }
+
+    #[test]
+    fn claude_user_rules_require_generated_markdown() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/claude-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Rule, "review", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/home/claude-user/.claude/rules/review.md"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::GeneratedMarkdown,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        );
+    }
+
+    #[test]
+    fn hermes_user_rules_are_unsupported() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/hermes-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Hermes, AssetKind::Rule, "review", &context),
+            PlatformCapability::Unsupported {
+                reason: "Hermes user rules are unsupported; do not write SOUL.md".to_owned(),
+            }
+        );
     }
 }

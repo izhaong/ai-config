@@ -30,6 +30,7 @@ pub enum ProjectionMode {
     GeneratedJson,
     GeneratedToml,
     GeneratedYaml,
+    GeneratedMarkdown,
     ExternalDirectory,
     CopyFallback,
 }
