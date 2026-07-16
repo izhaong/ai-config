@@ -9,7 +9,8 @@ use ai_config_core::error::{exit_code, CoreError};
 use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::paths::{self, SyncRoots};
 use ai_config_core::projection::executor::{
-    apply_projection_plans_transactionally, ApplyOptions, ExecutorContext, McpSecretProvider,
+    apply_projection_plans_transactionally, ApplyOptions, ApplyReport, ExecutorContext,
+    McpSecretProvider,
 };
 use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
 use ai_config_core::projection::mcp::source::resolve_effective_mcp_definitions;
@@ -23,7 +24,7 @@ use ai_config_core::projection::planner::{
 };
 use ai_config_core::projection::source::{resolve_effective_assets, OverlayRoots};
 use ai_config_store::Store;
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use schemars::JsonSchema;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -39,7 +40,7 @@ pub struct PublicPlan {
     pub actions: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Default, Serialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Serialize, JsonSchema)]
 pub struct ApplySummary {
     pub changed: usize,
     pub unchanged: usize,
@@ -61,6 +62,21 @@ pub struct LifecycleReport {
     pub blocking_reason: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct WorkspaceMemberReport {
+    member: String,
+    plan: PublicPlan,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    apply: Option<ApplySummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocking_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceLifecycleReport {
+    members: Vec<WorkspaceMemberReport>,
+}
+
 fn public_plan_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     PublicPlan::json_schema(generator)
 }
@@ -75,6 +91,11 @@ pub struct LifecycleExecution {
 struct PlanBundle {
     plans: Vec<ProjectionPlan>,
     public: PublicPlan,
+}
+
+struct WorkspaceBundle {
+    member: Utf8PathBuf,
+    bundle: PlanBundle,
 }
 
 struct EmptySecretProvider;
@@ -148,6 +169,18 @@ pub fn run(
     uninstall: bool,
     mode: OutputMode,
 ) -> ExitCode {
+    if workspace {
+        return match execute_workspace(default_root, apply, uninstall) {
+            Ok((report, exit_code)) => {
+                emit_workspace_report(mode, &report);
+                ExitCode::from(exit_code)
+            }
+            Err(error) => {
+                emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
+                ExitCode::from(error.exit_code())
+            }
+        };
+    }
     match execute(default_root, workspace, apply, uninstall) {
         Ok(execution) => {
             emit_report(mode, &execution.report);
@@ -170,7 +203,7 @@ pub fn execute(
 ) -> Result<LifecycleExecution, CoreError> {
     if workspace {
         return Err(CoreError::NotImplemented(
-            "workspace projection lifecycle is not implemented yet; remove --workspace or wait for the workspace projection request adapter",
+            "workspace projections are exposed through the CLI workspace adapter",
         ));
     }
 
@@ -228,6 +261,138 @@ pub fn execute(
         ),
     };
     Ok(LifecycleExecution { report, exit_code })
+}
+
+fn execute_workspace(
+    default_root: &Utf8Path,
+    apply: bool,
+    uninstall: bool,
+) -> Result<(WorkspaceLifecycleReport, u8), CoreError> {
+    let workspace_root = paths::resolve_project_roots(default_root).0;
+    let operation = if uninstall {
+        ProjectionOperation::Uninstall
+    } else {
+        ProjectionOperation::Sync
+    };
+    let ledger_path = workspace_root.join(".ai-config/projection-ledger.sqlite");
+    let bundles = if ledger_path.is_file() {
+        let store = Store::open_at(ledger_path.as_std_path())
+            .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
+        build_workspace_bundles(&workspace_root, operation, &store.projections())?
+    } else {
+        let ledger = MemoryProjectionLedger::default();
+        build_workspace_bundles(&workspace_root, operation, &ledger)?
+    };
+
+    if !apply {
+        return Ok((workspace_report(bundles, None), exit_code::SUCCESS));
+    }
+    if bundles
+        .iter()
+        .any(|bundle| blocking_reason(&bundle.bundle).is_some())
+    {
+        return Ok((
+            workspace_report(bundles, None),
+            exit_code::PARTIAL_FAILURE,
+        ));
+    }
+
+    let store = Store::open_at(ledger_path.as_std_path())
+        .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
+    let summaries = apply_workspace_bundles(&bundles, &store.projections(), &workspace_root)?;
+    Ok((workspace_report(bundles, Some(summaries)), exit_code::SUCCESS))
+}
+
+fn build_workspace_bundles(
+    workspace_root: &Utf8Path,
+    operation: ProjectionOperation,
+    ledger: &dyn ProjectionLedger,
+) -> Result<Vec<WorkspaceBundle>, CoreError> {
+    let global_default = paths::discover_global_asset_root_read_only();
+    ai_config_core::workspace::discover_members(workspace_root)?
+        .into_iter()
+        .filter_map(|member| {
+            let asset_root = paths::project_asset_root(&member);
+            ai_config_core::workspace::member_has_local_assets(&asset_root).then_some((
+                member,
+                asset_root,
+            ))
+        })
+        .map(|(member, asset_root)| {
+            let roots = SyncRoots {
+                repo_root: member.clone(),
+                asset_root,
+                global_default: global_default.clone(),
+                deploy_base: member.clone(),
+            };
+            Ok(WorkspaceBundle {
+                member,
+                bundle: build_bundle(&roots, operation, ledger)?,
+            })
+        })
+        .collect()
+}
+
+fn workspace_report(
+    bundles: Vec<WorkspaceBundle>,
+    summaries: Option<Vec<ApplySummary>>,
+) -> WorkspaceLifecycleReport {
+    let members = bundles
+        .into_iter()
+        .enumerate()
+        .map(|(index, bundle)| {
+            let blocking_reason = blocking_reason(&bundle.bundle);
+            WorkspaceMemberReport {
+                member: bundle.member.to_string(),
+                plan: bundle.bundle.public,
+                apply: summaries.as_ref().and_then(|summaries| summaries.get(index).cloned()),
+                blocking_reason,
+            }
+        })
+        .collect();
+    WorkspaceLifecycleReport { members }
+}
+
+fn apply_workspace_bundles(
+    bundles: &[WorkspaceBundle],
+    ledger: &dyn ProjectionLedger,
+    workspace_root: &Utf8Path,
+) -> Result<Vec<ApplySummary>, CoreError> {
+    let plan_members = bundles
+        .iter()
+        .enumerate()
+        .flat_map(|(member_index, bundle)| {
+            bundle
+                .bundle
+                .plans
+                .iter()
+                .filter(|plan| !plan.actions.is_empty())
+                .map(move |plan| (member_index, plan))
+        })
+        .collect::<Vec<_>>();
+    let backup_root = workspace_root.join(".ai-config/projection-backups");
+    let secrets = EmptySecretProvider;
+    let context = ExecutorContext::new(ledger, workspace_root.to_path_buf(), backup_root)
+        .with_mcp_secret_provider(&secrets);
+    let reports = apply_projection_plans_transactionally(
+        plan_members
+            .iter()
+            .map(|(_, plan)| (*plan, ApplyOptions::for_plan(plan))),
+        &context,
+    )?;
+    let mut summaries = vec![ApplySummary::default(); bundles.len()];
+    for ((member_index, _), report) in plan_members.into_iter().zip(reports) {
+        add_apply_report(&mut summaries[member_index], report);
+    }
+    Ok(summaries)
+}
+
+fn emit_workspace_report(mode: OutputMode, report: &WorkspaceLifecycleReport) {
+    if mode.is_json() {
+        emit_json(mode, report);
+    } else if !mode.is_quiet() {
+        emit_line(mode, format!("workspace projection: {} members", report.members.len()));
+    }
 }
 
 fn emit_report(mode: OutputMode, report: &LifecycleReport) {
@@ -389,14 +554,18 @@ fn apply_bundle(
         &context,
     )?;
     for report in reports {
-        summary.changed += report.changed;
-        summary.unchanged += report.unchanged;
-        summary.skipped += report.skipped;
-        summary.conflict += report.conflict;
-        summary.failed += report.failed;
-        summary.rolled_back += report.rolled_back;
-        summary.rollback_failed += report.rollback_failed;
-        summary.not_applied += report.not_applied;
+        add_apply_report(&mut summary, report);
     }
     Ok(summary)
+}
+
+fn add_apply_report(summary: &mut ApplySummary, report: ApplyReport) {
+    summary.changed += report.changed;
+    summary.unchanged += report.unchanged;
+    summary.skipped += report.skipped;
+    summary.conflict += report.conflict;
+    summary.failed += report.failed;
+    summary.rolled_back += report.rolled_back;
+    summary.rollback_failed += report.rollback_failed;
+    summary.not_applied += report.not_applied;
 }
