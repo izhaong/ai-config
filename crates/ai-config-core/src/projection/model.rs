@@ -8,6 +8,11 @@ use crate::model::{AssetKind, PlatformId};
 #[serde(tag = "type", content = "id", rename_all = "snake_case")]
 pub enum ProjectionSurface {
     Platform(PlatformId),
+    /// 同一 Hook 在一个平台内的 generated binding 或 direct-link script 单元。
+    PlatformBinding {
+        platform: PlatformId,
+        binding: String,
+    },
     ProjectEntry,
     /// 多个平台读取同一物理目标时的唯一所有权面，例如 Cursor/Codex skills。
     SharedTarget {
@@ -170,6 +175,10 @@ mod tests {
     fn projection_identity_round_trips_for_each_surface() {
         let surfaces = [
             ProjectionSurface::Platform(PlatformId::Claude),
+            ProjectionSurface::PlatformBinding {
+                platform: PlatformId::Codex,
+                binding: "hook_script".to_owned(),
+            },
             ProjectionSurface::ProjectEntry,
             ProjectionSurface::SharedTarget {
                 key: "cursor-codex-skills".to_owned(),

@@ -11,6 +11,7 @@ use super::model::{LedgerMutation, ProjectionId, ProjectionRecord};
 pub trait ProjectionLedger: Send + Sync {
     fn get(&self, id: &ProjectionId) -> Result<Option<ProjectionRecord>, CoreError>;
     fn get_many(&self, ids: &[ProjectionId]) -> Result<Vec<ProjectionRecord>, CoreError>;
+    fn list_scope(&self, scope_key: &str) -> Result<Vec<ProjectionRecord>, CoreError>;
     fn apply_batch(&self, mutations: &[LedgerMutation]) -> Result<(), CoreError>;
 }
 
@@ -37,6 +38,20 @@ impl ProjectionLedger for MemoryProjectionLedger {
             .iter()
             .filter_map(|id| records.get(id).cloned())
             .collect())
+    }
+
+    fn list_scope(&self, scope_key: &str) -> Result<Vec<ProjectionRecord>, CoreError> {
+        let records = self
+            .records
+            .lock()
+            .map_err(|_| CoreError::ProjectionLedger("memory ledger lock poisoned".to_owned()))?;
+        let mut records = records
+            .values()
+            .filter(|record| record.id.scope_key == scope_key)
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| format!("{:?}", left.id).cmp(&format!("{:?}", right.id)));
+        Ok(records)
     }
 
     fn apply_batch(&self, mutations: &[LedgerMutation]) -> Result<(), CoreError> {

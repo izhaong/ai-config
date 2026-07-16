@@ -32,6 +32,11 @@ use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId, Project, SyncAction};
 use crate::paths;
 use crate::platform;
+use crate::projection::model::DeploymentScope;
+use crate::projection::planner::{
+    build_projection_plan, PlannerContext, ProjectionOperation, ProjectionPlan, ProjectionRequest,
+};
+use crate::projection::source::{resolve_effective_assets, OverlayRoots};
 use crate::source;
 
 /// 4 个平台(`platform::registry()` 的稳定顺序)。
@@ -42,6 +47,43 @@ fn all_platforms() -> Vec<PlatformId> {
         PlatformId::Claude,
         PlatformId::Hermes,
     ]
+}
+
+/// 将 legacy sync 调用面所需的完整 source-first 输入显式收拢为只读计划请求。
+///
+/// `OverlayRoots` 不能从旧 `paths::SyncRoots` 无损推导：workspace member 需要同时保留
+/// global、workspace 和 project 三层 provenance。因此调用方必须提供完整 overlay。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompatibilityProjectionRoots {
+    pub overlay: OverlayRoots,
+    pub scope_key: String,
+    pub scope: DeploymentScope,
+    pub deploy_base: camino::Utf8PathBuf,
+}
+
+/// 构造 source-first 只读计划的兼容入口。
+///
+/// 旧 `compute_*` / `SyncAction` 仍服务于 T009 之前的 legacy lifecycle（尤其是旧
+/// 整份 `mcp.json` 与 Hook 执行器）。新调用方必须从本函数取得 `ProjectionPlan`，不能
+/// 继续在 `sync` 中自行判断目标状态。该函数只解析 canonical per-server source，绝不
+/// 创建目录、链接、平台配置或 ledger 记录。
+pub fn build_compatibility_plan(
+    roots: &CompatibilityProjectionRoots,
+    operation: ProjectionOperation,
+    context: &PlannerContext<'_>,
+) -> Result<ProjectionPlan, CoreError> {
+    let assets = resolve_effective_assets(&roots.overlay)?;
+    build_projection_plan(
+        &ProjectionRequest {
+            operation,
+            scope_key: roots.scope_key.clone(),
+            scope: roots.scope,
+            deploy_base: roots.deploy_base.clone(),
+            assets,
+            platforms: all_platforms(),
+        },
+        context,
+    )
 }
 
 /// 派发项目 ID + 资产 kind + name → 稳定 64-bit item_id。
@@ -418,6 +460,11 @@ pub fn retract_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection::fingerprint::directory_digest;
+    use crate::projection::ledger::MemoryProjectionLedger;
+    use crate::projection::model::{DeploymentScope, SourceLayer};
+    use crate::projection::planner::{ProjectionActionKind, ProjectionOperation};
+    use crate::projection::source::OverlayRoots;
     use camino::Utf8PathBuf;
     use std::fs;
 
@@ -480,6 +527,54 @@ mod tests {
         );
         assert_eq!(renders.len(), 4, "mcp 4 platforms = 4 RenderMcp");
         assert_eq!(actions.len(), 16);
+    }
+
+    #[test]
+    fn compatibility_plan_preserves_three_layer_source_and_reports_foreign_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let global = root.join("global");
+        let workspace = root.join("workspace");
+        let repo = root.join("repo");
+        fs::create_dir_all(global.join("skills/global-review")).unwrap();
+        fs::write(global.join("skills/global-review/SKILL.md"), "global").unwrap();
+        fs::create_dir_all(workspace.join("skills/review")).unwrap();
+        fs::write(workspace.join("skills/review/SKILL.md"), "workspace").unwrap();
+        fs::create_dir_all(repo.join(".ai-config/skills/review")).unwrap();
+        fs::write(repo.join(".ai-config/skills/review/SKILL.md"), "project").unwrap();
+        fs::create_dir_all(repo.join(".agents/skills/review")).unwrap();
+        fs::write(repo.join(".agents/skills/review/SKILL.md"), "foreign").unwrap();
+        let roots = CompatibilityProjectionRoots {
+            overlay: OverlayRoots {
+                global,
+                workspace: Some(workspace),
+                project: repo.join(".ai-config"),
+            },
+            scope_key: "project:/fixture".to_owned(),
+            scope: DeploymentScope::Project,
+            deploy_base: repo.clone(),
+        };
+        let ledger = MemoryProjectionLedger::default();
+        let before = directory_digest(&root).unwrap();
+
+        let plan = build_compatibility_plan(
+            &roots,
+            ProjectionOperation::Sync,
+            &crate::projection::planner::PlannerContext::new(&ledger),
+        )
+        .unwrap();
+
+        let shared_target = plan
+            .actions
+            .iter()
+            .find(|action| action.target.as_ref().is_some_and(|target| {
+                target.path == repo.join(".agents/skills/review")
+            }))
+            .unwrap();
+        assert!(matches!(shared_target.kind, ProjectionActionKind::ReportOnly));
+        assert_eq!(shared_target.state.as_deref(), Some("foreign"));
+        assert_eq!(shared_target.members[0].source.layer, SourceLayer::Project);
+        assert_eq!(directory_digest(&root).unwrap(), before);
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! 本模块只声明目标与能力；目录创建、配置写入、secret 解析均属于后续 planner/executor。
 
 use camino::Utf8PathBuf;
+use serde::{Deserialize, Serialize};
 
 use crate::model::{AssetKind, PlatformId};
 use crate::projection::model::{
@@ -30,7 +31,8 @@ pub enum TargetFormat {
 }
 
 /// planner 必须在 apply 前满足的信任边界。adapter 只声明要求，不检查机器状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum TrustRequirement {
     None,
     TrustedProject,
@@ -417,7 +419,11 @@ pub fn hook_capability_contract_for(
     HookCapabilityContract {
         source: asset.source_ref(),
         deployment_scope: context.scope,
-        consumers: supported.then(|| vec![platform]).unwrap_or_default(),
+        consumers: if supported {
+            vec![platform]
+        } else {
+            Vec::new()
+        },
         binding_target,
         binding_format: target_format_for(platform, AssetKind::Hook, binding_projection_mode),
         binding_projection_mode,

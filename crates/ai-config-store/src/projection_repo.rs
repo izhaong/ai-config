@@ -73,6 +73,22 @@ impl<'a> ProjectionRepo<'a> {
         })
     }
 
+    fn list_scope_impl(&self, scope_key: &str) -> Result<Vec<ProjectionRecord>, StoreError> {
+        self.with_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
+                 entry_key, source_fingerprint, target_fingerprint, applied_at \
+                 FROM projection_ledger WHERE scope_key = ?1 \
+                 ORDER BY kind, name, surface_json",
+            )?;
+            let rows = statement.query_map(params![scope_key], |row| {
+                row_to_record(row).map_err(to_sql_conversion_error)
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(StoreError::Sqlite)
+        })
+    }
+
     fn apply_batch_impl(&self, mutations: &[LedgerMutation]) -> Result<(), StoreError> {
         let mut seen = HashSet::new();
         for mutation in mutations {
@@ -105,6 +121,10 @@ impl ProjectionLedger for ProjectionRepo<'_> {
 
     fn get_many(&self, ids: &[ProjectionId]) -> Result<Vec<ProjectionRecord>, CoreError> {
         self.get_many_impl(ids).map_err(to_core_error)
+    }
+
+    fn list_scope(&self, scope_key: &str) -> Result<Vec<ProjectionRecord>, CoreError> {
+        self.list_scope_impl(scope_key).map_err(to_core_error)
     }
 
     fn apply_batch(&self, mutations: &[LedgerMutation]) -> Result<(), CoreError> {

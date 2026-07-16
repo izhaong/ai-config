@@ -763,15 +763,19 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - Compatibility modify: `crates/ai-config-core/src/sync.rs`
 - Test: `crates/ai-config-core/tests/projection_plan.rs`
 
-**Produces:** `PlannerContext`、`build_projection_plan(request, context)`；旧 `sync::compute_*` 暂变成 wrapper，不再拥有状态语义。
+**Produces:** `PlannerContext`、`build_projection_plan(request, context)` 与
+`sync::CompatibilityProjectionRoots` / `build_compatibility_plan`。旧
+`sync::compute_*` / `SyncAction` 仍仅服务 T009 前的 legacy lifecycle：它们不能把
+source-first `ProjectionPlan` 降级后交给硬拷贝 executor；T009 在 T007/T008 完成后统一切换
+公开 CLI/MCP 调用面。
 
-- [ ] **T005.1 Write failing plan tests**：missing→CreateLink、correct link→Noop、wrong source state 按 ownership 分类但 action→ReportOnly Conflict、equal foreign→Equivalent + gated AdoptEquivalent candidate、different foreign→ReportOnly Conflict、unsupported→ReportOnly Unsupported、generated+record→batch upsert/noop、missing ledger→Foreign、orphan→ReportOnly OrphanCandidate、同一规范化 target 只有一个 batch、renderer disagreement→blocking conflict、plan action 排序/digest 确定、plan JSON 无 secret sentinel。
-- [ ] **T005.2 Verify RED**：`cargo test -p ai-config-core --test projection_plan`。
-- [ ] **T005.3 Implement planner**：接受注入的 `PlannerContext`，遍历 effective assets × requested platforms，并为 Prompt 去重生成唯一 ProjectEntry surface；调用 adapter target、ledger/secret metadata 与 ownership classifier；按规范化 `target.path` 聚合跨 domain generated intents并校验唯一 container renderer；action/member 包含 SourceRef、target fingerprint、reason code/说明，不包含 body/value；任何 adapter parse/renderer disagreement 错误变为 ReportOnly Conflict。
-- [ ] **T005.4 Add operations**：Sync 只创建/更新 desired；Retract 只生成 managed removal；Uninstall 是全 scope Retract；orphan 在普通 Sync 只产 ReportOnly OrphanCandidate，单独 cleanup 请求且有 ownership 证据时才产 CleanupOrphan；Import/Migrate 暂只产明确 ReportOnly Unsupported，后续任务实现。
-- [ ] **T005.5 Verify deterministic, read-only and budget**：同 fixture 连续 plan 100 次得到同 digest且文件树与 DB 不变；对 1,000 个发现项运行 release-mode benchmark，记录 100 次样本并断言至少 95 次小于 2 秒。
-- [ ] **T005.6 Verify**：`cargo test -p ai-config-core --test projection_plan`。
-- [ ] **T005.7 Commit checkpoint**：`git commit -m "feat(core): 增加只读投影计划器"`。
+- [x] **T005.1 Write failing plan tests**：missing→CreateLink、correct link→Noop、wrong source state 按 ownership 分类但 action→ReportOnly Conflict、equal foreign→Equivalent + gated AdoptEquivalent candidate、different foreign→ReportOnly Conflict、unsupported→ReportOnly Unsupported、generated+record→batch upsert/noop、missing ledger→Foreign、orphan→ReportOnly OrphanCandidate、同一规范化 target 只有一个 batch、renderer disagreement→blocking conflict、plan action 排序/digest 确定、plan JSON 无 secret sentinel。
+- [x] **T005.2 Verify RED**：定向用例先后确认 facade、entry key、目标规范化与 orphan cleanup 在实现前均编译失败。
+- [x] **T005.3 Implement planner**：接受注入的 `PlannerContext`，遍历 effective assets × requested platforms，并为 Prompt 去重生成唯一 ProjectEntry surface；调用 adapter target、ledger/secret metadata 与 ownership classifier；按规范化 `target.path` 聚合跨 domain generated intents并校验唯一 container renderer；action/member 包含 SourceRef、target fingerprint、reason code/说明，不包含 body/value；任何 adapter parse/renderer disagreement 错误变为 ReportOnly Conflict。
+- [x] **T005.4 Add operations**：Sync 只创建/更新 desired；Retract 只生成 managed removal；Uninstall 是全 scope Retract；orphan 在普通 Sync 只产 ReportOnly OrphanCandidate，单独 cleanup 请求且有 ownership 证据时才产 CleanupOrphan；Import/Migrate 暂只产明确 ReportOnly Unsupported，后续任务实现。
+- [x] **T005.5 Verify deterministic, read-only and budget**：同 fixture 连续 plan 100 次得到同 digest且文件树与 DB 不变；对 1,000 个发现项运行 release-mode benchmark，记录 100 次样本并断言至少 95 次小于 2 秒。
+- [x] **T005.6 Verify**：`cargo test -p ai-config-core --test projection_plan`（19 passed）；release 模式的 1,000 项 × 100 次 p95 < 2 秒门禁通过。
+- [x] **T005.7 Commit checkpoint**：`feat(core): 增加只读投影计划器`。
 
 ### T006 — Transactional direct-link executor
 
