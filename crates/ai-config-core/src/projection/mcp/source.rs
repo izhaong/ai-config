@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use serde_json::Value;
 
 use crate::error::CoreError;
@@ -22,6 +22,8 @@ pub struct McpDefinition {
     pub server: McpServer,
     /// Empty is never overloaded as "all": absent `targets` becomes the four deploy targets.
     pub targets: Vec<PlatformId>,
+    /// Exact canonical per-server file that supplied this definition.
+    pub source_path: Utf8PathBuf,
 }
 
 /// An effective MCP definition retains the canonical layer and exact path that won overlay.
@@ -102,6 +104,7 @@ fn parse_definition(path: &Utf8Path) -> Result<McpDefinition, CoreError> {
     Ok(McpDefinition {
         server,
         targets: parse_targets(&raw, path)?,
+        source_path: path.to_path_buf(),
     })
 }
 

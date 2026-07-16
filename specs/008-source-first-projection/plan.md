@@ -810,6 +810,14 @@ source-first `ProjectionPlan` 降级后交给硬拷贝 executor；T009 在 T007/
 
 **Produces:** `load_mcp_definitions`、`GeneratedConfigAdapter` implementations、legacy monolith migration plan。
 
+**执行状态（2026-07-17，防偏航）**：逐 server source 校验、四个纯 renderer 与单条语义
+fingerprint 已有局部实现，但它们尚未接入 planner/executor 的 apply transaction；因此它们不能
+作为 T007 完成或 public lifecycle 切换的依据。generated action 仍必须在 executor 内 fail-closed，
+直到同一 target 的一次 parse/backup-swap、逐条 ledger ownership、secret 缺失的单项 skipped
+报告和完整 rollback 都有 RED→GREEN 证据。legacy `mcp migrate` 已固定为只读拒写；其余 legacy
+MCP 写入口在 source-first CRUD/内部 plan apply 接通前必须逐一 fail-closed，不能借旧 `mcp.json`
+或整文件 deploy/retract 回填功能空档。
+
 - [ ] **T007.1 Write failing source/security tests**：per-server parse、overlay whole-entry override、disabled/targets filtering、placeholder validation、literal value redacted detection、0600 enforcement、plan/Debug/Serialize 无 sentinel；缺失 secret 只阻塞引用该 key 的 server，错误仅含 key name。
 - [ ] **T007.2 Write failing renderer/batch tests**：每个平台同一 target 内两个托管 server + 一个 foreign server + unknown top-level fields 只产生一个 batch/一次替换；同一规范化 path 不允许第二 renderer；Cursor foreign/top-level 保留；Codex comments/unknown TOML 保留；Claude user projects/settings 保留、project `.mcp.json` scoped；Hermes user provider/model/comments 保留且 project MCP Unsupported/global config 零变化；remove only owned unchanged server；drift blocks remove。
 - [ ] **T007.3 Verify RED**：`cargo test -p ai-config-core --test mcp_projection`。

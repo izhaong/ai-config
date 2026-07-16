@@ -18,11 +18,11 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::hermes_config::HermesMigrateReport;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{McpServer, McpTransport, PlatformId};
 use ai_config_core::paths;
 use ai_config_core::platform;
+use ai_config_core::projection::mcp::source::load_mcp_definitions;
 use ai_config_core::source;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
@@ -114,7 +114,7 @@ pub struct McpListEntry {
 // ── list / show ─────────────────────────────────────────────────
 
 fn run_list(mode: OutputMode, root: &Utf8Path) -> ExitCode {
-    let servers = match load_all_servers(root) {
+    let servers = match load_canonical_servers(root) {
         Ok(s) => s,
         Err(e) => {
             emit_error_envelope(mode, e.exit_code_kind(), &e.to_string(), e.hint_text());
@@ -133,7 +133,7 @@ fn run_list(mode: OutputMode, root: &Utf8Path) -> ExitCode {
 }
 
 fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
-    let found = match find_server(root, name) {
+    let found = match find_canonical_server(root, name) {
         Ok(v) => v,
         Err(e) => {
             emit_error_envelope(mode, e.exit_code_kind(), &e.to_string(), e.hint_text());
@@ -155,7 +155,6 @@ fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
                 "enabled": srv.enabled,
                 "source_path": path,
                 "secret_keys": srv.secret_keys,
-                "config": srv.config,
             }),
         );
     } else {
@@ -164,10 +163,6 @@ fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
         println!("enabled: {}", srv.enabled);
         println!("source: {}", path);
         println!("secret_keys: {:?}", srv.secret_keys);
-        println!(
-            "config: {}",
-            serde_json::to_string_pretty(&srv.config).unwrap_or_default()
-        );
     }
     ExitCode::SUCCESS
 }
@@ -539,49 +534,13 @@ fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
-    match mcp_json::migrate_legacy_hermes_mcp_json(&home) {
-        Ok(report) => emit_migrate_hermes_report(mode, &report),
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            ExitCode::from(e.exit_code())
-        }
-    }
-}
-
-fn emit_migrate_hermes_report(mode: OutputMode, report: &HermesMigrateReport) -> ExitCode {
-    if mode.is_json() {
-        emit_json(
-            mode,
-            &serde_json::json!({
-                "merged": report.merged,
-                "skipped_conflict": report.skipped_conflict,
-                "legacy_renamed": report.legacy_renamed,
-            }),
-        );
-    } else {
-        if report.merged.is_empty() && report.skipped_conflict.is_empty() {
-            emit_line(mode, "无遗留 ~/.hermes/mcp.json 需要迁移");
-        } else {
-            emit_line(
-                mode,
-                format!(
-                    "已合并 {} 条, 跳过 {} 条",
-                    report.merged.len(),
-                    report.skipped_conflict.len()
-                ),
-            );
-            for name in &report.merged {
-                emit_line(mode, format!("  merged: {name}"));
-            }
-            for msg in &report.skipped_conflict {
-                emit_line(mode, format!("  skip: {msg}"));
-            }
-        }
-        if let Some(bak) = &report.legacy_renamed {
-            emit_line(mode, format!("遗留文件已重命名为 {bak}"));
-        }
-    }
-    ExitCode::SUCCESS
+    emit_error_envelope(
+        mode,
+        exit_code::ARG_ERROR,
+        "legacy Hermes MCP migrate 只读：source-first apply 尚未就绪，拒绝写入或重命名旧 MCP 资产",
+        Some("使用 `ai-config mcp migrate-hermes --dry-run` 盘点；待生成 source-first 计划后再执行单项 apply"),
+    );
+    ExitCode::from(exit_code::ARG_ERROR)
 }
 
 // ── 平台 ID 解析 ────────────────────────────────────────────────
@@ -619,25 +578,29 @@ fn mcp_json_path_for_root(root: &Utf8Path) -> Result<Utf8PathBuf, String> {
         .ok_or_else(|| format!("`{}` 不存在", mcp_json::MCP_ASSET_NAME))
 }
 
-fn load_all_servers(root: &Utf8Path) -> anyhow::Result<Vec<McpListEntry>> {
-    let path = mcp_json_path_for_root(root).map_err(|e| anyhow::anyhow!(e))?;
-    let doc = mcp_json::load_mcp_document(root)?
-        .unwrap_or_else(|| serde_json::json!({ "mcpServers": {} }));
-    let mut out = Vec::new();
-    if let Some(servers) = doc.get("mcpServers").and_then(|v| v.as_object()) {
-        for (name, config) in servers {
-            let srv = server_from_config(name, config);
-            out.push(McpListEntry {
-                name: srv.name,
-                transport: format!("{:?}", srv.transport).to_ascii_lowercase(),
-                enabled: true,
-                source_path: path.as_str().to_string(),
-                secret_keys: srv.secret_keys,
-            });
-        }
-    }
+fn load_canonical_servers(root: &Utf8Path) -> anyhow::Result<Vec<McpListEntry>> {
+    let mut out = load_mcp_definitions(root)?
+        .into_iter()
+        .map(|definition| McpListEntry {
+            name: definition.server.name,
+            transport: format!("{:?}", definition.server.transport).to_ascii_lowercase(),
+            enabled: definition.server.enabled,
+            source_path: definition.source_path.to_string(),
+            secret_keys: definition.server.secret_keys,
+        })
+        .collect::<Vec<_>>();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+fn find_canonical_server(
+    root: &Utf8Path,
+    name: &str,
+) -> anyhow::Result<Option<(McpServer, Utf8PathBuf)>> {
+    Ok(load_mcp_definitions(root)?
+        .into_iter()
+        .find(|definition| definition.server.name == name)
+        .map(|definition| (definition.server, definition.source_path)))
 }
 
 fn find_server(root: &Utf8Path, name: &str) -> anyhow::Result<Option<(McpServer, Utf8PathBuf)>> {

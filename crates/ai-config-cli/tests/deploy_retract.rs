@@ -3,6 +3,9 @@
 use std::fs;
 use std::path::Path;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
 use tempfile::TempDir;
@@ -255,27 +258,64 @@ fn retract_hermes_preserves_server_without_ownership_evidence() {
 }
 
 #[test]
-fn migrate_hermes_merges_legacy_mcp_json() {
+fn migrate_hermes_refuses_non_dry_run_and_preserves_legacy_files() {
     let (home, root) = setup();
     let hermes_dir = home.path().join(".hermes");
     fs::create_dir_all(&hermes_dir).unwrap();
+    let legacy = hermes_dir.join("mcp.json");
     fs::write(
-        hermes_dir.join("mcp.json"),
+        &legacy,
         r#"{"mcpServers":{"legacy-svc":{"command":"echo","args":["legacy"]}}}"#,
     )
     .unwrap();
+    let config_yaml = hermes_dir.join("config.yaml");
+    fs::write(&config_yaml, "model: foreign-model\n").unwrap();
+    let legacy_before = fs::read(&legacy).unwrap();
+    let config_before = fs::read(&config_yaml).unwrap();
 
-    cmd(home.path(), root.path())
+    let assert = cmd(home.path(), root.path())
         .args(["mcp", "migrate-hermes"])
         .assert()
-        .success();
-
-    let config_yaml = hermes_dir.join("config.yaml");
-    let content = fs::read_to_string(&config_yaml).expect("config.yaml created");
-    assert!(content.contains("legacy-svc:"));
+        .failure()
+        .code(2);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(
-        !hermes_dir.join("mcp.json").exists(),
-        "legacy mcp.json should be renamed after migrate"
+        stderr.contains("source-first") && stderr.contains("只读"),
+        "expected a source-first read-only refusal, got: {stderr}"
+    );
+
+    assert!(
+        legacy.is_file(),
+        "refusal must not rename or remove legacy mcp.json"
+    );
+    assert_eq!(fs::read(&legacy).unwrap(), legacy_before);
+    assert_eq!(fs::read(&config_yaml).unwrap(), config_before);
+}
+
+#[test]
+fn migrate_hermes_dry_run_preserves_legacy_files() {
+    let (home, root) = setup();
+    let hermes_dir = home.path().join(".hermes");
+    fs::create_dir_all(&hermes_dir).unwrap();
+    let legacy = hermes_dir.join("mcp.json");
+    fs::write(
+        &legacy,
+        r#"{"mcpServers":{"legacy-svc":{"command":"echo"}}}"#,
+    )
+    .unwrap();
+    let legacy_before = fs::read(&legacy).unwrap();
+    let config_yaml = hermes_dir.join("config.yaml");
+
+    cmd(home.path(), root.path())
+        .args(["mcp", "migrate-hermes", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("dry-run"));
+
+    assert_eq!(fs::read(&legacy).unwrap(), legacy_before);
+    assert!(
+        !config_yaml.exists(),
+        "dry-run must not create a Hermes configuration"
     );
 }
 
@@ -293,7 +333,10 @@ fn secrets_list_only_keys_no_values() {
     let (home, root) = setup();
     let cfg = home.path().join(".config").join("ai-config");
     fs::create_dir_all(&cfg).unwrap();
-    fs::write(cfg.join("secrets.env"), "MINIO_ENDPOINT=secret-value\n").unwrap();
+    let secrets = cfg.join("secrets.env");
+    fs::write(&secrets, "MINIO_ENDPOINT=secret-value\n").unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o600)).unwrap();
 
     cmd(home.path(), root.path())
         .args(["--json", "secrets", "list"])

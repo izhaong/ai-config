@@ -158,11 +158,11 @@ pub fn ensure_user_asset_layout(root: &Utf8Path) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// 初始化资产根完整布局：skills / rules / agents 子目录 + `mcp.json`（全局与项目 `.ai-config` 共用）。
+/// 初始化资产根标准目录（全局与项目 `.ai-config` 共用）。
+///
+/// 不会创建或迁移 MCP 配置；这些操作必须由显式的 source-first 流程执行。
 pub fn ensure_asset_layout(asset_root: &Utf8Path) -> Result<(), CoreError> {
     ensure_user_asset_layout(asset_root)?;
-    let _ = mcp_json::ensure_mcp_json(asset_root);
-    let _ = mcp_json::migrate_legacy_mcp_layout(asset_root);
     Ok(())
 }
 
@@ -336,8 +336,6 @@ fn copy_dir_merge(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
 pub fn init_user_asset_root() -> Result<Utf8PathBuf, CoreError> {
     let root = effective_global_asset_root();
     ensure_user_asset_layout(&root)?;
-    let _ = mcp_json::ensure_mcp_json(&root);
-    let _ = mcp_json::migrate_legacy_mcp_layout(&root);
     if user_assets_need_seed(&root) {
         for seed in collect_seed_sources() {
             if seed.join("skills").is_dir() {
@@ -516,7 +514,10 @@ mod tests {
         for sub in ASSET_SUBDIRS {
             assert!(asset.join(sub).is_dir(), "missing {sub}");
         }
-        assert!(asset.join("mcp.json").is_file());
+        assert!(
+            !asset.join("mcp.json").exists(),
+            "ordinary layout setup must not create a legacy MCP aggregate"
+        );
     }
 
     #[test]
