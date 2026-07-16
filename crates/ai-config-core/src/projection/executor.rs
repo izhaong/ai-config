@@ -120,6 +120,15 @@ pub struct ApplyActionReport {
     pub status: ApplyActionStatus,
 }
 
+/// A source-first MCP server skipped because the caller-owned resolver did not provide every
+/// declared secret. This deliberately reports variable names only: secret values never enter
+/// the plan, report, or error surface.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct McpSkippedMemberReport {
+    pub entry_key: String,
+    pub missing_secret_keys: Vec<String>,
+}
+
 /// Transaction-level failure classification. It deliberately carries a stable code rather than
 /// the underlying error text, so reports remain safe to serialize without exposing source data.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -138,6 +147,7 @@ pub struct ApplyReport {
     pub rollback_failed: usize,
     pub not_applied: usize,
     pub actions: Vec<ApplyActionReport>,
+    pub mcp_skipped_members: Vec<McpSkippedMemberReport>,
     pub failure: Option<ApplyFailure>,
 }
 
@@ -166,6 +176,7 @@ impl ApplyReport {
             rollback_failed: 0,
             not_applied: 0,
             actions,
+            mcp_skipped_members: Vec::new(),
             failure: None,
         }
     }
@@ -334,16 +345,30 @@ pub fn apply_projection_plan(
     if let Err(error) = validate_selected_action_ids(plan, &options.selected_action_ids) {
         return Err(preflight_failure(report, "invalid_selected_action", error));
     }
-    if plan
-        .actions
-        .iter()
-        .any(|action| matches!(action.kind, ProjectionActionKind::ReportOnly))
-    {
-        for (index, action) in plan.actions.iter().enumerate() {
-            if action.kind == ProjectionActionKind::ReportOnly {
-                report.set_status(index, ApplyActionStatus::Conflict);
-            }
+    let mut has_blocking_report_only = false;
+    for (index, action) in plan.actions.iter().enumerate() {
+        if action.kind != ProjectionActionKind::ReportOnly {
+            continue;
         }
+        if is_missing_secret_skip(action) {
+            report.set_status(index, ApplyActionStatus::Skipped);
+            report
+                .mcp_skipped_members
+                .extend(
+                    action
+                        .mcp_members
+                        .iter()
+                        .map(|member| McpSkippedMemberReport {
+                            entry_key: member.entry_key.clone(),
+                            missing_secret_keys: member.missing_secret_keys.clone(),
+                        }),
+                );
+        } else {
+            report.set_status(index, ApplyActionStatus::Conflict);
+            has_blocking_report_only = true;
+        }
+    }
+    if has_blocking_report_only {
         return Err(preflight_failure(
             report,
             "blocking_conflict",
@@ -453,8 +478,13 @@ pub fn apply_projection_plan(
             ProjectionActionKind::UpsertGeneratedBatch => {
                 apply_mcp_generated_upsert(action, context).map(|applied| {
                     mutations.extend(applied.mutations);
-                    undo.push((index, applied.undo));
-                    report.set_status(index, ApplyActionStatus::Applied);
+                    report.mcp_skipped_members.extend(applied.skipped_members);
+                    if let Some(undo_action) = applied.undo {
+                        undo.push((index, undo_action));
+                        report.set_status(index, ApplyActionStatus::Applied);
+                    } else {
+                        report.set_status(index, ApplyActionStatus::Skipped);
+                    }
                 })
             }
             ProjectionActionKind::RemoveGeneratedEntries | ProjectionActionKind::CleanupOrphan => {
@@ -462,7 +492,10 @@ pub fn apply_projection_plan(
                     "projection action requires its dedicated transactional executor slice",
                 ))
             }
-            ProjectionActionKind::ReportOnly => unreachable!("checked before writes"),
+            ProjectionActionKind::ReportOnly => {
+                report.set_status(index, ApplyActionStatus::Skipped);
+                Ok(())
+            }
         };
         if let Err(error) = outcome {
             return Err(transaction_failure(
@@ -851,7 +884,8 @@ fn ensure_source_matches_plan(
 
 struct AppliedGeneratedMcp {
     mutations: Vec<LedgerMutation>,
-    undo: FileUndo,
+    undo: Option<FileUndo>,
+    skipped_members: Vec<McpSkippedMemberReport>,
 }
 
 /// Apply exactly one plan-bound MCP container batch. Non-MCP generated actions stay fail-closed
@@ -903,11 +937,36 @@ fn apply_mcp_generated_upsert(
 
     // Re-validate every canonical file before reading any target or allocating a temporary path.
     // This makes a plan stale rather than allowing a changed source to be rendered implicitly.
-    let intents = action
+    let hydrated_members = action
         .mcp_members
         .iter()
         .map(|member| load_and_hydrate_mcp_member(member, context))
         .collect::<Result<Vec<_>, _>>()?;
+    let mut intents = Vec::new();
+    let mut skipped_members = Vec::new();
+    for hydrated in hydrated_members {
+        match hydrated {
+            HydratedMcpMember::Ready(intent) => intents.push(intent),
+            HydratedMcpMember::MissingSecrets {
+                entry_key,
+                missing_secret_keys,
+            } => skipped_members.push(McpSkippedMemberReport {
+                entry_key,
+                missing_secret_keys,
+            }),
+        }
+    }
+    if intents.is_empty() {
+        return Ok(AppliedGeneratedMcp {
+            mutations: Vec::new(),
+            undo: None,
+            skipped_members,
+        });
+    }
+    let applied_member_names = intents
+        .iter()
+        .map(|intent| intent.name.as_str())
+        .collect::<BTreeSet<_>>();
     let existing = match actual.entry_type {
         super::model::FingerprintType::Missing => empty_mcp_container(renderer),
         super::model::FingerprintType::File => fs::read_to_string(target.path.as_std_path())?,
@@ -935,6 +994,7 @@ fn apply_mcp_generated_upsert(
     let mutations = action
         .mcp_members
         .iter()
+        .filter(|member| applied_member_names.contains(member.name.as_str()))
         .map(|member| {
             let entry_fingerprint =
                 entry_fingerprints
@@ -984,12 +1044,13 @@ fn apply_mcp_generated_upsert(
 
     Ok(AppliedGeneratedMcp {
         mutations,
-        undo: FileUndo::RestoreGenerated {
+        undo: Some(FileUndo::RestoreGenerated {
             target: target.path.clone(),
             rendered_digest,
             backup,
             created_parents: parent.created_parents,
-        },
+        }),
+        skipped_members,
     })
 }
 
@@ -999,10 +1060,29 @@ struct HydratedMcpIntent {
     config: Value,
 }
 
+enum HydratedMcpMember {
+    Ready(HydratedMcpIntent),
+    MissingSecrets {
+        entry_key: String,
+        missing_secret_keys: Vec<String>,
+    },
+}
+
+enum ResolvedMcpSecrets {
+    Available(BTreeMap<String, String>),
+    Missing(Vec<String>),
+}
+
 fn load_and_hydrate_mcp_member(
     member: &McpProjectionMember,
     context: &ExecutorContext<'_>,
-) -> Result<HydratedMcpIntent, CoreError> {
+) -> Result<HydratedMcpMember, CoreError> {
+    if !member.missing_secret_keys.is_empty() {
+        return Ok(HydratedMcpMember::MissingSecrets {
+            entry_key: member.entry_key.clone(),
+            missing_secret_keys: member.missing_secret_keys.clone(),
+        });
+    }
     let actual = path_content_digest(&member.source.absolute_path)?;
     if actual != member.source.fingerprint {
         return Err(CoreError::InvalidPath(
@@ -1023,24 +1103,65 @@ fn load_and_hydrate_mcp_member(
             "canonical MCP source secret references no longer match the plan".to_owned(),
         ));
     }
-    let config = hydrate_mcp_config(definition.server.config, &expected_keys, context)?;
-    Ok(HydratedMcpIntent {
-        name: member.name.clone(),
-        config,
-    })
+    match resolve_mcp_secrets(&expected_keys, context)? {
+        ResolvedMcpSecrets::Available(secrets) => {
+            let config = hydrate_mcp_config(definition.server.config, &expected_keys, &secrets)?;
+            Ok(HydratedMcpMember::Ready(HydratedMcpIntent {
+                name: member.name.clone(),
+                config,
+            }))
+        }
+        ResolvedMcpSecrets::Missing(missing_secret_keys) => Ok(HydratedMcpMember::MissingSecrets {
+            entry_key: member.entry_key.clone(),
+            missing_secret_keys,
+        }),
+    }
+}
+
+fn is_missing_secret_skip(action: &ProjectionAction) -> bool {
+    action.state.as_deref() == Some("skipped")
+        && action.reason_code == "mcp_missing_secret_keys"
+        && !action.mcp_members.is_empty()
+        && action
+            .mcp_members
+            .iter()
+            .all(|member| !member.missing_secret_keys.is_empty())
+}
+
+fn resolve_mcp_secrets(
+    secret_keys: &[String],
+    context: &ExecutorContext<'_>,
+) -> Result<ResolvedMcpSecrets, CoreError> {
+    if secret_keys.is_empty() {
+        return Ok(ResolvedMcpSecrets::Available(BTreeMap::new()));
+    }
+    let provider = context.mcp_secret_provider.ok_or_else(|| {
+        CoreError::InvalidPath("MCP plan needs a caller-provided secret resolver".to_owned())
+    })?;
+    let mut secrets = BTreeMap::new();
+    let mut missing = Vec::new();
+    for key in secret_keys {
+        match provider.resolve(key).map_err(|_| {
+            CoreError::InvalidPath(format!("MCP secret lookup failed for declared key {key}"))
+        })? {
+            Some(value) => {
+                secrets.insert(key.clone(), value);
+            }
+            None => missing.push(key.clone()),
+        }
+    }
+    if missing.is_empty() {
+        Ok(ResolvedMcpSecrets::Available(secrets))
+    } else {
+        Ok(ResolvedMcpSecrets::Missing(missing))
+    }
 }
 
 fn hydrate_mcp_config(
     mut config: Value,
     secret_keys: &[String],
-    context: &ExecutorContext<'_>,
+    secrets: &BTreeMap<String, String>,
 ) -> Result<Value, CoreError> {
-    if secret_keys.is_empty() {
-        return Ok(config);
-    }
-    let provider = context.mcp_secret_provider.ok_or_else(|| {
-        CoreError::InvalidPath("MCP plan needs a caller-provided secret resolver".to_owned())
-    })?;
     let root = config.as_object_mut().ok_or_else(|| {
         CoreError::InvalidPath("canonical MCP config must be an object".to_owned())
     })?;
@@ -1063,13 +1184,10 @@ fn hydrate_mcp_config(
                         "MCP secret reference does not match the plan".to_owned(),
                     )
                 })?;
-            let secret = provider.resolve(key).map_err(|_| {
-                CoreError::InvalidPath(format!("MCP secret lookup failed for declared key {key}"))
-            })?;
-            let secret = secret.ok_or_else(|| {
-                CoreError::InvalidPath(format!(
-                    "MCP secret resolver has no value for declared key {key}"
-                ))
+            let secret = secrets.get(key).cloned().ok_or_else(|| {
+                CoreError::InvalidPath(
+                    "MCP secret resolution did not cover a planned reference".to_owned(),
+                )
             })?;
             *value = Value::String(secret);
         }

@@ -61,6 +61,13 @@ pub struct PlannerContext<'a> {
     link_availability: LinkAvailability,
     copy_fallback_policy: CopyFallbackPolicy,
     copy_fallback_authorization: CopyFallbackAuthorization,
+    mcp_secret_availability: Option<&'a dyn McpSecretAvailability>,
+}
+
+/// Read-only secret preflight boundary for MCP planning. Implementations return only the names
+/// of unavailable declared keys; the planner cannot receive or serialize secret values.
+pub trait McpSecretAvailability {
+    fn missing_secret_keys(&self, declared_keys: &[String]) -> Result<Vec<String>, CoreError>;
 }
 
 impl<'a> PlannerContext<'a> {
@@ -70,6 +77,7 @@ impl<'a> PlannerContext<'a> {
             link_availability: LinkAvailability::Available,
             copy_fallback_policy: CopyFallbackPolicy::Never,
             copy_fallback_authorization: CopyFallbackAuthorization::Denied,
+            mcp_secret_availability: None,
         }
     }
 
@@ -87,13 +95,43 @@ impl<'a> PlannerContext<'a> {
             link_availability,
             copy_fallback_policy,
             copy_fallback_authorization,
+            mcp_secret_availability: None,
         }
+    }
+
+    /// Inject a caller-owned read-only secret availability probe. It may disclose only missing
+    /// variable names, never values; callers without this capability retain the conservative
+    /// source-only plan and apply-time check.
+    pub fn with_mcp_secret_availability(
+        mut self,
+        availability: &'a dyn McpSecretAvailability,
+    ) -> Self {
+        self.mcp_secret_availability = Some(availability);
+        self
     }
 
     fn copy_fallback_is_authorized_for(&self, consumers: &[PlatformId]) -> bool {
         self.link_availability == LinkAvailability::Unavailable
             && self.copy_fallback_authorization == CopyFallbackAuthorization::Granted
             && self.copy_fallback_policy.allows_any(consumers)
+    }
+
+    fn missing_mcp_secret_keys(&self, declared_keys: &[String]) -> Result<Vec<String>, CoreError> {
+        let Some(availability) = self.mcp_secret_availability else {
+            return Ok(Vec::new());
+        };
+        let mut missing = availability.missing_secret_keys(declared_keys)?;
+        missing.sort();
+        missing.dedup();
+        if missing
+            .iter()
+            .any(|key| !declared_keys.iter().any(|declared| declared == key))
+        {
+            return Err(CoreError::InvalidPath(
+                "MCP secret availability returned an undeclared key".to_owned(),
+            ));
+        }
+        Ok(missing)
     }
 }
 
@@ -192,6 +230,8 @@ pub struct McpProjectionMember {
     pub entry_key: String,
     /// Variable names only; values are resolved by a later executor through the secret provider.
     pub secret_keys: Vec<String>,
+    /// Planner-known unavailable variables. Empty means apply may still resolve this member.
+    pub missing_secret_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -331,6 +371,7 @@ pub fn build_projection_plan(
                         source: asset.source_ref(),
                         entry_key: String::new(),
                         secret_keys: Vec::new(),
+                        missing_secret_keys: Vec::new(),
                     }],
                     consumers: Vec::new(),
                     state: Some("unsupported".to_owned()),
@@ -665,6 +706,7 @@ pub fn build_mcp_projection_plan(
     let mut warnings = Vec::new();
     for definition in &definitions {
         let server = &definition.definition.server;
+        let missing_secret_keys = context.missing_mcp_secret_keys(&server.secret_keys)?;
         for platform in &platforms {
             if !definition.definition.enabled_for(*platform) {
                 continue;
@@ -695,6 +737,18 @@ pub fn build_mcp_projection_plan(
                         ));
                         continue;
                     };
+                    if !missing_secret_keys.is_empty() {
+                        actions.push(mcp_missing_secret_report_only(
+                            request,
+                            &definition.source,
+                            &server.name,
+                            &server.secret_keys,
+                            &missing_secret_keys,
+                            &entry_key,
+                            *platform,
+                        ));
+                        continue;
+                    }
                     let mut secret_keys = server.secret_keys.clone();
                     secret_keys.sort();
                     secret_keys.dedup();
@@ -710,6 +764,7 @@ pub fn build_mcp_projection_plan(
                             source: definition.source.clone(),
                             entry_key,
                             secret_keys,
+                            missing_secret_keys: Vec::new(),
                         },
                     );
                 }
@@ -780,12 +835,43 @@ fn mcp_report_only(
             source: source.clone(),
             entry_key: String::new(),
             secret_keys,
+            missing_secret_keys: Vec::new(),
         }],
         consumers: Vec::new(),
         state: Some("unsupported".to_owned()),
         reason_code: reason_code.to_owned(),
         reason: reason.to_owned(),
     }
+}
+
+fn mcp_missing_secret_report_only(
+    request: &ProjectionRequest,
+    source: &SourceRef,
+    name: &str,
+    secret_keys: &[String],
+    missing_secret_keys: &[String],
+    entry_key: &str,
+    platform: PlatformId,
+) -> ProjectionAction {
+    let mut action = mcp_report_only(
+        request,
+        source,
+        name,
+        secret_keys,
+        platform,
+        "mcp_missing_secret_keys",
+        "MCP server is skipped because declared secret keys are unavailable",
+    );
+    let member = action
+        .mcp_members
+        .first_mut()
+        .expect("MCP report action has one member");
+    member.entry_key = entry_key.to_owned();
+    member.missing_secret_keys = missing_secret_keys.to_vec();
+    member.missing_secret_keys.sort();
+    member.missing_secret_keys.dedup();
+    action.state = Some("skipped".to_owned());
+    action
 }
 
 fn plan_mcp_generated_batch(

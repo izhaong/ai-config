@@ -25,8 +25,8 @@ use ai_config_core::projection::model::{
     ProjectionSurface,
 };
 use ai_config_core::projection::planner::{
-    build_mcp_projection_plan, PlannerContext, ProjectionActionKind, ProjectionOperation,
-    ProjectionRequest,
+    build_mcp_projection_plan, McpSecretAvailability, PlannerContext, ProjectionActionKind,
+    ProjectionOperation, ProjectionRequest,
 };
 use ai_config_core::projection::source::OverlayRoots;
 use camino::Utf8Path;
@@ -54,6 +54,18 @@ struct StaticSecretProvider;
 impl McpSecretProvider for StaticSecretProvider {
     fn resolve(&self, key: &str) -> Result<Option<String>, CoreError> {
         Ok((key == "CATALOG_TOKEN").then(|| "test-secret-value".to_owned()))
+    }
+}
+
+struct MissingSecretAvailability;
+
+impl McpSecretAvailability for MissingSecretAvailability {
+    fn missing_secret_keys(&self, declared_keys: &[String]) -> Result<Vec<String>, CoreError> {
+        Ok(declared_keys
+            .iter()
+            .filter(|key| key.as_str() == "MISSING_TOKEN")
+            .cloned()
+            .collect())
     }
 }
 
@@ -425,6 +437,107 @@ fn mcp_apply_hydrates_declared_secrets_only_through_the_injected_provider() {
         rendered["mcpServers"]["catalog"]["env"]["TOKEN"],
         "test-secret-value"
     );
+}
+
+#[test]
+fn mcp_apply_skips_only_members_with_missing_secret_keys_in_a_shared_container() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "public-catalog",
+        r#"{"targets":["cursor"],"config":{"command":"public-catalog-mcp","env":{"TOKEN":"${CATALOG_TOKEN}"}}}"#,
+    );
+    write_server(
+        root,
+        "private-catalog",
+        r#"{"targets":["cursor"],"config":{"command":"private-catalog-mcp","env":{"TOKEN":"${MISSING_TOKEN}"}}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#,
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_mcp_projection_plan(
+        &request,
+        &definitions,
+        &PlannerContext::new(&ledger).with_mcp_secret_availability(&MissingSecretAvailability),
+    )
+    .unwrap();
+    let planned_skip = plan
+        .actions
+        .iter()
+        .find(|action| action.reason_code == "mcp_missing_secret_keys")
+        .unwrap();
+    assert_eq!(planned_skip.state.as_deref(), Some("skipped"));
+    assert_eq!(planned_skip.mcp_members[0].name, "private-catalog");
+    assert_eq!(
+        planned_skip.mcp_members[0].missing_secret_keys,
+        vec!["MISSING_TOKEN"]
+    );
+    let serialized_plan = serde_json::to_string(&plan).unwrap();
+    assert!(serialized_plan.contains("MISSING_TOKEN"));
+    assert!(!serialized_plan.contains("test-secret-value"));
+
+    let report = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups"))
+            .with_mcp_secret_provider(&StaticSecretProvider),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap();
+    assert_eq!(report.changed, 1);
+    assert_eq!(report.skipped, 1);
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(target.as_std_path()).unwrap()).unwrap();
+    assert_eq!(rendered["userField"], true);
+    assert_eq!(rendered["mcpServers"]["foreign"]["command"], "external");
+    assert_eq!(
+        rendered["mcpServers"]["public-catalog"]["command"],
+        "public-catalog-mcp"
+    );
+    assert_eq!(
+        rendered["mcpServers"]["public-catalog"]["env"]["TOKEN"],
+        "test-secret-value"
+    );
+    assert!(rendered["mcpServers"].get("private-catalog").is_none());
+    let public_member = plan
+        .actions
+        .iter()
+        .flat_map(|action| action.mcp_members.iter())
+        .find(|member| member.name == "public-catalog")
+        .unwrap();
+    let private_member = plan
+        .actions
+        .iter()
+        .flat_map(|action| action.mcp_members.iter())
+        .find(|member| member.name == "private-catalog")
+        .unwrap();
+    assert!(ledger.get(&public_member.id).unwrap().is_some());
+    assert!(ledger.get(&private_member.id).unwrap().is_none());
+    assert_eq!(report.mcp_skipped_members.len(), 1);
+    assert_eq!(
+        report.mcp_skipped_members[0].entry_key,
+        "mcpServers.private-catalog"
+    );
+    assert_eq!(
+        report.mcp_skipped_members[0].missing_secret_keys,
+        vec!["MISSING_TOKEN"]
+    );
+    let serialized = serde_json::to_string(&report).unwrap();
+    assert!(serialized.contains("MISSING_TOKEN"));
+    assert!(!serialized.contains("test-secret-value"));
 }
 
 #[test]
