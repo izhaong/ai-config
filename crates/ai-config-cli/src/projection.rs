@@ -9,7 +9,7 @@ use ai_config_core::error::{exit_code, CoreError};
 use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::paths::{self, SyncRoots};
 use ai_config_core::projection::executor::{
-    apply_projection_plan, ApplyOptions, ExecutorContext, McpSecretProvider,
+    apply_projection_plans_transactionally, ApplyOptions, ExecutorContext, McpSecretProvider,
 };
 use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
 use ai_config_core::projection::mcp::source::resolve_effective_mcp_definitions;
@@ -377,18 +377,18 @@ fn apply_bundle(
 ) -> Result<ApplySummary, CoreError> {
     let mut summary = ApplySummary::default();
     let secrets = EmptySecretProvider;
-    for plan in &bundle.plans {
-        if plan.actions.is_empty() {
-            continue;
-        }
-        let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
-        let report = apply_projection_plan(
-            plan,
-            &ExecutorContext::new(ledger, roots.deploy_base.clone(), backup_root)
-                .with_mcp_secret_provider(&secrets),
-            ApplyOptions::for_plan(plan),
-        )
-        .map_err(|error| error.error)?;
+    let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
+    let context = ExecutorContext::new(ledger, roots.deploy_base.clone(), backup_root)
+        .with_mcp_secret_provider(&secrets);
+    let reports = apply_projection_plans_transactionally(
+        bundle
+            .plans
+            .iter()
+            .filter(|plan| !plan.actions.is_empty())
+            .map(|plan| (plan, ApplyOptions::for_plan(plan))),
+        &context,
+    )?;
+    for report in reports {
         summary.changed += report.changed;
         summary.unchanged += report.unchanged;
         summary.skipped += report.skipped;

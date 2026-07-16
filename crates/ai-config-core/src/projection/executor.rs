@@ -265,6 +265,14 @@ enum FileUndo {
     },
 }
 
+/// Mutable state shared by one or more plan applications. It is intentionally private: callers
+/// receive only committed reports, never a capability to bypass rollback.
+#[derive(Default)]
+struct TransactionJournal {
+    mutations: Vec<LedgerMutation>,
+    undo: Vec<(usize, FileUndo)>,
+}
+
 struct CreatedLink {
     target: Utf8PathBuf,
     source: Utf8PathBuf,
@@ -333,6 +341,94 @@ pub fn apply_projection_plan(
     context: &ExecutorContext<'_>,
     options: ApplyOptions,
 ) -> Result<ApplyReport, ProjectionApplyError> {
+    if let Err(error) = fs::create_dir_all(context.deploy_base.as_std_path()) {
+        return Err(preflight_failure(
+            ApplyReport::for_plan(plan),
+            "deploy_base_unavailable",
+            CoreError::Io(error),
+        ));
+    }
+    let _lock = match ApplyLock::acquire(&context.deploy_base) {
+        Ok(lock) => lock,
+        Err(error) => {
+            return Err(preflight_failure(
+                ApplyReport::for_plan(plan),
+                "apply_lock_unavailable",
+                error,
+            ));
+        }
+    };
+    let mut journal = TransactionJournal::default();
+    let mut report = match stage_projection_plan(plan, context, options, &mut journal) {
+        Ok(report) => report,
+        Err(error) => {
+            let code = error
+                .report
+                .failure
+                .as_ref()
+                .map(|failure| failure.code.clone())
+                .unwrap_or_else(|| "action_apply_failed".to_owned());
+            return Err(transaction_failure(
+                *error.report,
+                journal.undo,
+                context,
+                None,
+                &code,
+                error.error,
+            ));
+        }
+    };
+    if let Err(error) = context.ledger.apply_batch(&journal.mutations) {
+        return Err(transaction_failure(
+            report,
+            journal.undo,
+            context,
+            None,
+            "ledger_apply_failed",
+            error,
+        ));
+    }
+    report.recount();
+    Ok(report)
+}
+
+/// Apply multiple independently planned slices as one filesystem and ledger transaction.
+///
+/// The planner may split direct assets, generated MCP containers, and other capability domains
+/// into separate plans. This executor boundary keeps their file undo journal and apply lock
+/// shared, then performs exactly one ownership-ledger commit after every slice has staged.
+pub fn apply_projection_plans_transactionally<'plan>(
+    plans: impl IntoIterator<Item = (&'plan ProjectionPlan, ApplyOptions)>,
+    context: &ExecutorContext<'_>,
+) -> Result<Vec<ApplyReport>, CoreError> {
+    fs::create_dir_all(context.deploy_base.as_std_path())?;
+    let _lock = ApplyLock::acquire(&context.deploy_base)?;
+    let mut journal = TransactionJournal::default();
+    let mut reports = Vec::new();
+
+    for (plan, options) in plans {
+        match stage_projection_plan(plan, context, options, &mut journal) {
+            Ok(report) => reports.push(report),
+            Err(error) => {
+                rollback(&journal.undo, context);
+                return Err(error.error);
+            }
+        }
+    }
+    if let Err(error) = context.ledger.apply_batch(&journal.mutations) {
+        rollback(&journal.undo, context);
+        return Err(error);
+    }
+    Ok(reports)
+}
+
+/// Stage one plan beneath a caller-owned apply lock. No ledger mutation is committed here.
+fn stage_projection_plan(
+    plan: &ProjectionPlan,
+    context: &ExecutorContext<'_>,
+    options: ApplyOptions,
+    journal: &mut TransactionJournal,
+) -> Result<ApplyReport, ProjectionApplyError> {
     let mut report = ApplyReport::for_plan(plan);
     if options.expected_plan_digest != plan.plan_digest {
         return Err(preflight_failure(
@@ -378,26 +474,12 @@ pub fn apply_projection_plan(
             ),
         ));
     }
-    if let Err(error) = fs::create_dir_all(context.deploy_base.as_std_path()) {
-        return Err(preflight_failure(
-            report,
-            "deploy_base_unavailable",
-            CoreError::Io(error),
-        ));
-    }
-    let _lock = match ApplyLock::acquire(&context.deploy_base) {
-        Ok(lock) => lock,
-        Err(error) => return Err(preflight_failure(report, "apply_lock_unavailable", error)),
-    };
-
-    let mut mutations = Vec::new();
-    let mut undo = Vec::new();
     for (index, action) in plan.actions.iter().enumerate() {
         let outcome = match action.kind {
             ProjectionActionKind::CreateLink => {
                 apply_create_link(action, context).and_then(|created| {
-                    mutations.push(direct_record_mutation(action)?);
-                    undo.push((
+                    journal.mutations.push(direct_record_mutation(action)?);
+                    journal.undo.push((
                         index,
                         FileUndo::RemoveCreated {
                             target: created.target,
@@ -411,8 +493,10 @@ pub fn apply_projection_plan(
             }
             ProjectionActionKind::RemoveManagedLink => apply_remove_managed_link(action, context)
                 .and_then(|removed| {
-                    mutations.push(LedgerMutation::Remove(direct_member_id(action)?));
-                    undo.push((
+                    journal
+                        .mutations
+                        .push(LedgerMutation::Remove(direct_member_id(action)?));
+                    journal.undo.push((
                         index,
                         FileUndo::RestoreRemoved {
                             target: removed.0,
@@ -424,7 +508,7 @@ pub fn apply_projection_plan(
                 }),
             ProjectionActionKind::CopyFallback => {
                 apply_copy_fallback(action, context).and_then(|created| {
-                    mutations.push(copy_record_mutation(action)?);
+                    journal.mutations.push(copy_record_mutation(action)?);
                     let undo_operation = match created.replaced_backup {
                         Some(backup) => FileUndo::RestoreCopiedBackup {
                             target: created.target,
@@ -437,15 +521,17 @@ pub fn apply_projection_plan(
                             created_parents: created.created_parents,
                         },
                     };
-                    undo.push((index, undo_operation));
+                    journal.undo.push((index, undo_operation));
                     report.set_status(index, ApplyActionStatus::Applied);
                     Ok(())
                 })
             }
             ProjectionActionKind::RemoveManagedCopy => apply_remove_managed_copy(action, context)
                 .and_then(|removed| {
-                    mutations.push(LedgerMutation::Remove(direct_member_id(action)?));
-                    undo.push((
+                    journal
+                        .mutations
+                        .push(LedgerMutation::Remove(direct_member_id(action)?));
+                    journal.undo.push((
                         index,
                         FileUndo::RestoreCopiedBackup {
                             target: removed.0,
@@ -464,7 +550,7 @@ pub fn apply_projection_plan(
                 Ok(())
             }
             ProjectionActionKind::Noop => record_mutation_for_action(action).map(|mutation| {
-                mutations.push(mutation);
+                journal.mutations.push(mutation);
                 report.set_status(index, ApplyActionStatus::Unchanged);
             }),
             ProjectionActionKind::AdoptEquivalent => {
@@ -473,8 +559,8 @@ pub fn apply_projection_plan(
                     .contains(&plan.action_ids[index])
                 {
                     apply_adopt_equivalent(action, context).and_then(|adopted| {
-                        mutations.push(direct_record_mutation(action)?);
-                        undo.push((
+                        journal.mutations.push(direct_record_mutation(action)?);
+                        journal.undo.push((
                             index,
                             FileUndo::RestoreBackup {
                                 target: adopted.0,
@@ -493,9 +579,9 @@ pub fn apply_projection_plan(
             ProjectionActionKind::UpsertGeneratedBatch => match action.generated_renderer {
                 Some(GeneratedContainerRenderer::HookJson) => {
                     apply_hook_generated_upsert(action, context).map(|applied| {
-                        mutations.extend(applied.mutations);
+                        journal.mutations.extend(applied.mutations);
                         if let Some(undo_action) = applied.undo {
-                            undo.push((index, undo_action));
+                            journal.undo.push((index, undo_action));
                             report.set_status(index, ApplyActionStatus::Applied);
                         } else {
                             report.set_status(index, ApplyActionStatus::Skipped);
@@ -504,10 +590,10 @@ pub fn apply_projection_plan(
                 }
                 Some(GeneratedContainerRenderer::HermesUnifiedYaml) => {
                     apply_hermes_unified_yaml_upsert(action, context).map(|applied| {
-                        mutations.extend(applied.mutations);
+                        journal.mutations.extend(applied.mutations);
                         report.mcp_skipped_members.extend(applied.skipped_members);
                         if let Some(undo_action) = applied.undo {
-                            undo.push((index, undo_action));
+                            journal.undo.push((index, undo_action));
                             report.set_status(index, ApplyActionStatus::Applied);
                         } else {
                             report.set_status(index, ApplyActionStatus::Skipped);
@@ -515,10 +601,10 @@ pub fn apply_projection_plan(
                     })
                 }
                 _ => apply_mcp_generated_upsert(action, context).map(|applied| {
-                    mutations.extend(applied.mutations);
+                    journal.mutations.extend(applied.mutations);
                     report.mcp_skipped_members.extend(applied.skipped_members);
                     if let Some(undo_action) = applied.undo {
-                        undo.push((index, undo_action));
+                        journal.undo.push((index, undo_action));
                         report.set_status(index, ApplyActionStatus::Applied);
                     } else {
                         report.set_status(index, ApplyActionStatus::Skipped);
@@ -528,9 +614,9 @@ pub fn apply_projection_plan(
             ProjectionActionKind::RemoveGeneratedEntries => match action.generated_renderer {
                 Some(GeneratedContainerRenderer::HookJson) => {
                     apply_hook_generated_retraction(action, context).map(|applied| {
-                        mutations.extend(applied.mutations);
+                        journal.mutations.extend(applied.mutations);
                         if let Some(undo_action) = applied.undo {
-                            undo.push((index, undo_action));
+                            journal.undo.push((index, undo_action));
                             report.set_status(index, ApplyActionStatus::Applied);
                         } else {
                             report.set_status(index, ApplyActionStatus::Skipped);
@@ -539,9 +625,9 @@ pub fn apply_projection_plan(
                 }
                 Some(GeneratedContainerRenderer::HermesUnifiedYaml) => {
                     apply_hermes_unified_yaml_retraction(action, context).map(|applied| {
-                        mutations.extend(applied.mutations);
+                        journal.mutations.extend(applied.mutations);
                         if let Some(undo_action) = applied.undo {
-                            undo.push((index, undo_action));
+                            journal.undo.push((index, undo_action));
                             report.set_status(index, ApplyActionStatus::Applied);
                         } else {
                             report.set_status(index, ApplyActionStatus::Skipped);
@@ -549,9 +635,9 @@ pub fn apply_projection_plan(
                     })
                 }
                 _ => apply_mcp_generated_retraction(action, context).map(|applied| {
-                    mutations.extend(applied.mutations);
+                    journal.mutations.extend(applied.mutations);
                     if let Some(undo_action) = applied.undo {
-                        undo.push((index, undo_action));
+                        journal.undo.push((index, undo_action));
                         report.set_status(index, ApplyActionStatus::Applied);
                     } else {
                         report.set_status(index, ApplyActionStatus::Skipped);
@@ -567,25 +653,13 @@ pub fn apply_projection_plan(
             }
         };
         if let Err(error) = outcome {
-            return Err(transaction_failure(
+            return Err(staging_failure(
                 report,
-                undo,
-                context,
                 Some(index),
                 "action_apply_failed",
                 error,
             ));
         }
-    }
-    if let Err(error) = context.ledger.apply_batch(&mutations) {
-        return Err(transaction_failure(
-            report,
-            undo,
-            context,
-            None,
-            "ledger_apply_failed",
-            error,
-        ));
     }
     report.recount();
     Ok(report)
@@ -596,6 +670,25 @@ fn preflight_failure(
     code: &str,
     error: CoreError,
 ) -> ProjectionApplyError {
+    report.failure = Some(ApplyFailure {
+        code: code.to_owned(),
+    });
+    report.recount();
+    ProjectionApplyError {
+        error,
+        report: Box::new(report),
+    }
+}
+
+fn staging_failure(
+    mut report: ApplyReport,
+    failed_index: Option<usize>,
+    code: &str,
+    error: CoreError,
+) -> ProjectionApplyError {
+    if let Some(index) = failed_index {
+        report.set_status(index, ApplyActionStatus::Failed);
+    }
     report.failure = Some(ApplyFailure {
         code: code.to_owned(),
     });

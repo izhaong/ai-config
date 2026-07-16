@@ -2,8 +2,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::{Duration, Instant};
 
+use ai_config_core::projection::ledger::ProjectionLedger;
+use ai_config_store::Store;
 use assert_cmd::Command;
+use camino::Utf8PathBuf;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -303,4 +308,87 @@ fn uninstall_without_apply_returns_a_plan_and_preserves_source_and_foreign_conta
             "uninstall plan must preserve canonical source"
         );
     }
+}
+
+/// A source change after planning is a real runtime failure: it is not a synthetic executor
+/// hook. The normal plan creates many direct targets so the external editor has a deterministic
+/// window to save the MCP source before the later MCP-only sub-plan hydrates it.
+#[test]
+fn later_mcp_source_change_rolls_back_all_preceding_non_hermes_subplans() {
+    let fixture = Fixture::new();
+    let asset_root = fixture.asset_root();
+    for index in 0..768 {
+        write(
+            &asset_root.join(format!("skills/{index:04}-bulk/SKILL.md")),
+            "---\nname: bulk\n---\ncanonical bulk skill\n",
+        );
+    }
+
+    let first_target = fixture.root().join(".agents/skills/0000-bulk");
+    let mcp_source = asset_root.join("mcp/servers/catalog.json");
+    let mutation = thread::spawn({
+        let first_target = first_target.clone();
+        let mcp_source = mcp_source.clone();
+        move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if first_target.exists() {
+                    fs::write(&mcp_source, "{not valid canonical MCP JSON\n")
+                        .expect("simulate external source save after plan creation");
+                    return true;
+                }
+                thread::yield_now();
+            }
+            false
+        }
+    });
+
+    let output = fixture
+        .cmd()
+        .args(["--json", "sync", "--apply"])
+        .output()
+        .expect("run sync while an external editor updates the canonical MCP source");
+    assert!(
+        mutation.join().expect("source editor thread"),
+        "the source mutation must occur after the normal sub-plan started"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "the stale MCP source must fail during the later MCP sub-plan: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    for target in [
+        fixture.root().join(".agents/skills/0000-bulk"),
+        fixture.root().join(".agents/skills/demo"),
+        fixture.root().join(".cursor/hooks/lint.sh"),
+        fixture.root().join(".cursor/hooks.json"),
+        fixture.root().join("AGENTS.md"),
+        fixture.root().join(".cursor/mcp.json"),
+    ] {
+        assert!(
+            !target.exists(),
+            "a later sub-plan failure must globally roll back {}",
+            target.display()
+        );
+    }
+
+    let ledger_path = fixture
+        .root()
+        .join(".ai-config/projection-ledger.sqlite");
+    let store = Store::open_at(&ledger_path).expect("open lifecycle ledger after failed apply");
+    let scope = format!(
+        "project:{}",
+        Utf8PathBuf::from_path_buf(fixture.root().to_path_buf()).expect("utf8 project root")
+    );
+    assert!(
+        store
+            .projections()
+            .list_scope(&scope)
+            .expect("read projection ledger")
+            .is_empty(),
+        "a later sub-plan failure must not leave earlier ownership records"
+    );
 }
