@@ -6,6 +6,10 @@ use ai_config_core::projection::mcp::claude_json::{
 };
 use ai_config_core::projection::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
 use ai_config_core::projection::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
+use ai_config_core::projection::mcp::entry_fingerprint::{
+    inspect_claude_mcp_entries, inspect_codex_mcp_entries, inspect_cursor_mcp_entries,
+    inspect_hermes_mcp_entries,
+};
 use ai_config_core::projection::mcp::hermes_yaml::{render_hermes_mcp_yaml, YamlServerIntent};
 use ai_config_core::projection::mcp::source::{
     load_mcp_definitions, resolve_effective_mcp_definitions,
@@ -451,4 +455,101 @@ fn hermes_renderer_does_not_create_an_empty_container_for_a_retract_only_batch()
         render_hermes_mcp_yaml(existing, &[], &["missing-owned".to_owned()]).unwrap(),
         existing
     );
+}
+
+#[test]
+fn mcp_entry_inspection_fingerprints_named_servers_across_all_four_containers() {
+    let cursor = inspect_cursor_mcp_entries(
+        r#"{"mcpServers":{"zeta":{"command":"zeta"},"alpha":{"command":"alpha"}}}"#,
+    )
+    .unwrap();
+    let claude = inspect_claude_mcp_entries(
+        r#"{"mcpServers":{"alpha":{"command":"alpha"}},"projects":{"/repo":{}}}"#,
+    )
+    .unwrap();
+    let codex = inspect_codex_mcp_entries(
+        r#"[mcp_servers.alpha]
+command = "alpha"
+
+[mcp_servers.zeta]
+command = "zeta"
+"#,
+    )
+    .unwrap();
+    let hermes = inspect_hermes_mcp_entries(
+        r#"provider: openai
+mcp_servers:
+  zeta:
+    command: zeta
+  alpha:
+    command: alpha
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        cursor
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["alpha", "zeta"]
+    );
+    assert_eq!(cursor[0].digest, claude[0].digest);
+    assert_eq!(cursor[0].digest, codex[0].digest);
+    assert_eq!(cursor[0].digest, hermes[0].digest);
+    assert_eq!(cursor[1].digest, codex[1].digest);
+    assert_eq!(cursor[1].digest, hermes[1].digest);
+}
+
+#[test]
+fn mcp_entry_inspection_digest_changes_only_for_the_named_server_configuration() {
+    let before = inspect_cursor_mcp_entries(
+        r#"{"mcpServers":{"alpha":{"command":"alpha","args":["one"]},"beta":{"command":"beta"}}}"#,
+    )
+    .unwrap();
+    let after = inspect_cursor_mcp_entries(
+        r#"{"mcpServers":{"beta":{"command":"beta"},"alpha":{"args":["two"],"command":"alpha"}},"unknown":true}"#,
+    )
+    .unwrap();
+
+    assert_ne!(before[0].digest, after[0].digest);
+    assert_eq!(before[1].digest, after[1].digest);
+}
+
+#[test]
+fn mcp_entry_inspection_rejects_invalid_container_without_echoing_payload() {
+    let sentinel = "do-not-log-entry-secret";
+
+    for error in [
+        inspect_cursor_mcp_entries(&format!("{{\"mcpServers\":\"{sentinel}\"}}")),
+        inspect_claude_mcp_entries(&format!("{{\"mcpServers\":\"{sentinel}\"}}")),
+        inspect_codex_mcp_entries(&format!("mcp_servers = \"{sentinel}\"")),
+        inspect_hermes_mcp_entries(&format!("mcp_servers: {sentinel}")),
+    ] {
+        let error = error.unwrap_err().to_string();
+        assert!(error.contains("mcp_servers") || error.contains("mcpServers"));
+        assert!(!error.contains(sentinel));
+    }
+}
+
+#[test]
+fn mcp_entry_inspection_redacts_parser_and_entry_shape_failures() {
+    let sentinel = "do-not-log-parser-secret";
+    let parser_failures = [
+        inspect_cursor_mcp_entries(&format!("{{\"mcpServers\":{{\"x\":\"{sentinel}")),
+        inspect_claude_mcp_entries(&format!("{{\"mcpServers\":{{\"x\":\"{sentinel}")),
+        inspect_codex_mcp_entries(&format!("[mcp_servers.x\ncommand = \"{sentinel}\"")),
+        inspect_hermes_mcp_entries(&format!("mcp_servers: [{sentinel}")),
+    ];
+    let entry_shape_failures = [
+        inspect_cursor_mcp_entries(&format!("{{\"mcpServers\":{{\"x\":\"{sentinel}\"}}}}")),
+        inspect_claude_mcp_entries(&format!("{{\"mcpServers\":{{\"x\":\"{sentinel}\"}}}}")),
+        inspect_codex_mcp_entries(&format!("mcp_servers = {{ x = \"{sentinel}\" }}")),
+        inspect_hermes_mcp_entries(&format!("mcp_servers:\n  x: {sentinel}\n")),
+    ];
+
+    for result in parser_failures.into_iter().chain(entry_shape_failures) {
+        let error = result.unwrap_err().to_string();
+        assert!(!error.contains(sentinel));
+    }
 }

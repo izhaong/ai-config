@@ -261,6 +261,7 @@ fn generated_retract_removes_only_ledger_owned_entries_not_the_container() {
             target_path: target.clone(),
             entry_key: Some("mcpServers.catalog".to_owned()),
             source_fingerprint: asset.fingerprint.clone(),
+            entry_fingerprint: None,
             target_fingerprint,
             applied_at: chrono::Utc::now(),
         })])
@@ -304,6 +305,7 @@ fn generated_source_change_plans_an_upsert_without_treating_the_target_as_foreig
             target_path: target,
             entry_key: Some("mcpServers.catalog".to_owned()),
             source_fingerprint: "old-source-fingerprint".to_owned(),
+            entry_fingerprint: None,
             target_fingerprint: path_content_digest(&request.deploy_base.join(".cursor/mcp.json"))
                 .unwrap(),
             applied_at: chrono::Utc::now(),
@@ -343,6 +345,7 @@ fn unchanged_generated_entry_with_matching_ledger_is_a_noop() {
             target_path: target.clone(),
             entry_key: Some("mcpServers.catalog".to_owned()),
             source_fingerprint: asset.fingerprint.clone(),
+            entry_fingerprint: None,
             target_fingerprint,
             applied_at: chrono::Utc::now(),
         })])
@@ -511,6 +514,7 @@ fn sync_reports_ledger_orphans_without_removing_or_writing_them() {
             target_path: orphan_target.clone(),
             entry_key: None,
             source_fingerprint: "old-source".to_owned(),
+            entry_fingerprint: None,
             target_fingerprint: "old-target".to_owned(),
             applied_at: chrono::Utc::now(),
         })])
@@ -556,6 +560,7 @@ fn cleanup_orphans_requires_unchanged_ledger_owned_target_and_stays_read_only() 
             target_path: target.clone(),
             entry_key: None,
             source_fingerprint: "deleted-source".to_owned(),
+            entry_fingerprint: None,
             target_fingerprint: target_fingerprint.clone(),
             applied_at: chrono::Utc::now(),
         })])
@@ -614,6 +619,7 @@ fn cleanup_orphans_never_authorizes_a_regular_file_from_a_direct_link_record() {
             target_path: target.clone(),
             entry_key: None,
             source_fingerprint: "retired-source".to_owned(),
+            entry_fingerprint: None,
             target_fingerprint: path_content_digest(&target).unwrap(),
             applied_at: chrono::Utc::now(),
         })])

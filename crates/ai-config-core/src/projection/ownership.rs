@@ -159,6 +159,7 @@ mod tests {
             target_path: Utf8PathBuf::from("/platform/demo"),
             entry_key: None,
             source_fingerprint: expected.source_content_digest.clone(),
+            entry_fingerprint: None,
             target_fingerprint: "old-target-fingerprint".to_owned(),
             applied_at: chrono::Utc::now(),
         };
@@ -199,6 +200,7 @@ mod tests {
             target_path: Utf8PathBuf::from("/platform/config.json"),
             entry_key: Some("demo".to_owned()),
             source_fingerprint: expected.source_content_digest.clone(),
+            entry_fingerprint: None,
             target_fingerprint: "generated-fingerprint".to_owned(),
             applied_at: chrono::Utc::now(),
         };
@@ -233,6 +235,7 @@ mod tests {
             target_path: Utf8PathBuf::from("/platform/demo"),
             entry_key: None,
             source_fingerprint: expected.source_content_digest.clone(),
+            entry_fingerprint: None,
             target_fingerprint: "old-target-fingerprint".to_owned(),
             applied_at: chrono::Utc::now(),
         };

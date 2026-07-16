@@ -196,6 +196,29 @@ mod tests {
             assert_eq!(serde_json::from_str::<ProjectionId>(&encoded).unwrap(), id);
         }
     }
+
+    #[test]
+    fn legacy_generated_ledger_record_deserializes_without_an_entry_fingerprint() {
+        let encoded = serde_json::json!({
+            "id": {
+                "scope_key": "project:/repo",
+                "kind": "mcp",
+                "name": "catalog",
+                "surface": {"type": "platform", "id": "cursor"}
+            },
+            "mode": "generated_json",
+            "source_path": "/source/catalog.json",
+            "target_path": "/repo/.cursor/mcp.json",
+            "entry_key": "mcpServers.catalog",
+            "source_fingerprint": "source-digest",
+            "target_fingerprint": "container-digest",
+            "applied_at": "2026-07-17T00:00:00Z"
+        });
+
+        let record: ProjectionRecord = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(record.entry_fingerprint, None);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -206,6 +229,10 @@ pub struct ProjectionRecord {
     pub target_path: Utf8PathBuf,
     pub entry_key: Option<String>,
     pub source_fingerprint: String,
+    /// Semantic digest of the named generated entry. Direct links and legacy records use None;
+    /// a missing value never proves generated-entry ownership.
+    #[serde(default)]
+    pub entry_fingerprint: Option<String>,
     pub target_fingerprint: String,
     pub applied_at: DateTime<Utc>,
 }

@@ -113,6 +113,7 @@ mod tests {
             target_path: Utf8PathBuf::from("/target"),
             entry_key: Some(name.to_owned()),
             source_fingerprint: "source".to_owned(),
+            entry_fingerprint: None,
             target_fingerprint: "target".to_owned(),
             applied_at: chrono::Utc::now(),
         }

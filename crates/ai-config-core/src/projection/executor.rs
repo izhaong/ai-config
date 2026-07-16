@@ -687,6 +687,7 @@ fn direct_record_mutation(action: &ProjectionAction) -> Result<LedgerMutation, C
         target_path: target.path.clone(),
         entry_key: None,
         source_fingerprint: member.source.fingerprint.clone(),
+        entry_fingerprint: None,
         target_fingerprint,
         applied_at: Utc::now(),
     }))
