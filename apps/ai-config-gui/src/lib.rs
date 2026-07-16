@@ -829,6 +829,8 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
             .ok()
             .map(|c| parse_skill_meta(&c).1)
             .unwrap_or_default(),
+        // Prompt 的旧 lifecycle 已禁用；它不应由 GUI 的旧资产展示/操作路径读取。
+        AssetKind::Prompt => String::new(),
         AssetKind::Hook => {
             let filename = src.file_name().unwrap_or("");
             let asset_root = src.parent().and_then(|p| p.parent()).unwrap_or(src);
@@ -1615,5 +1617,10 @@ alwaysApply: false
     fn agent_description_falls_back_to_h1_without_frontmatter() {
         let content = "# My Agent Title\n\nbody";
         assert_eq!(parse_skill_meta(content).1, "My Agent Title");
+    }
+
+    #[test]
+    fn prompt_description_is_empty_in_legacy_gui_path() {
+        assert!(parse_description(AssetKind::Prompt, Utf8Path::new("not-read.md")).is_empty());
     }
 }
