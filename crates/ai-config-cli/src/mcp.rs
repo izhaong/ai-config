@@ -1,8 +1,7 @@
 //! `ai-config mcp ...` 子命令(PRD §4.2 / §5.1 / §10 A-7 / A-8 / A-15)。
 //!
-//! T007 安全边界：source-first per-server CRUD 与 generated executor 就绪前，
-//! `add` / `remove` / `enable` / `disable` / `deploy` / `retract` 一律 fail-closed。
-//! 仅 `list` / `show` 和 migration 的 `--dry-run` 可读取现有状态。
+//! T007 安全边界：source-first CRUD 仅变更 canonical source，绝不直接写平台容器；
+//! `deploy` / `retract` 与迁移 apply 在 generated executor / secret store 就绪前 fail-closed。
 
 use std::process::ExitCode;
 
@@ -13,7 +12,7 @@ use serde_json::Value;
 use ai_config_core::error::{exit_code, CoreError};
 use ai_config_core::model::McpServer;
 use ai_config_core::paths;
-use ai_config_core::projection::mcp::source::load_mcp_definitions;
+use ai_config_core::projection::mcp::source::{load_mcp_definition_at, load_mcp_definitions};
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
@@ -23,7 +22,9 @@ pub enum McpCmd {
     Show {
         name: String,
     },
-    Add,
+    Add {
+        source: String,
+    },
     Remove {
         name: String,
     },
@@ -54,6 +55,8 @@ pub enum McpCmd {
     Migrate {
         source: Option<String>,
         dry_run: bool,
+        extract_secrets: bool,
+        apply: bool,
     },
     /// 遗留 `~/.hermes/mcp.json` → `~/.hermes/config.yaml` 的 `mcp_servers`
     MigrateHermes {
@@ -66,19 +69,10 @@ impl McpCmd {
         match self {
             McpCmd::List => run_list(mode, default_root),
             McpCmd::Show { name } => run_show(mode, default_root, &name),
-            McpCmd::Add => refuse_legacy_write(mode, "add"),
-            McpCmd::Remove { name } => {
-                let _ = name;
-                refuse_legacy_write(mode, "remove")
-            }
-            McpCmd::Enable { name } => {
-                let _ = name;
-                refuse_legacy_write(mode, "enable")
-            }
-            McpCmd::Disable { name } => {
-                let _ = name;
-                refuse_legacy_write(mode, "disable")
-            }
+            McpCmd::Add { source } => run_add(mode, default_root, &source),
+            McpCmd::Remove { name } => run_remove(mode, default_root, &name),
+            McpCmd::Enable { name } => run_set_enabled(mode, default_root, &name, true),
+            McpCmd::Disable { name } => run_set_enabled(mode, default_root, &name, false),
             McpCmd::Deploy { name, to } => {
                 let _ = (name, to);
                 refuse_legacy_write(mode, "deploy")
@@ -87,9 +81,19 @@ impl McpCmd {
                 let _ = (name, from);
                 refuse_legacy_write(mode, "retract")
             }
-            McpCmd::Migrate { source, dry_run } => {
-                run_migrate(mode, default_root, source.as_deref(), dry_run)
-            }
+            McpCmd::Migrate {
+                source,
+                dry_run,
+                extract_secrets,
+                apply,
+            } => run_migrate(
+                mode,
+                default_root,
+                source.as_deref(),
+                dry_run,
+                extract_secrets,
+                apply,
+            ),
             McpCmd::MigrateHermes { dry_run } => run_migrate_hermes(mode, dry_run),
         }
     }
@@ -160,7 +164,204 @@ fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-// ── legacy writes: fail closed until source-first CRUD + executor exists ──
+// ── source-first CRUD (source only, no platform lifecycle cutover) ──────────
+
+fn run_add(mode: OutputMode, root: &Utf8Path, source: &str) -> ExitCode {
+    let source = Utf8Path::new(source);
+    let result = (|| -> anyhow::Result<Utf8PathBuf> {
+        reject_symlink(source, "MCP input source")?;
+        let definition = load_mcp_definition_at(source)?;
+        let destination = canonical_server_path(root, &definition.server.name)?;
+        ensure_canonical_parent(root)?;
+        if destination.exists() {
+            anyhow::bail!(
+                "canonical MCP source `{}` already exists",
+                definition.server.name
+            );
+        }
+        let raw = std::fs::read(source.as_std_path())?;
+        write_new_file(&destination, &raw)?;
+        // Re-parse the exact persisted bytes so a bad input can never become a source.
+        load_mcp_definition_at(&destination)?;
+        Ok(destination)
+    })();
+    match result {
+        Ok(destination) => {
+            emit_mutation_success(mode, "add", &destination);
+            ExitCode::SUCCESS
+        }
+        Err(error) => emit_crud_error(mode, error),
+    }
+}
+
+fn run_remove(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
+    let result = (|| -> anyhow::Result<Utf8PathBuf> {
+        let path = canonical_server_path(root, name)?;
+        reject_symlink(&path, "canonical MCP source")?;
+        let definition = load_mcp_definition_at(&path)?;
+        if definition.server.name != name {
+            anyhow::bail!("canonical MCP source name does not match requested server");
+        }
+        std::fs::remove_file(path.as_std_path())?;
+        Ok(path)
+    })();
+    match result {
+        Ok(path) => {
+            emit_mutation_success(mode, "remove", &path);
+            ExitCode::SUCCESS
+        }
+        Err(error) => emit_crud_error(mode, error),
+    }
+}
+
+fn run_set_enabled(mode: OutputMode, root: &Utf8Path, name: &str, enabled: bool) -> ExitCode {
+    let result = (|| -> anyhow::Result<(Utf8PathBuf, bool)> {
+        let path = canonical_server_path(root, name)?;
+        reject_symlink(&path, "canonical MCP source")?;
+        let definition = load_mcp_definition_at(&path)?;
+        if definition.server.name != name {
+            anyhow::bail!("canonical MCP source name does not match requested server");
+        }
+        if definition.server.enabled == enabled {
+            return Ok((path, false));
+        }
+        let raw = std::fs::read_to_string(path.as_std_path())?;
+        let mut document: Value = serde_json::from_str(&raw)?;
+        let object = document
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("canonical MCP source must be a JSON object"))?;
+        object.insert("enabled".to_owned(), Value::Bool(enabled));
+        let rendered = serde_json::to_vec_pretty(&document)?;
+        write_replace_file(&path, &rendered)?;
+        load_mcp_definition_at(&path)?;
+        Ok((path, true))
+    })();
+    match result {
+        Ok((path, changed)) => {
+            if mode.is_json() {
+                emit_json(
+                    mode,
+                    &serde_json::json!({
+                        "action": if enabled { "enable" } else { "disable" },
+                        "source_path": path,
+                        "changed": changed,
+                    }),
+                );
+            } else if changed {
+                println!("{}: {}", if enabled { "enabled" } else { "disabled" }, path);
+            } else {
+                println!("unchanged: {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => emit_crud_error(mode, error),
+    }
+}
+
+fn canonical_server_path(root: &Utf8Path, name: &str) -> anyhow::Result<Utf8PathBuf> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        anyhow::bail!("MCP server name must use only ASCII letters, digits, '.', '-' or '_'");
+    }
+    Ok(root.join("mcp/servers").join(format!("{name}.json")))
+}
+
+fn ensure_canonical_parent(root: &Utf8Path) -> anyhow::Result<()> {
+    let mcp = root.join("mcp");
+    let servers = mcp.join("servers");
+    for path in [&mcp, &servers] {
+        if path.exists() {
+            reject_symlink(path, "canonical MCP directory")?;
+        } else {
+            std::fs::create_dir(path.as_std_path())?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_symlink(path: &Utf8Path, what: &str) -> anyhow::Result<()> {
+    if std::fs::symlink_metadata(path.as_std_path())
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!("{what} must not be a symlink");
+    }
+    Ok(())
+}
+
+fn write_new_file(path: &Utf8Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let temp = temporary_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp.as_std_path())?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    match std::fs::hard_link(temp.as_std_path(), path.as_std_path()) {
+        Ok(()) => {
+            std::fs::remove_file(temp.as_std_path())?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(temp.as_std_path());
+            Err(error.into())
+        }
+    }
+}
+
+fn write_replace_file(path: &Utf8Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    reject_symlink(path, "canonical MCP source")?;
+    let temp = temporary_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp.as_std_path())?;
+    file.write_all(bytes)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(temp.as_std_path(), path.as_std_path())?;
+    Ok(())
+}
+
+fn temporary_path(path: &Utf8Path) -> Utf8PathBuf {
+    let filename = path.file_name().unwrap_or("mcp.json");
+    path.parent()
+        .unwrap_or_else(|| Utf8Path::new("."))
+        .join(format!(".{filename}.{}.tmp", std::process::id()))
+}
+
+fn emit_mutation_success(mode: OutputMode, action: &str, path: &Utf8Path) {
+    if mode.is_json() {
+        emit_json(
+            mode,
+            &serde_json::json!({ "action": action, "source_path": path, "changed": true }),
+        );
+    } else {
+        println!("{action}: {path}");
+    }
+}
+
+fn emit_crud_error(mode: OutputMode, error: anyhow::Error) -> ExitCode {
+    emit_error_envelope(
+        mode,
+        exit_code::ARG_ERROR,
+        &error.to_string(),
+        Some("MCP source 必须是经过校验的单 server JSON；该操作不会写入任何平台配置"),
+    );
+    ExitCode::from(exit_code::ARG_ERROR)
+}
+
+// ── legacy platform writes: fail closed until generated executor exists ─────
 
 fn refuse_legacy_write(mode: OutputMode, action: &str) -> ExitCode {
     emit_error_envelope(
@@ -176,7 +377,14 @@ fn refuse_legacy_write(mode: OutputMode, action: &str) -> ExitCode {
 
 // ── migrate(legacy inputs → source-first plan; writes are deliberately disabled) ──
 
-fn run_migrate(mode: OutputMode, root: &Utf8Path, source: Option<&str>, dry_run: bool) -> ExitCode {
+fn run_migrate(
+    mode: OutputMode,
+    root: &Utf8Path,
+    source: Option<&str>,
+    dry_run: bool,
+    extract_secrets: bool,
+    apply: bool,
+) -> ExitCode {
     let rel_source = source.unwrap_or("mcp/cursor.mcp.template.json");
     let template_path = root.join(rel_source);
     let legacy_servers = root.join("mcp/servers");
@@ -212,10 +420,15 @@ fn run_migrate(mode: OutputMode, root: &Utf8Path, source: Option<&str>, dry_run:
         return ExitCode::SUCCESS;
     }
 
+    let message = if extract_secrets && apply {
+        "MCP secret extraction apply 尚未接入受控 secret storage，拒绝写入 literal credential 或 source"
+    } else {
+        "legacy MCP migrate 只读：source-first apply 尚未就绪，拒绝写入或删除旧 MCP 资产"
+    };
     emit_error_envelope(
         mode,
         exit_code::ARG_ERROR,
-        "legacy MCP migrate 只读：source-first apply 尚未就绪，拒绝写入或删除旧 MCP 资产",
+        message,
         Some("使用 `ai-config mcp migrate --dry-run` 盘点；待生成 source-first 计划后再执行单项 apply"),
     );
     ExitCode::from(exit_code::ARG_ERROR)

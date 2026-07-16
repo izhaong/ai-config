@@ -136,7 +136,11 @@ enum McpCmd {
     Show {
         name: String,
     },
-    Add,
+    /// 从已校验的单 server JSON 创建 canonical source（不触发平台写入）
+    Add {
+        /// 单 server MCP 定义 JSON；会写入 <root>/mcp/servers/<name>.json
+        source: String,
+    },
     Remove {
         name: String,
     },
@@ -166,6 +170,12 @@ enum McpCmd {
         /// 只输出报告,不真写盘
         #[arg(long)]
         dry_run: bool,
+        /// 抽取旧容器中的 literal env/header 到 secret store（尚未接通时明确拒绝）
+        #[arg(long)]
+        extract_secrets: bool,
+        /// 允许 migration 写 source/secret store（尚未接通时明确拒绝）
+        #[arg(long)]
+        apply: bool,
     },
     /// 遗留 `~/.hermes/mcp.json` → `~/.hermes/config.yaml` 的 `mcp_servers`
     MigrateHermes {
@@ -285,13 +295,23 @@ fn main() -> ExitCode {
             let mapped = match action {
                 McpCmd::List => mcp::McpCmd::List,
                 McpCmd::Show { name } => mcp::McpCmd::Show { name },
-                McpCmd::Add => mcp::McpCmd::Add,
+                McpCmd::Add { source } => mcp::McpCmd::Add { source },
                 McpCmd::Remove { name } => mcp::McpCmd::Remove { name },
                 McpCmd::Enable { name } => mcp::McpCmd::Enable { name },
                 McpCmd::Disable { name } => mcp::McpCmd::Disable { name },
                 McpCmd::Deploy { name, to } => mcp::McpCmd::Deploy { name, to },
                 McpCmd::Retract { name, from } => mcp::McpCmd::Retract { name, from },
-                McpCmd::Migrate { source, dry_run } => mcp::McpCmd::Migrate { source, dry_run },
+                McpCmd::Migrate {
+                    source,
+                    dry_run,
+                    extract_secrets,
+                    apply,
+                } => mcp::McpCmd::Migrate {
+                    source,
+                    dry_run,
+                    extract_secrets,
+                    apply,
+                },
                 McpCmd::MigrateHermes { dry_run } => mcp::McpCmd::MigrateHermes { dry_run },
             };
             mapped.run(mode, &default_root)

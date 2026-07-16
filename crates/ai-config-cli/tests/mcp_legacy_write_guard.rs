@@ -33,17 +33,13 @@ fn cmd(home: &Path, root: &Path) -> Command {
 }
 
 #[test]
-fn legacy_mcp_write_commands_refuse_without_touching_source_or_platform() {
+fn legacy_mcp_platform_write_commands_refuse_without_touching_source_or_platform() {
     let (home, root) = setup();
     let source = root.path().join("mcp.json");
     let source_before = fs::read(&source).expect("read source before");
     let target = home.path().join(".cursor/mcp.json");
 
     for args in [
-        vec!["mcp", "add"],
-        vec!["mcp", "remove", "legacy"],
-        vec!["mcp", "enable", "legacy"],
-        vec!["mcp", "disable", "legacy"],
         vec!["mcp", "deploy", "legacy", "cursor"],
         vec!["mcp", "retract", "legacy", "cursor"],
     ] {
