@@ -1,6 +1,7 @@
 use std::fs;
 
 use ai_config_core::model::PlatformId;
+use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
 use ai_config_core::projection::mcp::claude_json::{
     render_claude_mcp_json, ClaudeJsonServerIntent,
 };
@@ -15,6 +16,14 @@ use ai_config_core::projection::mcp::source::{
     load_mcp_definitions, resolve_effective_mcp_definitions,
 };
 use ai_config_core::projection::model::SourceLayer;
+use ai_config_core::projection::model::{
+    DeploymentScope, LedgerMutation, ProjectionId, ProjectionMode, ProjectionRecord,
+    ProjectionSurface,
+};
+use ai_config_core::projection::planner::{
+    build_mcp_projection_plan, PlannerContext, ProjectionActionKind, ProjectionOperation,
+    ProjectionRequest,
+};
 use ai_config_core::projection::source::OverlayRoots;
 use camino::Utf8Path;
 use tempfile::TempDir;
@@ -23,6 +32,219 @@ fn write_server(root: &Utf8Path, name: &str, body: &str) {
     let path = root.join("mcp/servers").join(format!("{name}.json"));
     fs::create_dir_all(path.parent().unwrap().as_std_path()).unwrap();
     fs::write(path.as_std_path(), body).unwrap();
+}
+
+fn mcp_request(root: &Utf8Path, platforms: Vec<PlatformId>) -> ProjectionRequest {
+    ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/mcp-fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: Vec::new(),
+        platforms,
+    }
+}
+
+#[test]
+fn mcp_planner_emits_only_enabled_targeted_source_intents_without_config_values() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{
+          "enabled": true,
+          "targets": ["cursor"],
+          "config": {
+            "command": "catalog-mcp",
+            "env": {"CATALOG_TOKEN": "${CATALOG_TOKEN}"}
+          }
+        }"#,
+    );
+    write_server(
+        root,
+        "disabled",
+        r#"{"enabled":false,"targets":["cursor"],"config":{"command":"disabled-mcp"}}"#,
+    );
+    write_server(
+        root,
+        "codex-only",
+        r#"{"targets":["codex"],"config":{"command":"codex-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+
+    let plan = build_mcp_projection_plan(
+        &mcp_request(root, vec![PlatformId::Cursor]),
+        &definitions,
+        &PlannerContext::new(&ledger),
+    )
+    .unwrap();
+
+    assert_eq!(plan.actions.len(), 1);
+    let action = &plan.actions[0];
+    assert!(matches!(
+        action.kind,
+        ProjectionActionKind::UpsertGeneratedBatch
+    ));
+    assert!(
+        action.members.is_empty(),
+        "MCP uses its dedicated intent list"
+    );
+    assert_eq!(action.mcp_members.len(), 1);
+    assert_eq!(action.mcp_members[0].name, "catalog");
+    assert_eq!(action.mcp_members[0].entry_key, "mcpServers.catalog");
+    assert_eq!(action.mcp_members[0].secret_keys, vec!["CATALOG_TOKEN"]);
+
+    let rendered = serde_json::to_string(&plan).unwrap();
+    assert!(!rendered.contains("catalog-mcp"));
+    assert!(!rendered.contains("disabled-mcp"));
+    assert!(!rendered.contains("codex-mcp"));
+}
+
+#[test]
+fn mcp_planner_can_add_a_missing_managed_entry_without_claiming_foreign_entries() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#,
+    )
+    .unwrap();
+
+    let plan = build_mcp_projection_plan(
+        &request,
+        &definitions,
+        &PlannerContext::new(&MemoryProjectionLedger::default()),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        plan.actions[0].kind,
+        ProjectionActionKind::UpsertGeneratedBatch
+    ));
+    assert_eq!(plan.actions[0].reason_code, "generated_entries_missing");
+    assert_eq!(plan.actions[0].mcp_members[0].name, "catalog");
+}
+
+#[test]
+fn mcp_entry_ownership_requires_entry_proof_but_ignores_unrelated_container_edits() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"catalog":{"command":"catalog-mcp"},"foreign":{"command":"one"}}}"#,
+    )
+    .unwrap();
+    let entry_fingerprint =
+        inspect_cursor_mcp_entries(&fs::read_to_string(target.as_std_path()).unwrap())
+            .unwrap()
+            .into_iter()
+            .find(|entry| entry.name == "catalog")
+            .unwrap()
+            .digest;
+    let source = &definitions[0].source;
+    let ledger = MemoryProjectionLedger::default();
+    ledger
+        .apply_batch(&[LedgerMutation::Upsert(ProjectionRecord {
+            id: ProjectionId {
+                scope_key: request.scope_key.clone(),
+                kind: ai_config_core::model::AssetKind::Mcp,
+                name: "catalog".to_owned(),
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
+            },
+            mode: ProjectionMode::GeneratedJson,
+            source_path: source.absolute_path.clone(),
+            target_path: target.clone(),
+            entry_key: Some("mcpServers.catalog".to_owned()),
+            source_fingerprint: source.fingerprint.clone(),
+            entry_fingerprint: Some(entry_fingerprint),
+            target_fingerprint: "intentionally-stale-container-digest".to_owned(),
+            applied_at: chrono::Utc::now(),
+        })])
+        .unwrap();
+
+    let managed =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    assert!(matches!(
+        managed.actions[0].kind,
+        ProjectionActionKind::Noop
+    ));
+
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"catalog":{"command":"catalog-mcp"},"foreign":{"command":"two"}},"userField":true}"#,
+    )
+    .unwrap();
+    let unchanged_entry =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    assert!(matches!(
+        unchanged_entry.actions[0].kind,
+        ProjectionActionKind::Noop
+    ));
+
+    let legacy = MemoryProjectionLedger::default();
+    legacy
+        .apply_batch(&[LedgerMutation::Upsert(ProjectionRecord {
+            id: ProjectionId {
+                scope_key: request.scope_key.clone(),
+                kind: ai_config_core::model::AssetKind::Mcp,
+                name: "catalog".to_owned(),
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
+            },
+            mode: ProjectionMode::GeneratedJson,
+            source_path: source.absolute_path.clone(),
+            target_path: target,
+            entry_key: Some("mcpServers.catalog".to_owned()),
+            source_fingerprint: source.fingerprint.clone(),
+            entry_fingerprint: None,
+            target_fingerprint: "legacy-container-digest".to_owned(),
+            applied_at: chrono::Utc::now(),
+        })])
+        .unwrap();
+    let refused =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&legacy)).unwrap();
+    assert!(matches!(
+        refused.actions[0].kind,
+        ProjectionActionKind::ReportOnly
+    ));
+    assert_eq!(
+        refused.actions[0].reason_code,
+        "generated_ownership_unproven"
+    );
 }
 
 #[test]

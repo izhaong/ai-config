@@ -15,6 +15,11 @@ use crate::model::{AssetKind, PlatformId};
 
 use super::fingerprint::path_fingerprint;
 use super::ledger::ProjectionLedger;
+use super::mcp::entry_fingerprint::{
+    inspect_codex_mcp_entries, inspect_cursor_mcp_entries, inspect_hermes_mcp_entries,
+    McpEntryFingerprint,
+};
+use super::mcp::source::EffectiveMcpDefinition;
 use super::model::{
     DeploymentScope, EffectiveAsset, PathFingerprint, ProjectionId, ProjectionMode,
     ProjectionRecord, ProjectionState, ProjectionSurface, ProjectionTarget, SourceRef,
@@ -177,6 +182,18 @@ pub struct ProjectionMember {
     pub entry_key: Option<String>,
 }
 
+/// A source-first MCP intent deliberately excludes the server configuration and secret values.
+/// Apply can re-read `source` only after it has revalidated the plan-bound fingerprint.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct McpProjectionMember {
+    pub id: ProjectionId,
+    pub name: String,
+    pub source: SourceRef,
+    pub entry_key: String,
+    /// Variable names only; values are resolved by a later executor through the secret provider.
+    pub secret_keys: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProjectionAction {
     pub kind: ProjectionActionKind,
@@ -188,6 +205,9 @@ pub struct ProjectionAction {
     /// renderer and therefore cannot accidentally become generated writes at apply time.
     pub generated_renderer: Option<GeneratedContainerRenderer>,
     pub members: Vec<ProjectionMember>,
+    /// MCP has source-first per-server semantics and must never be represented by generic asset
+    /// members. Empty for all non-MCP actions.
+    pub mcp_members: Vec<McpProjectionMember>,
     pub consumers: Vec<PlatformId>,
     /// Stable reason code; does not contain source body, rendered config or secret values.
     pub state: Option<String>,
@@ -247,6 +267,7 @@ pub fn build_projection_plan(
                         source: asset.source_ref(),
                         entry_key: None,
                     }],
+                    mcp_members: Vec::new(),
                     consumers: Vec::new(),
                     state: Some("unsupported".to_owned()),
                     reason_code: "operation_not_implemented".to_owned(),
@@ -293,6 +314,31 @@ pub fn build_projection_plan(
                 &mut warnings,
                 context,
             )?;
+            continue;
+        }
+        if asset.kind == AssetKind::Mcp {
+            for platform in &platforms {
+                report_only.push(ProjectionAction {
+                    kind: ProjectionActionKind::ReportOnly,
+                    target: None,
+                    precondition: None,
+                    ownership_fingerprint: None,
+                    generated_renderer: None,
+                    members: Vec::new(),
+                    mcp_members: vec![McpProjectionMember {
+                        id: projection_id(request, asset, ProjectionSurface::Platform(*platform)),
+                        name: asset.name.clone(),
+                        source: asset.source_ref(),
+                        entry_key: String::new(),
+                        secret_keys: Vec::new(),
+                    }],
+                    consumers: Vec::new(),
+                    state: Some("unsupported".to_owned()),
+                    reason_code: "mcp_requires_source_first_definition".to_owned(),
+                    reason: "MCP projection requires parsed source-first per-server definitions"
+                        .to_owned(),
+                });
+            }
             continue;
         }
         for platform in &platforms {
@@ -361,6 +407,7 @@ pub fn build_projection_plan(
                         source: asset.source_ref(),
                         entry_key: None,
                     }],
+                    mcp_members: Vec::new(),
                     consumers: Vec::new(),
                     state: Some("unsupported".to_owned()),
                     reason_code: "unsupported_platform_contract".to_owned(),
@@ -384,6 +431,7 @@ pub fn build_projection_plan(
                 ownership_fingerprint: None,
                 generated_renderer: None,
                 members: batch.members,
+                mcp_members: batch.mcp_members,
                 consumers: batch.consumers,
                 state: Some("conflict".to_owned()),
                 reason_code: "generated_renderer_conflict".to_owned(),
@@ -404,6 +452,7 @@ pub fn build_projection_plan(
                     ownership_fingerprint: None,
                     generated_renderer: Some(batch.renderer),
                     members: batch.members,
+                    mcp_members: batch.mcp_members,
                     consumers: batch.consumers,
                     state: Some("missing".to_owned()),
                     reason_code: "generated_target_already_absent".to_owned(),
@@ -420,6 +469,7 @@ pub fn build_projection_plan(
                     ownership_fingerprint: None,
                     generated_renderer: Some(batch.renderer),
                     members: batch.members,
+                    mcp_members: batch.mcp_members,
                     consumers: batch.consumers,
                     state: Some("managed_generated".to_owned()),
                     reason_code: "managed_generated_retract".to_owned(),
@@ -436,6 +486,7 @@ pub fn build_projection_plan(
                     ownership_fingerprint: None,
                     generated_renderer: Some(batch.renderer),
                     members: batch.members,
+                    mcp_members: batch.mcp_members,
                     consumers: batch.consumers,
                     state: Some("drifted".to_owned()),
                     reason_code: "generated_target_drifted".to_owned(),
@@ -452,6 +503,7 @@ pub fn build_projection_plan(
                     ownership_fingerprint: None,
                     generated_renderer: Some(batch.renderer),
                     members: batch.members,
+                    mcp_members: batch.mcp_members,
                     consumers: batch.consumers,
                     state: Some("foreign".to_owned()),
                     reason_code: "generated_retract_ownership_unproven".to_owned(),
@@ -465,6 +517,7 @@ pub fn build_projection_plan(
                         ownership_fingerprint: None,
                         generated_renderer: Some(batch.renderer),
                         members: batch.members,
+                        mcp_members: batch.mcp_members,
                         consumers: batch.consumers,
                         state: Some("missing".to_owned()),
                         reason_code: "generated_target_missing".to_owned(),
@@ -478,6 +531,7 @@ pub fn build_projection_plan(
                     ownership_fingerprint: None,
                     generated_renderer: Some(batch.renderer),
                     members: batch.members,
+                    mcp_members: batch.mcp_members,
                     consumers: batch.consumers,
                     state: Some("managed_generated".to_owned()),
                     reason_code: "managed_generated_noop".to_owned(),
@@ -491,12 +545,26 @@ pub fn build_projection_plan(
                         ownership_fingerprint: None,
                         generated_renderer: Some(batch.renderer),
                         members: batch.members,
+                        mcp_members: batch.mcp_members,
                         consumers: batch.consumers,
                         state: Some("managed_generated".to_owned()),
                         reason_code: "generated_source_changed".to_owned(),
                         reason: "canonical source changed since the recorded projection".to_owned(),
                     }
                 }
+                (_, _, GeneratedOwnership::Missing) => ProjectionAction {
+                    kind: ProjectionActionKind::ReportOnly,
+                    target: Some(batch.target),
+                    precondition: Some(precondition),
+                    ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
+                    members: batch.members,
+                    mcp_members: batch.mcp_members,
+                    consumers: batch.consumers,
+                    state: Some("unsupported".to_owned()),
+                    reason_code: "generated_member_operations_not_implemented".to_owned(),
+                    reason: "generic generated member reconciliation is not implemented".to_owned(),
+                },
                 (ProjectionOperation::Sync, _, GeneratedOwnership::Drifted) => ProjectionAction {
                     kind: ProjectionActionKind::ReportOnly,
                     target: Some(batch.target),
@@ -504,6 +572,7 @@ pub fn build_projection_plan(
                     ownership_fingerprint: None,
                     generated_renderer: Some(batch.renderer),
                     members: batch.members,
+                    mcp_members: batch.mcp_members,
                     consumers: batch.consumers,
                     state: Some("drifted".to_owned()),
                     reason_code: "generated_target_drifted".to_owned(),
@@ -516,6 +585,7 @@ pub fn build_projection_plan(
                     ownership_fingerprint: None,
                     generated_renderer: Some(batch.renderer),
                     members: batch.members,
+                    mcp_members: batch.mcp_members,
                     consumers: batch.consumers,
                     state: Some("foreign".to_owned()),
                     reason_code: "generated_ownership_unproven".to_owned(),
@@ -539,6 +609,310 @@ pub fn build_projection_plan(
         append_orphan_candidates(request, context, &mut warnings, &mut actions)?;
     }
     finish_plan(request, actions, warnings)
+}
+
+/// Build MCP actions exclusively from parsed, canonical per-server sources. The general asset
+/// planner intentionally has no access to MCP `enabled`, `targets`, or secret-key metadata, so
+/// it must not be used to create MCP container writes.
+pub fn build_mcp_projection_plan(
+    request: &ProjectionRequest,
+    definitions: &[EffectiveMcpDefinition],
+    context: &PlannerContext<'_>,
+) -> Result<ProjectionPlan, CoreError> {
+    let target_context = TargetContext {
+        scope: request.scope,
+        deploy_base: request.deploy_base.clone(),
+    };
+    let mut platforms = request.platforms.clone();
+    platforms.sort_by_key(platform_key);
+    platforms.dedup();
+    let mut definitions = definitions.to_vec();
+    definitions.sort_by(|left, right| {
+        left.definition
+            .server
+            .name
+            .cmp(&right.definition.server.name)
+    });
+
+    if matches!(
+        request.operation,
+        ProjectionOperation::Import | ProjectionOperation::Migrate
+    ) {
+        let actions = definitions
+            .iter()
+            .flat_map(|definition| {
+                platforms
+                    .iter()
+                    .filter(move |platform| definition.definition.enabled_for(**platform))
+                    .map(move |platform| {
+                        mcp_report_only(
+                            request,
+                            &definition.source,
+                            &definition.definition.server.name,
+                            &definition.definition.server.secret_keys,
+                            *platform,
+                            "operation_not_implemented",
+                            "MCP import/migrate execution is not implemented",
+                        )
+                    })
+            })
+            .collect();
+        return finish_plan(request, actions, Vec::new());
+    }
+
+    let mut generated = BTreeMap::new();
+    let mut actions = Vec::new();
+    let mut warnings = Vec::new();
+    for definition in &definitions {
+        let server = &definition.definition.server;
+        for platform in &platforms {
+            if !definition.definition.enabled_for(*platform) {
+                continue;
+            }
+            let asset = EffectiveAsset {
+                kind: AssetKind::Mcp,
+                name: server.name.clone(),
+                source_path: definition.source.absolute_path.clone(),
+                layer: definition.source.layer,
+                fingerprint: definition.source.fingerprint.clone(),
+            };
+            let contract = capability_contract_for(*platform, &asset, &target_context);
+            match contract.capability {
+                PlatformCapability::Generated {
+                    target,
+                    mode,
+                    surface,
+                } => {
+                    let Some(entry_key) = target.entry_key.clone() else {
+                        actions.push(mcp_report_only(
+                            request,
+                            &definition.source,
+                            &server.name,
+                            &server.secret_keys,
+                            *platform,
+                            "mcp_entry_key_missing",
+                            "MCP platform contract must provide a named container entry",
+                        ));
+                        continue;
+                    };
+                    let mut secret_keys = server.secret_keys.clone();
+                    secret_keys.sort();
+                    secret_keys.dedup();
+                    register_mcp_generated_member(
+                        &mut generated,
+                        target,
+                        mode,
+                        generated_renderer(AssetKind::Mcp, mode),
+                        contract.consumers,
+                        McpProjectionMember {
+                            id: projection_id(request, &asset, surface),
+                            name: server.name.clone(),
+                            source: definition.source.clone(),
+                            entry_key,
+                            secret_keys,
+                        },
+                    );
+                }
+                PlatformCapability::Unsupported { reason } => actions.push(mcp_report_only(
+                    request,
+                    &definition.source,
+                    &server.name,
+                    &server.secret_keys,
+                    *platform,
+                    "unsupported_platform_contract",
+                    &reason,
+                )),
+                PlatformCapability::DirectLink { .. }
+                | PlatformCapability::ExternalDirectory { .. } => actions.push(mcp_report_only(
+                    request,
+                    &definition.source,
+                    &server.name,
+                    &server.secret_keys,
+                    *platform,
+                    "mcp_requires_generated_container",
+                    "MCP platform contracts must use a named generated container",
+                )),
+            }
+        }
+    }
+
+    for (_, mut batch) in generated {
+        batch
+            .mcp_members
+            .sort_by_key(|member| projection_id_key(&member.id));
+        actions.push(plan_mcp_generated_batch(
+            request,
+            &batch,
+            &mut warnings,
+            context,
+        )?);
+    }
+    finish_plan(request, actions, warnings)
+}
+
+fn mcp_report_only(
+    request: &ProjectionRequest,
+    source: &SourceRef,
+    name: &str,
+    secret_keys: &[String],
+    platform: PlatformId,
+    reason_code: &str,
+    reason: &str,
+) -> ProjectionAction {
+    let mut secret_keys = secret_keys.to_vec();
+    secret_keys.sort();
+    secret_keys.dedup();
+    ProjectionAction {
+        kind: ProjectionActionKind::ReportOnly,
+        target: None,
+        precondition: None,
+        ownership_fingerprint: None,
+        generated_renderer: None,
+        members: Vec::new(),
+        mcp_members: vec![McpProjectionMember {
+            id: ProjectionId {
+                scope_key: request.scope_key.clone(),
+                kind: AssetKind::Mcp,
+                name: name.to_owned(),
+                surface: ProjectionSurface::Platform(platform),
+            },
+            name: name.to_owned(),
+            source: source.clone(),
+            entry_key: String::new(),
+            secret_keys,
+        }],
+        consumers: Vec::new(),
+        state: Some("unsupported".to_owned()),
+        reason_code: reason_code.to_owned(),
+        reason: reason.to_owned(),
+    }
+}
+
+fn plan_mcp_generated_batch(
+    request: &ProjectionRequest,
+    batch: &GeneratedBatch,
+    warnings: &mut Vec<PlanWarning>,
+    context: &PlannerContext<'_>,
+) -> Result<ProjectionAction, CoreError> {
+    let precondition = path_fingerprint(&batch.target.path)?;
+    if batch.renderer_conflict {
+        return Ok(mcp_batch_action(
+            batch,
+            ProjectionActionKind::ReportOnly,
+            precondition,
+            Some("conflict"),
+            "generated_renderer_conflict",
+            "multiple generated renderers claim one normalized target",
+        ));
+    }
+    let ownership = mcp_generated_batch_ownership(batch, &precondition, warnings, context);
+    let action = match (request.operation, precondition.entry_type, ownership) {
+        (
+            ProjectionOperation::Retract | ProjectionOperation::Uninstall,
+            super::model::FingerprintType::Missing,
+            _,
+        ) => (
+            ProjectionActionKind::Noop,
+            Some("missing"),
+            "generated_target_already_absent",
+            "generated container is already absent",
+        ),
+        (
+            ProjectionOperation::Retract | ProjectionOperation::Uninstall,
+            _,
+            GeneratedOwnership::Managed | GeneratedOwnership::SourceChanged,
+        ) => (
+            ProjectionActionKind::RemoveGeneratedEntries,
+            Some("managed_generated"),
+            "managed_generated_retract",
+            "only ledger-owned generated entries may be retracted",
+        ),
+        (ProjectionOperation::Sync, super::model::FingerprintType::Missing, _) => (
+            ProjectionActionKind::UpsertGeneratedBatch,
+            Some("missing"),
+            "generated_target_missing",
+            "generated container is missing",
+        ),
+        (ProjectionOperation::Sync, _, GeneratedOwnership::Managed) => (
+            ProjectionActionKind::Noop,
+            Some("managed_generated"),
+            "managed_generated_noop",
+            "all generated members match ledger entry fingerprints",
+        ),
+        (ProjectionOperation::Sync, _, GeneratedOwnership::SourceChanged) => (
+            ProjectionActionKind::UpsertGeneratedBatch,
+            Some("managed_generated"),
+            "generated_source_changed",
+            "canonical source changed since the recorded projection",
+        ),
+        (ProjectionOperation::Sync, _, GeneratedOwnership::Missing) => (
+            ProjectionActionKind::UpsertGeneratedBatch,
+            Some("missing"),
+            "generated_entries_missing",
+            "one or more desired MCP entries are absent; unrelated container entries are preserved",
+        ),
+        (
+            ProjectionOperation::CleanupOrphans
+            | ProjectionOperation::Import
+            | ProjectionOperation::Migrate,
+            _,
+            _,
+        ) => (
+            ProjectionActionKind::ReportOnly,
+            Some("unsupported"),
+            "operation_not_implemented",
+            "MCP cleanup/import/migrate execution is not implemented",
+        ),
+        (_, _, GeneratedOwnership::Drifted) => (
+            ProjectionActionKind::ReportOnly,
+            Some("drifted"),
+            "generated_target_drifted",
+            "a managed MCP entry changed after its recorded projection",
+        ),
+        (_, _, GeneratedOwnership::Foreign) => (
+            ProjectionActionKind::ReportOnly,
+            Some("foreign"),
+            "generated_ownership_unproven",
+            "MCP generated entries require matching entry-level ledger proof",
+        ),
+        (_, _, GeneratedOwnership::Missing) => (
+            ProjectionActionKind::ReportOnly,
+            Some("unsupported"),
+            "mcp_member_operations_not_implemented",
+            "MCP non-sync member reconciliation is not implemented",
+        ),
+    };
+    Ok(mcp_batch_action(
+        batch,
+        action.0,
+        precondition,
+        action.1,
+        action.2,
+        action.3,
+    ))
+}
+
+fn mcp_batch_action(
+    batch: &GeneratedBatch,
+    kind: ProjectionActionKind,
+    precondition: PathFingerprint,
+    state: Option<&str>,
+    reason_code: &str,
+    reason: &str,
+) -> ProjectionAction {
+    ProjectionAction {
+        kind,
+        target: Some(batch.target.clone()),
+        precondition: Some(precondition),
+        ownership_fingerprint: None,
+        generated_renderer: Some(batch.renderer),
+        members: Vec::new(),
+        mcp_members: batch.mcp_members.clone(),
+        consumers: batch.consumers.clone(),
+        state: state.map(str::to_owned),
+        reason_code: reason_code.to_owned(),
+        reason: reason.to_owned(),
+    }
 }
 
 fn finish_plan(
@@ -583,6 +957,7 @@ struct GeneratedBatch {
     renderer: GeneratedContainerRenderer,
     consumers: Vec<PlatformId>,
     members: Vec<ProjectionMember>,
+    mcp_members: Vec<McpProjectionMember>,
     renderer_conflict: bool,
 }
 
@@ -606,6 +981,7 @@ fn register_generated_member(
         renderer,
         consumers: consumers.clone(),
         members: Vec::new(),
+        mcp_members: Vec::new(),
         renderer_conflict: false,
     });
     if batch.mode != mode || batch.renderer != renderer {
@@ -618,6 +994,41 @@ fn register_generated_member(
         .any(|existing| existing.id == member.id)
     {
         batch.members.push(member);
+    }
+}
+
+fn register_mcp_generated_member(
+    generated: &mut BTreeMap<String, GeneratedBatch>,
+    mut target: ProjectionTarget,
+    mode: ProjectionMode,
+    renderer: GeneratedContainerRenderer,
+    consumers: Vec<PlatformId>,
+    member: McpProjectionMember,
+) {
+    target.path = normalized_target_path(&target.path);
+    let key = target.path.as_str().to_owned();
+    let batch = generated.entry(key).or_insert_with(|| GeneratedBatch {
+        target: ProjectionTarget {
+            path: target.path.clone(),
+            entry_key: None,
+        },
+        mode,
+        renderer,
+        consumers: consumers.clone(),
+        members: Vec::new(),
+        mcp_members: Vec::new(),
+        renderer_conflict: false,
+    });
+    if batch.mode != mode || batch.renderer != renderer || !batch.members.is_empty() {
+        batch.renderer_conflict = true;
+    }
+    merge_consumers(&mut batch.consumers, &consumers);
+    if !batch
+        .mcp_members
+        .iter()
+        .any(|existing| existing.id == member.id)
+    {
+        batch.mcp_members.push(member);
     }
 }
 
@@ -741,6 +1152,7 @@ fn plan_hook_asset(
                     source: asset.source_ref(),
                     entry_key: None,
                 }],
+                mcp_members: Vec::new(),
                 consumers: Vec::new(),
                 state: Some("unsupported".to_owned()),
                 reason_code: "unsupported_hook_contract".to_owned(),
@@ -769,6 +1181,7 @@ fn hook_report_only(
             source: asset.source_ref(),
             entry_key: None,
         }],
+        mcp_members: Vec::new(),
         consumers: Vec::new(),
         state: Some("conflict".to_owned()),
         reason_code: reason_code.to_owned(),
@@ -808,6 +1221,7 @@ fn plan_project_entry_prompt(
                 source: asset.source_ref(),
                 entry_key: None,
             }],
+            mcp_members: Vec::new(),
             consumers: Vec::new(),
             state: Some("unsupported".to_owned()),
             reason_code: "prompt_requires_project_scope".to_owned(),
@@ -963,6 +1377,7 @@ fn plan_direct_link(
             source: intent.source,
             entry_key: None,
         }],
+        mcp_members: Vec::new(),
         consumers: intent.consumers,
         state: Some(
             if kind == ProjectionActionKind::CopyFallback {
@@ -1021,6 +1436,7 @@ fn copied_ownership(
 enum GeneratedOwnership {
     Managed,
     SourceChanged,
+    Missing,
     Drifted,
     Foreign,
 }
@@ -1058,6 +1474,89 @@ fn generated_batch_ownership(
         GeneratedOwnership::SourceChanged
     } else {
         GeneratedOwnership::Managed
+    }
+}
+
+/// MCP generated ownership is per named server entry, not per container. In particular, the
+/// full-file digest is intentionally ignored here: users may edit unrelated MCP servers or
+/// platform settings without invalidating an otherwise unchanged managed server.
+fn mcp_generated_batch_ownership(
+    batch: &GeneratedBatch,
+    precondition: &PathFingerprint,
+    warnings: &mut Vec<PlanWarning>,
+    context: &PlannerContext<'_>,
+) -> GeneratedOwnership {
+    if precondition.entry_type == super::model::FingerprintType::Missing {
+        return GeneratedOwnership::Foreign;
+    }
+    let Some(entries) = inspect_mcp_target_entries(batch, warnings) else {
+        return GeneratedOwnership::Drifted;
+    };
+    let mut source_changed = false;
+    let mut entry_missing = false;
+    for member in &batch.mcp_members {
+        let Some(entry) = entries.iter().find(|entry| entry.name == member.name) else {
+            entry_missing = true;
+            continue;
+        };
+        let Some(record) = ledger_record(context, &member.id, warnings) else {
+            return GeneratedOwnership::Foreign;
+        };
+        if record.mode != batch.mode
+            || record.target_path != batch.target.path
+            || record.entry_key.as_deref() != Some(member.entry_key.as_str())
+            || record.source_path != member.source.absolute_path
+        {
+            return GeneratedOwnership::Foreign;
+        }
+        let Some(recorded_entry_fingerprint) = record.entry_fingerprint.as_deref() else {
+            return GeneratedOwnership::Foreign;
+        };
+        if entry.digest != recorded_entry_fingerprint {
+            return GeneratedOwnership::Drifted;
+        }
+        if record.source_fingerprint != member.source.fingerprint {
+            source_changed = true;
+        }
+    }
+    if source_changed {
+        GeneratedOwnership::SourceChanged
+    } else if entry_missing {
+        GeneratedOwnership::Missing
+    } else {
+        GeneratedOwnership::Managed
+    }
+}
+
+fn inspect_mcp_target_entries(
+    batch: &GeneratedBatch,
+    warnings: &mut Vec<PlanWarning>,
+) -> Option<Vec<McpEntryFingerprint>> {
+    let existing = match fs::read_to_string(batch.target.path.as_std_path()) {
+        Ok(existing) => existing,
+        Err(_) => {
+            warnings.push(PlanWarning {
+                code: "mcp_target_uninspectable".to_owned(),
+                message: "MCP target cannot be read; entry ownership is not proven".to_owned(),
+            });
+            return None;
+        }
+    };
+    let inspected = match batch.renderer {
+        GeneratedContainerRenderer::McpJson => inspect_cursor_mcp_entries(&existing),
+        GeneratedContainerRenderer::McpToml => inspect_codex_mcp_entries(&existing),
+        GeneratedContainerRenderer::McpYaml => inspect_hermes_mcp_entries(&existing),
+        _ => unreachable!("MCP intent batches only use MCP renderers"),
+    };
+    match inspected {
+        Ok(entries) => Some(entries),
+        Err(_) => {
+            warnings.push(PlanWarning {
+                code: "mcp_target_uninspectable".to_owned(),
+                message: "MCP target syntax is invalid; entry ownership is not proven".to_owned(),
+            });
+            None
+        }
     }
 }
 
@@ -1124,6 +1623,7 @@ fn append_orphan_candidates(
             ownership_fingerprint: None,
             generated_renderer: None,
             members: Vec::new(),
+            mcp_members: Vec::new(),
             consumers: Vec::new(),
             state: Some("orphan_candidate".to_owned()),
             reason_code: "ledger_orphan_candidate".to_owned(),
@@ -1180,6 +1680,7 @@ fn build_orphan_cleanup_plan(
                     ownership_fingerprint: Some(orphan_ownership_fingerprint(&record)),
                     generated_renderer: None,
                     members: Vec::new(),
+                    mcp_members: Vec::new(),
                     consumers: Vec::new(),
                     state: Some("managed_orphan".to_owned()),
                     reason_code: "cleanup_orphan_requires_confirmation".to_owned(),
@@ -1194,6 +1695,7 @@ fn build_orphan_cleanup_plan(
                 ownership_fingerprint: None,
                 generated_renderer: None,
                 members: Vec::new(),
+                mcp_members: Vec::new(),
                 consumers: Vec::new(),
                 state: Some("drifted".to_owned()),
                 reason_code: "orphan_cleanup_ownership_drifted".to_owned(),
@@ -1207,6 +1709,7 @@ fn build_orphan_cleanup_plan(
                 ownership_fingerprint: None,
                 generated_renderer: None,
                 members: Vec::new(),
+                mcp_members: Vec::new(),
                 consumers: Vec::new(),
                 state: Some("conflict".to_owned()),
                 reason_code: "orphan_cleanup_target_unreadable".to_owned(),
@@ -1336,8 +1839,13 @@ fn trust_requirement_for_action(
     request: &ProjectionRequest,
     action: &ProjectionAction,
 ) -> TrustRequirement {
-    for member in &action.members {
-        let platform = match &member.id.surface {
+    for id in action
+        .members
+        .iter()
+        .map(|member| &member.id)
+        .chain(action.mcp_members.iter().map(|member| &member.id))
+    {
+        let platform = match &id.surface {
             ProjectionSurface::Platform(platform)
             | ProjectionSurface::PlatformBinding { platform, .. } => Some(*platform),
             ProjectionSurface::ProjectEntry | ProjectionSurface::SharedTarget { .. } => None,
@@ -1347,13 +1855,13 @@ fn trust_requirement_for_action(
         };
         if request.scope != DeploymentScope::User
             && platform == PlatformId::Codex
-            && member.id.kind == AssetKind::Hook
+            && id.kind == AssetKind::Hook
         {
             return TrustRequirement::TrustedProjectWithIndependentReview;
         }
         if request.scope != DeploymentScope::User
             && platform == PlatformId::Codex
-            && member.id.kind == AssetKind::Mcp
+            && id.kind == AssetKind::Mcp
         {
             return TrustRequirement::TrustedProject;
         }
@@ -1436,6 +1944,7 @@ struct PlanDigestAction<'a> {
     ownership_fingerprint: &'a Option<String>,
     generated_renderer: &'a Option<GeneratedContainerRenderer>,
     members: &'a [ProjectionMember],
+    mcp_members: &'a [McpProjectionMember],
     consumers: &'a [PlatformId],
     state: &'a Option<String>,
     reason_code: &'a str,
@@ -1450,6 +1959,7 @@ impl<'a> PlanDigestAction<'a> {
             ownership_fingerprint: &action.ownership_fingerprint,
             generated_renderer: &action.generated_renderer,
             members: &action.members,
+            mcp_members: &action.mcp_members,
             consumers: &action.consumers,
             state: &action.state,
             reason_code: &action.reason_code,
@@ -1547,5 +2057,50 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some("mcpServers.catalog"), Some("mcpServers.search")]
         );
+    }
+
+    #[test]
+    fn normalized_target_with_disagreeing_renderer_is_marked_blocking_conflict() {
+        let mut batches: BTreeMap<String, GeneratedBatch> = BTreeMap::new();
+        let member = |name: &str| ProjectionMember {
+            id: ProjectionId {
+                scope_key: "project:/fixture".to_owned(),
+                kind: AssetKind::Hook,
+                name: name.to_owned(),
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
+            },
+            source: SourceRef {
+                layer: SourceLayer::Project,
+                absolute_path: Utf8PathBuf::from(format!("/source/{name}.json")),
+                fingerprint: name.to_owned(),
+            },
+            entry_key: None,
+        };
+
+        register_generated_member(
+            &mut batches,
+            ProjectionTarget {
+                path: Utf8PathBuf::from("/tmp/deploy/.cursor/container"),
+                entry_key: Some("one".to_owned()),
+            },
+            ProjectionMode::GeneratedJson,
+            GeneratedContainerRenderer::HookJson,
+            vec![PlatformId::Cursor],
+            member("one"),
+        );
+        register_generated_member(
+            &mut batches,
+            ProjectionTarget {
+                path: Utf8PathBuf::from("/tmp//deploy/./.cursor/container"),
+                entry_key: Some("two".to_owned()),
+            },
+            ProjectionMode::GeneratedJson,
+            GeneratedContainerRenderer::GenericJson,
+            vec![PlatformId::Cursor],
+            member("two"),
+        );
+
+        assert_eq!(batches.len(), 1);
+        assert!(batches.values().next().unwrap().renderer_conflict);
     }
 }

@@ -2,16 +2,18 @@ use std::fs;
 use std::time::{Duration, Instant};
 
 use ai_config_core::error::CoreError;
-use ai_config_core::model::{AssetKind, PlatformId};
+use ai_config_core::model::{AssetKind, McpServer, McpTransport, PlatformId};
 use ai_config_core::projection::fingerprint::path_content_digest;
 use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
+use ai_config_core::projection::mcp::entry_fingerprint::inspect_cursor_mcp_entries;
+use ai_config_core::projection::mcp::source::{EffectiveMcpDefinition, McpDefinition};
 use ai_config_core::projection::model::{
     DeploymentScope, EffectiveAsset, LedgerMutation, ProjectionId, ProjectionMode,
-    ProjectionRecord, ProjectionSurface, SourceLayer,
+    ProjectionRecord, ProjectionSurface, SourceLayer, SourceRef,
 };
 use ai_config_core::projection::planner::{
-    build_projection_plan, GeneratedContainerRenderer, PlannerContext, ProjectionActionKind,
-    ProjectionOperation, ProjectionRequest,
+    build_mcp_projection_plan, build_projection_plan, GeneratedContainerRenderer, PlannerContext,
+    ProjectionActionKind, ProjectionOperation, ProjectionRequest,
 };
 use ai_config_core::projection::platform_adapter::TrustRequirement;
 use camino::Utf8Path;
@@ -92,6 +94,45 @@ fn request(
         assets,
         platforms,
     }
+}
+
+fn mcp_definition(
+    root: &Utf8Path,
+    name: &str,
+    config: serde_json::Value,
+    targets: Vec<PlatformId>,
+) -> EffectiveMcpDefinition {
+    let source_path = root.join("mcp-sources").join(format!("{name}.json"));
+    fs::create_dir_all(source_path.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        source_path.as_std_path(),
+        serde_json::to_vec(&config).unwrap(),
+    )
+    .unwrap();
+    let source = SourceRef {
+        layer: SourceLayer::Project,
+        absolute_path: source_path.clone(),
+        fingerprint: path_content_digest(&source_path).unwrap(),
+    };
+    EffectiveMcpDefinition {
+        definition: McpDefinition {
+            server: McpServer {
+                project_id: 0,
+                name: name.to_owned(),
+                transport: McpTransport::Stdio,
+                config,
+                secret_keys: Vec::new(),
+                enabled: true,
+            },
+            targets,
+            source_path,
+        },
+        source,
+    }
+}
+
+fn mcp_request(root: &Utf8Path, platforms: Vec<PlatformId>) -> ProjectionRequest {
+    request(root, Vec::new(), platforms)
 }
 
 #[cfg(unix)]
@@ -194,25 +235,34 @@ fn unsupported_contract_is_report_only_and_never_creates_a_path() {
 fn generated_members_for_one_container_are_batched_without_writing() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
-    let request = request(
-        root,
-        vec![
-            asset(root, AssetKind::Mcp, "catalog", "{\"command\":\"catalog\"}"),
-            asset(root, AssetKind::Mcp, "search", "{\"command\":\"search\"}"),
-        ],
-        vec![PlatformId::Cursor],
-    );
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let definitions = vec![
+        mcp_definition(
+            root,
+            "catalog",
+            serde_json::json!({"command":"catalog"}),
+            vec![PlatformId::Cursor],
+        ),
+        mcp_definition(
+            root,
+            "search",
+            serde_json::json!({"command":"search"}),
+            vec![PlatformId::Cursor],
+        ),
+    ];
     let target = request.deploy_base.join(".cursor/mcp.json");
     let ledger = MemoryProjectionLedger::default();
 
-    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
 
     assert_eq!(plan.actions.len(), 1);
     assert!(matches!(
         plan.actions[0].kind,
         ProjectionActionKind::UpsertGeneratedBatch
     ));
-    assert_eq!(plan.actions[0].members.len(), 2);
+    assert!(plan.actions[0].members.is_empty());
+    assert_eq!(plan.actions[0].mcp_members.len(), 2);
     assert_eq!(
         plan.actions[0].generated_renderer,
         Some(GeneratedContainerRenderer::McpJson),
@@ -221,9 +271,9 @@ fn generated_members_for_one_container_are_batched_without_writing() {
     assert_eq!(plan.actions[0].target.as_ref().unwrap().path, target);
     assert_eq!(
         plan.actions[0]
-            .members
+            .mcp_members
             .iter()
-            .map(|member| member.entry_key.as_deref())
+            .map(|member| Some(member.entry_key.as_str()))
             .collect::<Vec<_>>(),
         vec![Some("mcpServers.catalog"), Some("mcpServers.search")],
         "the batch must retain per-entry renderer keys"
@@ -240,8 +290,13 @@ fn generated_members_for_one_container_are_batched_without_writing() {
 fn generated_retract_removes_only_ledger_owned_entries_not_the_container() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
-    let asset = asset(root, AssetKind::Mcp, "catalog", "{\"command\":\"catalog\"}");
-    let mut request = request(root, vec![asset.clone()], vec![PlatformId::Cursor]);
+    let definition = mcp_definition(
+        root,
+        "catalog",
+        serde_json::json!({"command":"catalog"}),
+        vec![PlatformId::Cursor],
+    );
+    let mut request = mcp_request(root, vec![PlatformId::Cursor]);
     request.operation = ProjectionOperation::Retract;
     let target = request.deploy_base.join(".cursor/mcp.json");
     fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
@@ -257,23 +312,29 @@ fn generated_retract_removes_only_ledger_owned_entries_not_the_container() {
                 surface: ProjectionSurface::Platform(PlatformId::Cursor),
             },
             mode: ProjectionMode::GeneratedJson,
-            source_path: asset.source_path.clone(),
+            source_path: definition.source.absolute_path.clone(),
             target_path: target.clone(),
             entry_key: Some("mcpServers.catalog".to_owned()),
-            source_fingerprint: asset.fingerprint.clone(),
-            entry_fingerprint: None,
+            source_fingerprint: definition.source.fingerprint.clone(),
+            entry_fingerprint: Some(
+                inspect_cursor_mcp_entries(&fs::read_to_string(target.as_std_path()).unwrap())
+                    .unwrap()[0]
+                    .digest
+                    .clone(),
+            ),
             target_fingerprint,
             applied_at: chrono::Utc::now(),
         })])
         .unwrap();
 
-    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let plan =
+        build_mcp_projection_plan(&request, &[definition], &PlannerContext::new(&ledger)).unwrap();
 
     assert!(matches!(
         plan.actions[0].kind,
         ProjectionActionKind::RemoveGeneratedEntries
     ));
-    assert_eq!(plan.actions[0].members.len(), 1);
+    assert_eq!(plan.actions[0].mcp_members.len(), 1);
     assert!(target.exists(), "planning must not remove the container");
 }
 
@@ -281,13 +342,13 @@ fn generated_retract_removes_only_ledger_owned_entries_not_the_container() {
 fn generated_source_change_plans_an_upsert_without_treating_the_target_as_foreign() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
-    let asset = asset(
+    let definition = mcp_definition(
         root,
-        AssetKind::Mcp,
         "catalog",
-        "{\"command\":\"catalog-v2\"}",
+        serde_json::json!({"command":"catalog-v2"}),
+        vec![PlatformId::Cursor],
     );
-    let request = request(root, vec![asset.clone()], vec![PlatformId::Cursor]);
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
     let target = request.deploy_base.join(".cursor/mcp.json");
     fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
     fs::write(target.as_std_path(), "{\"mcpServers\":{\"catalog\":{}}}").unwrap();
@@ -301,18 +362,27 @@ fn generated_source_change_plans_an_upsert_without_treating_the_target_as_foreig
                 surface: ProjectionSurface::Platform(PlatformId::Cursor),
             },
             mode: ProjectionMode::GeneratedJson,
-            source_path: asset.source_path.clone(),
+            source_path: definition.source.absolute_path.clone(),
             target_path: target,
             entry_key: Some("mcpServers.catalog".to_owned()),
             source_fingerprint: "old-source-fingerprint".to_owned(),
-            entry_fingerprint: None,
+            entry_fingerprint: Some(
+                inspect_cursor_mcp_entries(
+                    &fs::read_to_string(request.deploy_base.join(".cursor/mcp.json").as_std_path())
+                        .unwrap(),
+                )
+                .unwrap()[0]
+                    .digest
+                    .clone(),
+            ),
             target_fingerprint: path_content_digest(&request.deploy_base.join(".cursor/mcp.json"))
                 .unwrap(),
             applied_at: chrono::Utc::now(),
         })])
         .unwrap();
 
-    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let plan =
+        build_mcp_projection_plan(&request, &[definition], &PlannerContext::new(&ledger)).unwrap();
 
     assert!(matches!(
         plan.actions[0].kind,
@@ -325,8 +395,13 @@ fn generated_source_change_plans_an_upsert_without_treating_the_target_as_foreig
 fn unchanged_generated_entry_with_matching_ledger_is_a_noop() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
-    let asset = asset(root, AssetKind::Mcp, "catalog", "{\"command\":\"catalog\"}");
-    let request = request(root, vec![asset.clone()], vec![PlatformId::Cursor]);
+    let definition = mcp_definition(
+        root,
+        "catalog",
+        serde_json::json!({"command":"catalog"}),
+        vec![PlatformId::Cursor],
+    );
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
     let target = request.deploy_base.join(".cursor/mcp.json");
     fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
     fs::write(target.as_std_path(), "{\"mcpServers\":{\"catalog\":{}}}").unwrap();
@@ -341,22 +416,28 @@ fn unchanged_generated_entry_with_matching_ledger_is_a_noop() {
                 surface: ProjectionSurface::Platform(PlatformId::Cursor),
             },
             mode: ProjectionMode::GeneratedJson,
-            source_path: asset.source_path.clone(),
+            source_path: definition.source.absolute_path.clone(),
             target_path: target.clone(),
             entry_key: Some("mcpServers.catalog".to_owned()),
-            source_fingerprint: asset.fingerprint.clone(),
-            entry_fingerprint: None,
+            source_fingerprint: definition.source.fingerprint.clone(),
+            entry_fingerprint: Some(
+                inspect_cursor_mcp_entries(&fs::read_to_string(target.as_std_path()).unwrap())
+                    .unwrap()[0]
+                    .digest
+                    .clone(),
+            ),
             target_fingerprint,
             applied_at: chrono::Utc::now(),
         })])
         .unwrap();
 
-    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let plan =
+        build_mcp_projection_plan(&request, &[definition], &PlannerContext::new(&ledger)).unwrap();
 
     assert!(matches!(plan.actions[0].kind, ProjectionActionKind::Noop));
     assert_eq!(plan.actions[0].reason_code, "managed_generated_noop");
     assert_eq!(
-        plan.actions[0].members[0].entry_key.as_deref(),
+        Some(plan.actions[0].mcp_members[0].entry_key.as_str()),
         Some("mcpServers.catalog")
     );
     assert_eq!(plan.actions[0].target.as_ref().unwrap().entry_key, None);
@@ -444,19 +525,17 @@ fn hook_plans_generated_binding_and_linked_script_as_distinct_zero_write_actions
 fn codex_project_mcp_plan_declares_trusted_project_precondition() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
-    let request = request(
+    let request = mcp_request(root, vec![PlatformId::Codex]);
+    let definitions = vec![mcp_definition(
         root,
-        vec![asset(
-            root,
-            AssetKind::Mcp,
-            "catalog",
-            "{\"command\":\"catalog\"}",
-        )],
+        "catalog",
+        serde_json::json!({"command":"catalog"}),
         vec![PlatformId::Codex],
-    );
+    )];
     let ledger = MemoryProjectionLedger::default();
 
-    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let plan = build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger));
+    let plan = plan.unwrap();
 
     assert_eq!(
         plan.trust_requirements,
@@ -658,7 +737,7 @@ fn import_and_migrate_operations_are_explicit_report_only_until_their_tasks_arri
 }
 
 #[test]
-fn renderer_disagreement_for_one_generated_container_is_blocking_conflict() {
+fn generic_mcp_assets_are_fail_closed_and_never_join_a_hook_generated_container() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
     let mut request = request(
@@ -675,11 +754,9 @@ fn renderer_disagreement_for_one_generated_container_is_blocking_conflict() {
     let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
 
     assert!(plan.actions.iter().any(|action| {
-        action.state.as_deref() == Some("conflict")
-            && action.reason_code == "generated_renderer_conflict"
-            && action.target.as_ref().is_some_and(|target| {
-                target.path == request.deploy_base.join(".hermes/config.yaml")
-            })
+        action.reason_code == "mcp_requires_source_first_definition"
+            && matches!(action.kind, ProjectionActionKind::ReportOnly)
+            && action.target.is_none()
     }));
     assert!(!request.deploy_base.exists());
 }
@@ -789,21 +866,24 @@ fn equivalent_regular_file_is_an_explicit_adoption_candidate_not_an_overwrite() 
 fn ledger_read_failure_warns_and_never_proves_generated_ownership() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
-    let request = request(
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let definitions = vec![mcp_definition(
         root,
-        vec![asset(
-            root,
-            AssetKind::Mcp,
-            "catalog",
-            "{\"command\":\"catalog\"}",
-        )],
+        "catalog",
+        serde_json::json!({"command":"catalog"}),
         vec![PlatformId::Cursor],
-    );
+    )];
     let target = request.deploy_base.join(".cursor/mcp.json");
     fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
-    fs::write(target.as_std_path(), "{\"mcpServers\":{}}").unwrap();
+    fs::write(
+        target.as_std_path(),
+        "{\"mcpServers\":{\"catalog\":{\"command\":\"catalog\"}}}",
+    )
+    .unwrap();
 
-    let plan = build_projection_plan(&request, &PlannerContext::new(&FailingLedger)).unwrap();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&FailingLedger))
+            .unwrap();
 
     assert!(matches!(
         plan.actions[0].kind,
