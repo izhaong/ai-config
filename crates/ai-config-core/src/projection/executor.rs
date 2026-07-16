@@ -73,11 +73,123 @@ impl ApplyOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyActionStatus {
+    Applied,
+    Unchanged,
+    Skipped,
+    Conflict,
+    Failed,
+    RolledBack,
+    RollbackFailed,
+    NotApplied,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ApplyActionReport {
+    pub action_id: String,
+    pub status: ApplyActionStatus,
+}
+
+/// Transaction-level failure classification. It deliberately carries a stable code rather than
+/// the underlying error text, so reports remain safe to serialize without exposing source data.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ApplyFailure {
+    pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ApplyReport {
     pub changed: usize,
     pub unchanged: usize,
     pub skipped: usize,
+    pub conflict: usize,
+    pub failed: usize,
+    pub rolled_back: usize,
+    pub rollback_failed: usize,
+    pub not_applied: usize,
+    pub actions: Vec<ApplyActionReport>,
+    pub failure: Option<ApplyFailure>,
+}
+
+impl ApplyReport {
+    fn for_plan(plan: &ProjectionPlan) -> Self {
+        let actions = plan
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(index, _)| ApplyActionReport {
+                action_id: plan
+                    .action_ids
+                    .get(index)
+                    .cloned()
+                    .unwrap_or_else(|| format!("invalid-action-{index}")),
+                status: ApplyActionStatus::NotApplied,
+            })
+            .collect();
+        Self {
+            changed: 0,
+            unchanged: 0,
+            skipped: 0,
+            conflict: 0,
+            failed: 0,
+            rolled_back: 0,
+            rollback_failed: 0,
+            not_applied: 0,
+            actions,
+            failure: None,
+        }
+    }
+
+    fn set_status(&mut self, index: usize, status: ApplyActionStatus) {
+        if let Some(action) = self.actions.get_mut(index) {
+            action.status = status;
+        }
+    }
+
+    fn recount(&mut self) {
+        self.changed = 0;
+        self.unchanged = 0;
+        self.skipped = 0;
+        self.conflict = 0;
+        self.failed = 0;
+        self.rolled_back = 0;
+        self.rollback_failed = 0;
+        self.not_applied = 0;
+        for action in &self.actions {
+            match action.status {
+                ApplyActionStatus::Applied => self.changed += 1,
+                ApplyActionStatus::Unchanged => self.unchanged += 1,
+                ApplyActionStatus::Skipped => self.skipped += 1,
+                ApplyActionStatus::Conflict => self.conflict += 1,
+                ApplyActionStatus::Failed => self.failed += 1,
+                ApplyActionStatus::RolledBack => self.rolled_back += 1,
+                ApplyActionStatus::RollbackFailed => self.rollback_failed += 1,
+                ApplyActionStatus::NotApplied => self.not_applied += 1,
+            }
+        }
+    }
+}
+
+/// An apply error preserves the final transaction report. Callers can surface the precise
+/// post-rollback action statuses while still using the contained `CoreError` for exit handling.
+#[derive(Debug)]
+pub struct ProjectionApplyError {
+    pub error: CoreError,
+    pub report: Box<ApplyReport>,
+}
+
+impl std::fmt::Display for ProjectionApplyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+impl std::error::Error for ProjectionApplyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 enum FileUndo {
@@ -157,92 +269,178 @@ pub fn apply_projection_plan(
     plan: &ProjectionPlan,
     context: &ExecutorContext<'_>,
     options: ApplyOptions,
-) -> Result<ApplyReport, CoreError> {
+) -> Result<ApplyReport, ProjectionApplyError> {
+    let mut report = ApplyReport::for_plan(plan);
     if options.expected_plan_digest != plan.plan_digest {
-        return Err(CoreError::InvalidPath(
-            "apply options do not authorize this projection plan digest".to_owned(),
+        return Err(preflight_failure(
+            report,
+            "plan_digest_mismatch",
+            CoreError::InvalidPath(
+                "apply options do not authorize this projection plan digest".to_owned(),
+            ),
         ));
     }
-    validate_selected_action_ids(plan, &options.selected_action_ids)?;
+    if let Err(error) = validate_selected_action_ids(plan, &options.selected_action_ids) {
+        return Err(preflight_failure(report, "invalid_selected_action", error));
+    }
     if plan
         .actions
         .iter()
         .any(|action| matches!(action.kind, ProjectionActionKind::ReportOnly))
     {
-        return Err(CoreError::InvalidPath(
-            "projection plan contains blocking report-only actions".to_owned(),
-        ));
-    }
-    let _lock = ApplyLock::acquire(&context.deploy_base)?;
-
-    let mut report = ApplyReport {
-        changed: 0,
-        unchanged: 0,
-        skipped: 0,
-    };
-    let mut mutations = Vec::new();
-    let mut undo = Vec::new();
-    let result = (|| {
         for (index, action) in plan.actions.iter().enumerate() {
-            match action.kind {
-                ProjectionActionKind::CreateLink => {
-                    let created = apply_create_link(action, context)?;
-                    mutations.push(direct_record_mutation(action)?);
-                    undo.push(FileUndo::RemoveCreated {
-                        target: created.target,
-                        source: created.source,
-                        created_parents: created.created_parents,
-                    });
-                    report.changed += 1;
-                }
-                ProjectionActionKind::RemoveManagedLink => {
-                    let removed = apply_remove_managed_link(action, context)?;
-                    mutations.push(LedgerMutation::Remove(direct_member_id(action)?));
-                    undo.push(FileUndo::RestoreRemoved {
-                        target: removed.0,
-                        raw_link_target: removed.1,
-                    });
-                    report.changed += 1;
-                }
-                ProjectionActionKind::Noop => {
-                    mutations.push(direct_record_mutation(action)?);
-                    report.unchanged += 1;
-                }
-                ProjectionActionKind::AdoptEquivalent => {
-                    if options
-                        .selected_action_ids
-                        .contains(&plan.action_ids[index])
-                    {
-                        let adopted = apply_adopt_equivalent(action, context)?;
-                        mutations.push(direct_record_mutation(action)?);
-                        undo.push(FileUndo::RestoreBackup {
-                            target: adopted.0,
-                            source: adopted.1,
-                            backup: adopted.2,
-                        });
-                        report.changed += 1;
-                    } else {
-                        report.skipped += 1;
-                    }
-                }
-                ProjectionActionKind::RemoveGeneratedEntries
-                | ProjectionActionKind::UpsertGeneratedBatch
-                | ProjectionActionKind::CleanupOrphan => {
-                    return Err(CoreError::NotImplemented(
-                        "projection action requires its dedicated transactional executor slice",
-                    ));
-                }
-                ProjectionActionKind::ReportOnly => unreachable!("checked before writes"),
+            if action.kind == ProjectionActionKind::ReportOnly {
+                report.set_status(index, ApplyActionStatus::Conflict);
             }
         }
-        context.ledger.apply_batch(&mutations)?;
-        Ok(())
-    })();
-    if let Err(error) = result {
-        rollback(&undo, context);
-        return Err(error);
+        return Err(preflight_failure(
+            report,
+            "blocking_conflict",
+            CoreError::InvalidPath(
+                "projection plan contains blocking report-only actions".to_owned(),
+            ),
+        ));
     }
+    let _lock = match ApplyLock::acquire(&context.deploy_base) {
+        Ok(lock) => lock,
+        Err(error) => return Err(preflight_failure(report, "apply_lock_unavailable", error)),
+    };
+
+    let mut mutations = Vec::new();
+    let mut undo = Vec::new();
+    for (index, action) in plan.actions.iter().enumerate() {
+        let outcome = match action.kind {
+            ProjectionActionKind::CreateLink => {
+                apply_create_link(action, context).and_then(|created| {
+                    mutations.push(direct_record_mutation(action)?);
+                    undo.push((
+                        index,
+                        FileUndo::RemoveCreated {
+                            target: created.target,
+                            source: created.source,
+                            created_parents: created.created_parents,
+                        },
+                    ));
+                    report.set_status(index, ApplyActionStatus::Applied);
+                    Ok(())
+                })
+            }
+            ProjectionActionKind::RemoveManagedLink => apply_remove_managed_link(action, context)
+                .and_then(|removed| {
+                    mutations.push(LedgerMutation::Remove(direct_member_id(action)?));
+                    undo.push((
+                        index,
+                        FileUndo::RestoreRemoved {
+                            target: removed.0,
+                            raw_link_target: removed.1,
+                        },
+                    ));
+                    report.set_status(index, ApplyActionStatus::Applied);
+                    Ok(())
+                }),
+            ProjectionActionKind::Noop => direct_record_mutation(action).map(|mutation| {
+                mutations.push(mutation);
+                report.set_status(index, ApplyActionStatus::Unchanged);
+            }),
+            ProjectionActionKind::AdoptEquivalent => {
+                if options
+                    .selected_action_ids
+                    .contains(&plan.action_ids[index])
+                {
+                    apply_adopt_equivalent(action, context).and_then(|adopted| {
+                        mutations.push(direct_record_mutation(action)?);
+                        undo.push((
+                            index,
+                            FileUndo::RestoreBackup {
+                                target: adopted.0,
+                                source: adopted.1,
+                                backup: adopted.2,
+                            },
+                        ));
+                        report.set_status(index, ApplyActionStatus::Applied);
+                        Ok(())
+                    })
+                } else {
+                    report.set_status(index, ApplyActionStatus::Skipped);
+                    Ok(())
+                }
+            }
+            ProjectionActionKind::RemoveGeneratedEntries
+            | ProjectionActionKind::UpsertGeneratedBatch
+            | ProjectionActionKind::CleanupOrphan => Err(CoreError::NotImplemented(
+                "projection action requires its dedicated transactional executor slice",
+            )),
+            ProjectionActionKind::ReportOnly => unreachable!("checked before writes"),
+        };
+        if let Err(error) = outcome {
+            return Err(transaction_failure(
+                report,
+                undo,
+                context,
+                Some(index),
+                "action_apply_failed",
+                error,
+            ));
+        }
+    }
+    if let Err(error) = context.ledger.apply_batch(&mutations) {
+        return Err(transaction_failure(
+            report,
+            undo,
+            context,
+            None,
+            "ledger_apply_failed",
+            error,
+        ));
+    }
+    report.recount();
     Ok(report)
+}
+
+fn preflight_failure(
+    mut report: ApplyReport,
+    code: &str,
+    error: CoreError,
+) -> ProjectionApplyError {
+    report.failure = Some(ApplyFailure {
+        code: code.to_owned(),
+    });
+    report.recount();
+    ProjectionApplyError {
+        error,
+        report: Box::new(report),
+    }
+}
+
+fn transaction_failure(
+    mut report: ApplyReport,
+    undo: Vec<(usize, FileUndo)>,
+    context: &ExecutorContext<'_>,
+    failed_index: Option<usize>,
+    code: &str,
+    error: CoreError,
+) -> ProjectionApplyError {
+    if let Some(index) = failed_index {
+        report.set_status(index, ApplyActionStatus::Failed);
+    }
+    for (index, restored) in rollback(&undo, context) {
+        report.set_status(
+            index,
+            if restored {
+                ApplyActionStatus::RolledBack
+            } else {
+                ApplyActionStatus::RollbackFailed
+            },
+        );
+    }
+    report.failure = Some(ApplyFailure {
+        code: code.to_owned(),
+    });
+    report.recount();
+    ProjectionApplyError {
+        error,
+        report: Box::new(report),
+    }
 }
 
 fn validate_selected_action_ids(
@@ -494,30 +692,34 @@ fn direct_record_mutation(action: &ProjectionAction) -> Result<LedgerMutation, C
     }))
 }
 
-fn rollback(undo: &[FileUndo], context: &ExecutorContext<'_>) {
-    for operation in undo.iter().rev() {
-        match operation {
+fn rollback(undo: &[(usize, FileUndo)], context: &ExecutorContext<'_>) -> Vec<(usize, bool)> {
+    let mut outcomes = Vec::with_capacity(undo.len());
+    for (index, operation) in undo.iter().rev() {
+        let restored = match operation {
             FileUndo::RemoveCreated {
                 target,
                 source,
                 created_parents,
             } => {
-                if let Ok(fingerprint) = path_fingerprint(target) {
-                    if fingerprint.entry_type == super::model::FingerprintType::Symlink
-                        && fingerprint.link_target.as_ref() == Some(source)
-                    {
-                        let _ = fs::remove_file(target.as_std_path());
+                let removed = path_fingerprint(target)
+                    .map(|fingerprint| {
+                        fingerprint.entry_type == super::model::FingerprintType::Symlink
+                            && fingerprint.link_target.as_ref() == Some(source)
+                            && fs::remove_file(target.as_std_path()).is_ok()
+                    })
+                    .unwrap_or(false);
+                if removed {
+                    for parent in created_parents.iter().rev() {
+                        let is_empty = fs::read_dir(parent.as_std_path())
+                            .ok()
+                            .and_then(|mut entries| entries.next())
+                            .is_none();
+                        if is_empty {
+                            let _ = fs::remove_dir(parent.as_std_path());
+                        }
                     }
                 }
-                for parent in created_parents.iter().rev() {
-                    let is_empty = fs::read_dir(parent.as_std_path())
-                        .ok()
-                        .and_then(|mut entries| entries.next())
-                        .is_none();
-                    if is_empty {
-                        let _ = fs::remove_dir(parent.as_std_path());
-                    }
-                }
+                removed
             }
             FileUndo::RestoreRemoved {
                 target,
@@ -530,8 +732,12 @@ fn rollback(undo: &[FileUndo], context: &ExecutorContext<'_>) {
                     .unwrap_or(false);
                 if target_is_missing {
                     if let Ok(parent) = ensure_safe_target_parent(target, &context.deploy_base) {
-                        let _ = create_sibling_symlink(raw_link_target, target, &parent.path);
+                        create_sibling_symlink(raw_link_target, target, &parent.path).is_ok()
+                    } else {
+                        false
                     }
+                } else {
+                    false
                 }
             }
             FileUndo::RestoreBackup {
@@ -543,20 +749,29 @@ fn rollback(undo: &[FileUndo], context: &ExecutorContext<'_>) {
                     if fingerprint.entry_type == super::model::FingerprintType::Symlink
                         && fingerprint.link_target.as_ref() == Some(source)
                     {
-                        let _ = fs::remove_file(target.as_std_path());
+                        if fs::remove_file(target.as_std_path()).is_err() {
+                            false
+                        } else if path_fingerprint(target)
+                            .map(|fingerprint| {
+                                fingerprint.entry_type == super::model::FingerprintType::Missing
+                            })
+                            .unwrap_or(false)
+                        {
+                            fs::rename(backup.as_std_path(), target.as_std_path()).is_ok()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
                     }
-                }
-                if path_fingerprint(target)
-                    .map(|fingerprint| {
-                        fingerprint.entry_type == super::model::FingerprintType::Missing
-                    })
-                    .unwrap_or(false)
-                {
-                    let _ = fs::rename(backup.as_std_path(), target.as_std_path());
+                } else {
+                    false
                 }
             }
-        }
+        };
+        outcomes.push((*index, restored));
     }
+    outcomes
 }
 
 fn ensure_target_is_allowed(target: &Utf8Path, deploy_base: &Utf8Path) -> Result<(), CoreError> {

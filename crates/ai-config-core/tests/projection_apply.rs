@@ -2,7 +2,9 @@ use std::fs;
 
 use ai_config_core::error::CoreError;
 use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::projection::executor::{apply_projection_plan, ApplyOptions, ExecutorContext};
+use ai_config_core::projection::executor::{
+    apply_projection_plan, ApplyActionStatus, ApplyOptions, ExecutorContext,
+};
 use ai_config_core::projection::fingerprint::path_content_digest;
 use ai_config_core::projection::ledger::MemoryProjectionLedger;
 use ai_config_core::projection::ledger::ProjectionLedger;
@@ -186,7 +188,14 @@ fn blocking_conflict_keeps_every_target_unchanged() {
         ApplyOptions::for_plan(&plan),
     );
 
-    assert!(result.is_err());
+    let failure = result.unwrap_err();
+    assert_eq!(failure.report.changed, 0);
+    assert_eq!(failure.report.conflict, 1);
+    assert_eq!(failure.report.not_applied, 0);
+    assert_eq!(
+        failure.report.actions[0].status,
+        ApplyActionStatus::Conflict
+    );
     assert_eq!(path_content_digest(&target).unwrap(), before);
 }
 
@@ -459,12 +468,13 @@ fn later_action_failure_removes_prior_links_and_their_new_empty_parents() {
     let root = Utf8Path::from_path(temp.path()).unwrap();
     let alpha = skill(root, "alpha");
     let bravo = skill(root, "bravo");
+    let charlie = skill(root, "charlie");
     let request = ProjectionRequest {
         operation: ProjectionOperation::Sync,
         scope_key: "project:/fixture".to_owned(),
         scope: DeploymentScope::Project,
         deploy_base: root.join("deploy"),
-        assets: vec![alpha.clone(), bravo.clone()],
+        assets: vec![alpha.clone(), bravo.clone(), charlie],
         platforms: vec![PlatformId::Cursor],
     };
     fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
@@ -478,7 +488,20 @@ fn later_action_failure_removes_prior_links_and_their_new_empty_parents() {
         ApplyOptions::for_plan(&plan),
     );
 
-    assert!(result.is_err());
+    let failure = result.unwrap_err();
+    assert_eq!(failure.report.changed, 0);
+    assert_eq!(failure.report.rolled_back, 1);
+    assert_eq!(failure.report.failed, 1);
+    assert_eq!(failure.report.not_applied, 1);
+    assert_eq!(
+        failure.report.actions[0].status,
+        ApplyActionStatus::RolledBack
+    );
+    assert_eq!(failure.report.actions[1].status, ApplyActionStatus::Failed);
+    assert_eq!(
+        failure.report.actions[2].status,
+        ApplyActionStatus::NotApplied
+    );
     assert!(fs::symlink_metadata(request.deploy_base.join(".agents").as_std_path()).is_err());
 }
 
