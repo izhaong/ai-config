@@ -122,7 +122,10 @@ pub fn retract(
         AssetKind::Hook => retract_hook(scope, name, plat),
         _ => {
             let dest = resolve_platform_retract_dest(scope, plat, kind, name)?;
-            remove_native_platform_copy(&dest)?;
+            let expected_src = locate_source(scope.default_root, scope.asset_root, kind, name)
+                .ok()
+                .map(|src| link_src_for_create(kind, &src));
+            remove_native_platform_copy(&dest, expected_src.as_deref())?;
             Ok(format!("{kind:?} `{name}` ← {plat:?} OK ({dest})"))
         }
     }
@@ -265,8 +268,14 @@ fn retract_aiconfig_platform(
 }
 
 /// 收回平台副本：仅允许收回 marker 或 legacy symlink 可证明管理的目标。
-fn remove_native_platform_copy(dest: &Utf8Path) -> Result<(), CoreError> {
-    materialize::retract(dest)
+fn remove_native_platform_copy(
+    dest: &Utf8Path,
+    expected_src: Option<&Utf8Path>,
+) -> Result<(), CoreError> {
+    match expected_src {
+        Some(src) => materialize::retract_linked_to(dest, src),
+        None => materialize::retract(dest),
+    }
 }
 
 /// 计算平台收回路径：有源时按源映射；无源时按平台目录（外部 / synced 安装）。

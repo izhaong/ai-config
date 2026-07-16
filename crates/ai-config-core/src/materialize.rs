@@ -186,7 +186,7 @@ pub fn retract(dest: &Utf8Path) -> Result<(), CoreError> {
     }
 
     if is_symlink_entry(dest) {
-        return link::unlink(dest);
+        return Err(unowned_retract_error(dest));
     }
 
     let marker = marker_path_for_dest(dest);
@@ -204,12 +204,35 @@ pub fn retract(dest: &Utf8Path) -> Result<(), CoreError> {
         return fs::remove_dir_all(dest.as_std_path()).map_err(CoreError::Io);
     }
 
-    Err(CoreError::LinkFailed {
+    Err(unowned_retract_error(dest))
+}
+
+/// 收回有明确 expected source 的 legacy symlink；普通副本仍只接受 marker 证明。
+pub fn retract_linked_to(dest: &Utf8Path, expected_src: &Utf8Path) -> Result<(), CoreError> {
+    if is_symlink_entry(dest) {
+        let expected = canonical_src(expected_src);
+        return match link::check(dest, &expected) {
+            link::LinkHealth::Linked { .. } => link::unlink(dest),
+            link::LinkHealth::WrongSource { actual, .. }
+                if canonical_src(&actual) == expected =>
+            {
+                link::unlink(dest)
+            }
+            link::LinkHealth::Broken { .. }
+            | link::LinkHealth::WrongSource { .. }
+            | link::LinkHealth::WrongType { .. } => Err(unowned_retract_error(dest)),
+        };
+    }
+    retract(dest)
+}
+
+fn unowned_retract_error(dest: &Utf8Path) -> CoreError {
+    CoreError::LinkFailed {
         src: "ai-config managed deploy".to_owned(),
         dest: dest.to_string(),
-        reason: "目标不是本工具下发：没有 ai-config marker 或可验证的 legacy symlink".to_owned(),
+        reason: "目标不是本工具下发：没有 marker 或精确匹配的 legacy symlink".to_owned(),
         hint: "保留该外部资产；如需接管，请先通过显式迁移生成计划".to_owned(),
-    })
+    }
 }
 
 /// 导入到源后，将平台上**已存在**的同名资产纳管为从 `src` 下发（写标记，不覆盖内容）。
@@ -443,6 +466,20 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn retract_refuses_symlink_without_expected_source() {
+        let tmp = TempDir::new().unwrap();
+        let foreign = Utf8PathBuf::from_path_buf(tmp.path().join("foreign/skill")).unwrap();
+        let dest = Utf8PathBuf::from_path_buf(tmp.path().join("platform/skills/demo")).unwrap();
+        fs::create_dir_all(foreign.as_std_path()).unwrap();
+        fs::create_dir_all(dest.parent().unwrap().as_std_path()).unwrap();
+        std::os::unix::fs::symlink(foreign.as_std_path(), dest.as_std_path()).unwrap();
+
+        assert!(retract(&dest).is_err());
+        assert!(fs::symlink_metadata(dest.as_std_path()).is_ok());
+    }
+
     #[test]
     fn deploy_migrates_legacy_symlink_to_copy() {
         let tmp = TempDir::new().unwrap();
@@ -512,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn retract_legacy_symlink() {
+    fn retract_linked_to_removes_exact_legacy_symlink() {
         let tmp = TempDir::new().unwrap();
         let src = Utf8PathBuf::from_path_buf(tmp.path().join("src/skill")).unwrap();
         let dest = Utf8PathBuf::from_path_buf(tmp.path().join("dest/skill")).unwrap();
@@ -521,7 +558,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(src.as_std_path(), dest.as_std_path()).unwrap();
 
-        retract(&dest).unwrap();
+        retract_linked_to(&dest, &src).unwrap();
         assert!(!dest.exists());
         assert!(src.exists());
     }

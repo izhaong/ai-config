@@ -592,10 +592,13 @@ pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) ->
 
     // 1. 收回所有本工具创建的 symlink(Create → unlink)
     for action in &ctx.actions {
-        if let SyncAction::Create { platform, dest, .. } = action {
+        if let SyncAction::Create {
+            platform, dest, src, ..
+        } = action
+        {
             let kind = infer_kind_from_dest(dest);
             let label = format!("Retract {kind} {dest}");
-            match materialize::retract(dest) {
+            match materialize::retract_linked_to(dest, src) {
                 Ok(()) => outcomes.push(Outcome::ok(label, *platform, kind)),
                 Err(e) => {
                     let s = e.to_string();
