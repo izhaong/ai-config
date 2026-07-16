@@ -168,6 +168,42 @@ pub fn capability_for(
         (PlatformId::Hermes, AssetKind::Mcp) => PlatformCapability::Unsupported {
             reason: "Hermes project MCP is unsupported; do not modify global config.yaml".to_owned(),
         },
+        (PlatformId::Codex, AssetKind::Agent) => PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: context
+                    .deploy_base
+                    .join(".codex/agents")
+                    .join(format!("{name}.toml")),
+                entry_key: None,
+            },
+            mode: ProjectionMode::GeneratedToml,
+            surface: ProjectionSurface::Platform(PlatformId::Codex),
+        },
+        (PlatformId::Cursor, AssetKind::Agent) => PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: context
+                    .deploy_base
+                    .join(".cursor/agents")
+                    .join(format!("{name}.md")),
+                entry_key: None,
+            },
+            mode: ProjectionMode::GeneratedMarkdown,
+            surface: ProjectionSurface::Platform(PlatformId::Cursor),
+        },
+        (PlatformId::Claude, AssetKind::Agent) => PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: context
+                    .deploy_base
+                    .join(".claude/agents")
+                    .join(format!("{name}.md")),
+                entry_key: None,
+            },
+            mode: ProjectionMode::GeneratedMarkdown,
+            surface: ProjectionSurface::Platform(PlatformId::Claude),
+        },
+        (PlatformId::Hermes, AssetKind::Agent) => PlatformCapability::Unsupported {
+            reason: "Hermes has no static agent directory".to_owned(),
+        },
         (PlatformId::Claude, AssetKind::Rule) => PlatformCapability::Generated {
             target: ProjectionTarget {
                 path: context
@@ -514,6 +550,81 @@ mod tests {
             PlatformCapability::Unsupported {
                 reason: "Hermes project MCP is unsupported; do not modify global config.yaml"
                     .to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn codex_agents_use_toml_not_subagents() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Codex, AssetKind::Agent, "reviewer", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.codex/agents/reviewer.toml"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::GeneratedToml,
+                surface: ProjectionSurface::Platform(PlatformId::Codex),
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_agents_require_generated_markdown() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Agent, "reviewer", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.cursor/agents/reviewer.md"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::GeneratedMarkdown,
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
+            }
+        );
+    }
+
+    #[test]
+    fn claude_agents_require_generated_markdown() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Agent, "reviewer", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.claude/agents/reviewer.md"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::GeneratedMarkdown,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        );
+    }
+
+    #[test]
+    fn hermes_agents_are_unsupported_without_static_directory() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Hermes, AssetKind::Agent, "reviewer", &context),
+            PlatformCapability::Unsupported {
+                reason: "Hermes has no static agent directory".to_owned(),
             }
         );
     }
