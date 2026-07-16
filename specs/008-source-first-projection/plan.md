@@ -877,8 +877,16 @@ public lifecycle 以及 Hermes cross-domain retract/uninstall；在此之前，�
 
 **CLI contract:** `install/sync/uninstall` 默认 plan-only；`--apply` 才写入；`--workspace` 保留。MCP `ai_config_sync/deploy/retract` 增加 `apply: bool = false`。只有 T007 MCP renderer 与 T008 Hook/Prompt/container renderer 均完成后，才在本任务统一切换 public lifecycle，避免任何 kind 出现功能空窗。
 
+**执行状态（2026-07-17，防偏航）**：CLI `install/sync/uninstall` 已完成第一段
+RED→GREEN 接线（`452bbdc`）：默认只输出 `schema_version`、`plan_digest` 与 action/member
+摘要，`--apply` 才创建持久 SQLite ledger 并执行 direct/MCP/Hook/Prompt；foreign/conflict 在
+写入前统一返回 exit 3，Hermes user 仅经 unified coordinator。该切片已验证第二次 apply 为
+unchanged。**仍未完成** agent API/MCP 的 `apply` 参数与 CLI parity、workspace adapter、以及
+non-Hermes 多子计划在运行期意外失败时的总事务/总回滚；因此 T009 不可标完成，T010–T013
+不得据此进入真实环境。
+
 - [ ] **T009.1 Write failing CLI contract tests**：default sync zero-write；`sync --apply` 对 direct/MCP/Hook/Prompt 创建 links/generated batches；second apply unchanged；JSON has schema_version/plan_digest/action/member summaries；blocking foreign conflict 以 exit 3 整 plan 零写入；uninstall leaves source/foreign/generated container；MCP tool default no-write；CLI 与 MCP tool 对同一 request 产生相同 digest。
-- [ ] **T009.2 Verify RED**：`cargo test -p ai-config-cli --test projection_lifecycle`。
+- [x] **T009.2 Verify RED**：`projection_lifecycle` 5 条合同先在无 `--apply`/plan 报告/统一编排的旧入口下实际失败，再转 GREEN。
 - [ ] **T009.3 Add contexts, clap flags and reports**：CLI/serve 调用层构造可序列化 `ProjectionRequest` 与注入式 `PlannerContext`/`ExecutorContext`；core 不打开 store；apply 只把 plan、context 和 options 交给 core。确认所有 kind 已迁移后再删除 lifecycle 的 materialize/MCP/Hook platform loops。
 - [ ] **T009.4 Define exit/report contract**：0=plan/apply success，3=blocking conflict 或已回滚 transaction failure，4=missing secret skipped，5=filesystem；输出 `rolled_back/not_applied`，JSON stderr 继续 envelope 且 redacted。
 - [ ] **T009.5 Update MCP schemas**：tool output schema 使用 ProjectionPlan/ApplyReport；`apply` 默认 false；agent 无法绕过 conflict/adopt guard。
