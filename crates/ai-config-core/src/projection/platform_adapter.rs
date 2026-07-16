@@ -204,6 +204,35 @@ pub fn capability_for(
         (PlatformId::Hermes, AssetKind::Agent) => PlatformCapability::Unsupported {
             reason: "Hermes has no static agent directory".to_owned(),
         },
+        (PlatformId::Codex, AssetKind::Command) => PlatformCapability::Unsupported {
+            reason: "Codex commands are unsupported; legacy .codex/prompts is inventory only"
+                .to_owned(),
+        },
+        (PlatformId::Cursor, AssetKind::Command) => PlatformCapability::DirectLink {
+            target: ProjectionTarget {
+                path: context
+                    .deploy_base
+                    .join(".cursor/commands")
+                    .join(format!("{name}.md")),
+                entry_key: None,
+            },
+            mode: ProjectionMode::DirectLink,
+            surface: ProjectionSurface::Platform(PlatformId::Cursor),
+        },
+        (PlatformId::Claude, AssetKind::Command) => PlatformCapability::DirectLink {
+            target: ProjectionTarget {
+                path: context
+                    .deploy_base
+                    .join(".claude/commands")
+                    .join(format!("{name}.md")),
+                entry_key: None,
+            },
+            mode: ProjectionMode::DirectLink,
+            surface: ProjectionSurface::Platform(PlatformId::Claude),
+        },
+        (PlatformId::Hermes, AssetKind::Command) => PlatformCapability::Unsupported {
+            reason: "Hermes commands are unsupported; use Skills".to_owned(),
+        },
         (PlatformId::Claude, AssetKind::Rule) => PlatformCapability::Generated {
             target: ProjectionTarget {
                 path: context
@@ -625,6 +654,77 @@ mod tests {
             capability_for(PlatformId::Hermes, AssetKind::Agent, "reviewer", &context),
             PlatformCapability::Unsupported {
                 reason: "Hermes has no static agent directory".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn codex_commands_are_unsupported_not_codex_commands() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Codex, AssetKind::Command, "review", &context),
+            PlatformCapability::Unsupported {
+                reason: "Codex commands are unsupported; legacy .codex/prompts is inventory only"
+                    .to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_project_commands_are_direct_links() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Command, "review", &context),
+            PlatformCapability::DirectLink {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.cursor/commands/review.md"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::DirectLink,
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
+            }
+        );
+    }
+
+    #[test]
+    fn claude_user_commands_are_direct_links() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/claude-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Command, "review", &context),
+            PlatformCapability::DirectLink {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/home/claude-user/.claude/commands/review.md"),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::DirectLink,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        );
+    }
+
+    #[test]
+    fn hermes_commands_are_unsupported_with_skill_guidance() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Hermes, AssetKind::Command, "review", &context),
+            PlatformCapability::Unsupported {
+                reason: "Hermes commands are unsupported; use Skills".to_owned(),
             }
         );
     }
