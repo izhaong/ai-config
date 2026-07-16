@@ -12,6 +12,7 @@ use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
+use serde_yaml::{Mapping, Value as YamlValue};
 
 use crate::error::CoreError;
 
@@ -494,6 +495,18 @@ pub fn apply_projection_plan(
                         }
                     })
                 }
+                Some(GeneratedContainerRenderer::HermesUnifiedYaml) => {
+                    apply_hermes_unified_yaml_upsert(action, context).map(|applied| {
+                        mutations.extend(applied.mutations);
+                        report.mcp_skipped_members.extend(applied.skipped_members);
+                        if let Some(undo_action) = applied.undo {
+                            undo.push((index, undo_action));
+                            report.set_status(index, ApplyActionStatus::Applied);
+                        } else {
+                            report.set_status(index, ApplyActionStatus::Skipped);
+                        }
+                    })
+                }
                 _ => apply_mcp_generated_upsert(action, context).map(|applied| {
                     mutations.extend(applied.mutations);
                     report.mcp_skipped_members.extend(applied.skipped_members);
@@ -929,6 +942,245 @@ struct AppliedGeneratedMcp {
 struct AppliedGeneratedHook {
     mutations: Vec<LedgerMutation>,
     undo: Option<FileUndo>,
+}
+
+struct AppliedHermesUnifiedYaml {
+    mutations: Vec<LedgerMutation>,
+    undo: Option<FileUndo>,
+    skipped_members: Vec<McpSkippedMemberReport>,
+}
+
+/// Render all supported Hermes user domains in memory and replace config.yaml exactly once.
+/// The plan carries only source references and secret key names; MCP values are hydrated only
+/// after source fingerprints have been revalidated here.
+fn apply_hermes_unified_yaml_upsert(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<AppliedHermesUnifiedYaml, CoreError> {
+    if action.generated_renderer != Some(GeneratedContainerRenderer::HermesUnifiedYaml) {
+        return Err(CoreError::InvalidPath(
+            "Hermes unified action has the wrong renderer".to_owned(),
+        ));
+    }
+    let target = action
+        .target
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("Hermes unified action has no target".to_owned()))?;
+    let expected = action.precondition.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("Hermes unified action has no target precondition".to_owned())
+    })?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected {
+        return Err(CoreError::InvalidPath(
+            "projection target changed after the plan was created".to_owned(),
+        ));
+    }
+    if !matches!(
+        actual.entry_type,
+        super::model::FingerprintType::Missing | super::model::FingerprintType::File
+    ) {
+        return Err(CoreError::InvalidPath(
+            "Hermes config.yaml must be a regular file or be absent".to_owned(),
+        ));
+    }
+    for member in &action.members {
+        ensure_hook_member_source_matches_plan(member)?;
+    }
+    let existing = match actual.entry_type {
+        super::model::FingerprintType::Missing => String::new(),
+        super::model::FingerprintType::File => fs::read_to_string(target.path.as_std_path())?,
+        _ => unreachable!("validated above"),
+    };
+    let mut intents = Vec::new();
+    let mut skipped_members = Vec::new();
+    for member in &action.mcp_members {
+        match load_and_hydrate_mcp_member(member, context)? {
+            HydratedMcpMember::Ready(intent) => intents.push(intent),
+            HydratedMcpMember::MissingSecrets {
+                entry_key,
+                missing_secret_keys,
+            } => skipped_members.push(McpSkippedMemberReport {
+                entry_key,
+                missing_secret_keys,
+            }),
+        }
+    }
+    let rendered = render_hermes_unified_yaml(&existing, &action.members, &intents)?;
+    let parent = ensure_safe_target_parent(&target.path, &context.deploy_base)?;
+    let temporary = generated_temporary_path(&parent.path, &target.path)?;
+    if let Err(error) = write_private_generated_file(&temporary, rendered.as_bytes()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    let rendered_digest = path_fingerprint(&temporary)?
+        .digest
+        .ok_or_else(|| CoreError::InvalidPath("rendered Hermes config has no digest".to_owned()))?;
+    let mut mutations = action
+        .members
+        .iter()
+        .map(|member| {
+            LedgerMutation::Upsert(ProjectionRecord {
+                id: member.id.clone(),
+                mode: ProjectionMode::GeneratedYaml,
+                source_path: member.source.absolute_path.clone(),
+                target_path: target.path.clone(),
+                entry_key: member.entry_key.clone(),
+                source_fingerprint: member.source.fingerprint.clone(),
+                entry_fingerprint: None,
+                target_fingerprint: rendered_digest.clone(),
+                applied_at: Utc::now(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let applied_names = intents
+        .iter()
+        .map(|intent| intent.name.as_str())
+        .collect::<BTreeSet<_>>();
+    for member in &action.mcp_members {
+        if !applied_names.contains(member.name.as_str()) {
+            continue;
+        }
+        mutations.push(LedgerMutation::Upsert(ProjectionRecord {
+            id: member.id.clone(),
+            mode: ProjectionMode::GeneratedYaml,
+            source_path: member.source.absolute_path.clone(),
+            target_path: target.path.clone(),
+            entry_key: Some(member.entry_key.clone()),
+            source_fingerprint: member.source.fingerprint.clone(),
+            entry_fingerprint: None,
+            target_fingerprint: rendered_digest.clone(),
+            applied_at: Utc::now(),
+        }));
+    }
+    let backup = if actual.entry_type == super::model::FingerprintType::File {
+        let backup = allocate_backup_path(&context.backup_root, &target.path)?;
+        write_backup_manifest(&backup, &target.path, expected)?;
+        if let Err(error) = fs::rename(target.path.as_std_path(), backup.as_std_path()) {
+            let _ = fs::remove_file(temporary.as_std_path());
+            return Err(CoreError::Io(error));
+        }
+        if let Err(error) = set_private_file_permissions(&backup) {
+            let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+            let _ = fs::remove_file(temporary.as_std_path());
+            return Err(error);
+        }
+        Some(backup)
+    } else {
+        None
+    };
+    if let Err(error) = fs::rename(temporary.as_std_path(), target.path.as_std_path()) {
+        if let Some(backup) = &backup {
+            let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        }
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+    Ok(AppliedHermesUnifiedYaml {
+        mutations,
+        undo: Some(FileUndo::RestoreGenerated {
+            target: target.path.clone(),
+            rendered_digest,
+            backup,
+            created_parents: parent.created_parents,
+        }),
+        skipped_members,
+    })
+}
+
+fn render_hermes_unified_yaml(
+    existing: &str,
+    members: &[super::planner::ProjectionMember],
+    mcp_intents: &[HydratedMcpIntent],
+) -> Result<String, CoreError> {
+    let mut root = if existing.trim().is_empty() {
+        YamlValue::Mapping(Mapping::new())
+    } else {
+        serde_yaml::from_str::<YamlValue>(existing).map_err(|_| {
+            CoreError::InvalidPath("Hermes config.yaml must be valid YAML".to_owned())
+        })?
+    };
+    let mapping = root.as_mapping_mut().ok_or_else(|| {
+        CoreError::InvalidPath("Hermes config.yaml root must be a mapping".to_owned())
+    })?;
+    let key = |name: &str| YamlValue::String(name.to_owned());
+
+    let mcp_servers = mapping
+        .entry(key("mcp_servers"))
+        .or_insert_with(|| YamlValue::Mapping(Mapping::new()))
+        .as_mapping_mut()
+        .ok_or_else(|| CoreError::InvalidPath("Hermes mcp_servers must be a mapping".to_owned()))?;
+    for intent in mcp_intents {
+        mcp_servers.insert(
+            key(&intent.name),
+            serde_yaml::to_value(&intent.config)
+                .map_err(|error| CoreError::InvalidPath(error.to_string()))?,
+        );
+    }
+
+    let skills = mapping
+        .entry(key("skills"))
+        .or_insert_with(|| YamlValue::Mapping(Mapping::new()))
+        .as_mapping_mut()
+        .ok_or_else(|| CoreError::InvalidPath("Hermes skills must be a mapping".to_owned()))?;
+    let external_dirs = skills
+        .entry(key("external_dirs"))
+        .or_insert_with(|| YamlValue::Sequence(Vec::new()))
+        .as_sequence_mut()
+        .ok_or_else(|| {
+            CoreError::InvalidPath("Hermes skills.external_dirs must be a sequence".to_owned())
+        })?;
+    for member in members
+        .iter()
+        .filter(|member| member.id.kind == crate::model::AssetKind::Skill)
+    {
+        let path = YamlValue::String(member.source.absolute_path.to_string());
+        if !external_dirs.contains(&path) {
+            external_dirs.push(path);
+        }
+    }
+
+    let hooks = mapping
+        .entry(key("hooks"))
+        .or_insert_with(|| YamlValue::Mapping(Mapping::new()))
+        .as_mapping_mut()
+        .ok_or_else(|| CoreError::InvalidPath("Hermes hooks must be a mapping".to_owned()))?;
+    let lifecycle = hooks
+        .entry(key("PostToolUse"))
+        .or_insert_with(|| YamlValue::Sequence(Vec::new()))
+        .as_sequence_mut()
+        .ok_or_else(|| {
+            CoreError::InvalidPath("Hermes Hook entries must be a sequence".to_owned())
+        })?;
+    for member in members
+        .iter()
+        .filter(|member| member.id.kind == crate::model::AssetKind::Hook)
+    {
+        lifecycle.retain(|entry| !yaml_hook_is_managed(entry, &member.id.name));
+        let mut binding = Mapping::new();
+        binding.insert(
+            key("command"),
+            YamlValue::String(format!(".hermes/hooks/{}", member.id.name)),
+        );
+        binding.insert(key("managedBy"), YamlValue::String("ai-config".to_owned()));
+        binding.insert(key("hook"), YamlValue::String(member.id.name.clone()));
+        lifecycle.push(YamlValue::Mapping(binding));
+    }
+    serde_yaml::to_string(&root).map_err(|error| CoreError::InvalidPath(error.to_string()))
+}
+
+fn yaml_hook_is_managed(entry: &YamlValue, name: &str) -> bool {
+    let Some(mapping) = entry.as_mapping() else {
+        return false;
+    };
+    mapping
+        .get(YamlValue::String("managedBy".to_owned()))
+        .and_then(YamlValue::as_str)
+        == Some("ai-config")
+        && mapping
+            .get(YamlValue::String("hook".to_owned()))
+            .and_then(YamlValue::as_str)
+            == Some(name)
 }
 
 /// Hook bindings are source-free generated entries: the canonical script/bundle is represented

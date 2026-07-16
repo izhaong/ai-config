@@ -205,6 +205,9 @@ pub enum GeneratedContainerRenderer {
     HookJson,
     HookToml,
     HookYaml,
+    /// T008 cross-domain Hermes user configuration. This is the only renderer allowed to own
+    /// MCP servers, `skills.external_dirs`, and Hook bindings in one YAML transaction.
+    HermesUnifiedYaml,
     GenericJson,
     GenericToml,
     GenericYaml,
@@ -851,6 +854,343 @@ pub fn build_mcp_projection_plan(
         )?);
     }
     finish_plan(request, actions, warnings)
+}
+
+/// Build the T008 user-scoped Hermes cross-domain slice as one plan. The ordinary planner and
+/// the MCP-only planner intentionally remain separate until this explicit coordinator is used;
+/// callers must never sequence their two plans against the same `config.yaml`.
+pub fn build_hermes_cross_domain_projection_plan(
+    request: &ProjectionRequest,
+    definitions: &[EffectiveMcpDefinition],
+    context: &PlannerContext<'_>,
+) -> Result<ProjectionPlan, CoreError> {
+    if request.scope != DeploymentScope::User || !request.platforms.contains(&PlatformId::Hermes) {
+        let mut actions = Vec::new();
+        for asset in &request.assets {
+            actions.push(ProjectionAction {
+                kind: ProjectionActionKind::ReportOnly,
+                target: None,
+                precondition: None,
+                ownership_fingerprint: None,
+                generated_renderer: None,
+                members: vec![ProjectionMember {
+                    id: projection_id(request, asset, ProjectionSurface::Platform(PlatformId::Hermes)),
+                    source: asset.source_ref(),
+                    entry_key: None,
+                }],
+                mcp_members: Vec::new(),
+                consumers: Vec::new(),
+                state: Some("unsupported".to_owned()),
+                reason_code: "hermes_cross_domain_requires_user_scope".to_owned(),
+                reason: "Hermes cross-domain configuration is user-scoped; project/workspace must not write global config.yaml".to_owned(),
+            });
+        }
+        for definition in definitions {
+            actions.push(mcp_report_only(
+                request,
+                &definition.source,
+                &definition.definition.server.name,
+                &definition.definition.server.secret_keys,
+                PlatformId::Hermes,
+                "unsupported_platform_contract",
+                "Hermes project/workspace MCP is unsupported; do not modify global config.yaml",
+            ));
+        }
+        return finish_plan(request, actions, Vec::new());
+    }
+
+    let target = ProjectionTarget {
+        path: normalized_target_path(&request.deploy_base.join(".hermes/config.yaml")),
+        entry_key: None,
+    };
+    let target_context = TargetContext {
+        scope: request.scope,
+        deploy_base: request.deploy_base.clone(),
+    };
+    let mut direct = Vec::new();
+    let mut members = Vec::new();
+    let mut warnings = Vec::new();
+
+    for asset in &request.assets {
+        match asset.kind {
+            AssetKind::Skill => {
+                let contract = capability_contract_for(PlatformId::Hermes, asset, &target_context);
+                let PlatformCapability::ExternalDirectory {
+                    target: external, ..
+                } = contract.capability
+                else {
+                    return Err(CoreError::InvalidPath(
+                        "Hermes skill contract must be external_dirs".to_owned(),
+                    ));
+                };
+                if normalized_target_path(&external.path) != target.path {
+                    return Err(CoreError::InvalidPath(
+                        "Hermes external_dirs target is outside shared config.yaml".to_owned(),
+                    ));
+                }
+                members.push(ProjectionMember {
+                    id: projection_id(
+                        request,
+                        asset,
+                        ProjectionSurface::Platform(PlatformId::Hermes),
+                    ),
+                    source: asset.source_ref(),
+                    entry_key: external.entry_key,
+                });
+            }
+            AssetKind::Hook => {
+                let contract =
+                    hook_capability_contract_for(PlatformId::Hermes, asset, &target_context);
+                let HookCapability::Supported { binding, script } = contract.capability else {
+                    return Err(CoreError::InvalidPath(
+                        "Hermes user Hook contract is unexpectedly unsupported".to_owned(),
+                    ));
+                };
+                let PlatformCapability::Generated {
+                    target: binding_target,
+                    ..
+                } = binding
+                else {
+                    return Err(CoreError::InvalidPath(
+                        "Hermes Hook binding must be generated".to_owned(),
+                    ));
+                };
+                if normalized_target_path(&binding_target.path) != target.path {
+                    return Err(CoreError::InvalidPath(
+                        "Hermes Hook binding is outside shared config.yaml".to_owned(),
+                    ));
+                }
+                let PlatformCapability::DirectLink {
+                    target: script_target,
+                    mode,
+                    copy_fallback_allowed,
+                    ..
+                } = script
+                else {
+                    return Err(CoreError::InvalidPath(
+                        "Hermes Hook script must be direct-linked".to_owned(),
+                    ));
+                };
+                direct.push(plan_direct_link(
+                    DirectLinkIntent {
+                        id: projection_id(
+                            request,
+                            asset,
+                            ProjectionSurface::PlatformBinding {
+                                platform: PlatformId::Hermes,
+                                binding: "hook_script".to_owned(),
+                            },
+                        ),
+                        source: asset.source_ref(),
+                        consumers: vec![PlatformId::Hermes],
+                        target: script_target,
+                        mode,
+                        adapter_allows_copy_fallback: copy_fallback_allowed,
+                    },
+                    request.operation,
+                    &mut warnings,
+                    context,
+                )?);
+                members.push(ProjectionMember {
+                    id: projection_id(
+                        request,
+                        asset,
+                        ProjectionSurface::PlatformBinding {
+                            platform: PlatformId::Hermes,
+                            binding: "hook_binding".to_owned(),
+                        },
+                    ),
+                    source: asset.source_ref(),
+                    entry_key: binding_target.entry_key,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let mut mcp_members = Vec::new();
+    for definition in definitions {
+        if !definition.definition.enabled_for(PlatformId::Hermes) {
+            continue;
+        }
+        let asset = EffectiveAsset {
+            kind: AssetKind::Mcp,
+            name: definition.definition.server.name.clone(),
+            source_path: definition.source.absolute_path.clone(),
+            layer: definition.source.layer,
+            fingerprint: definition.source.fingerprint.clone(),
+        };
+        let contract = capability_contract_for(PlatformId::Hermes, &asset, &target_context);
+        let PlatformCapability::Generated {
+            target: mcp_target,
+            mode,
+            surface,
+        } = contract.capability
+        else {
+            return Err(CoreError::InvalidPath(
+                "Hermes user MCP must be generated".to_owned(),
+            ));
+        };
+        if mode != ProjectionMode::GeneratedYaml
+            || normalized_target_path(&mcp_target.path) != target.path
+        {
+            return Err(CoreError::InvalidPath(
+                "Hermes MCP is outside shared config.yaml".to_owned(),
+            ));
+        }
+        let mut secret_keys = definition.definition.server.secret_keys.clone();
+        secret_keys.sort();
+        secret_keys.dedup();
+        mcp_members.push(McpProjectionMember {
+            id: projection_id(request, &asset, surface),
+            name: definition.definition.server.name.clone(),
+            source: definition.source.clone(),
+            entry_key: mcp_target
+                .entry_key
+                .unwrap_or_else(|| format!("mcp_servers.{}", asset.name)),
+            secret_keys,
+            missing_secret_keys: Vec::new(),
+        });
+    }
+
+    let mut actions = direct;
+    if !members.is_empty() || !mcp_members.is_empty() {
+        let precondition = path_fingerprint(&target.path)?;
+        let ownership_conflict = hermes_cross_domain_foreign_entry_reason(
+            &target,
+            &members,
+            &mcp_members,
+            context,
+            &mut warnings,
+        )?;
+        actions.push(ProjectionAction {
+            kind: if ownership_conflict.is_some() {
+                ProjectionActionKind::ReportOnly
+            } else {
+                ProjectionActionKind::UpsertGeneratedBatch
+            },
+            target: Some(target),
+            precondition: Some(precondition),
+            ownership_fingerprint: None,
+            generated_renderer: Some(GeneratedContainerRenderer::HermesUnifiedYaml),
+            members,
+            mcp_members,
+            consumers: vec![PlatformId::Hermes],
+            state: Some(
+                if ownership_conflict.is_some() {
+                    "foreign"
+                } else {
+                    "missing"
+                }
+                .to_owned(),
+            ),
+            reason_code: if ownership_conflict.is_some() {
+                "hermes_cross_domain_ownership_unproven".to_owned()
+            } else {
+                "hermes_cross_domain_batch".to_owned()
+            },
+            reason: ownership_conflict.unwrap_or_else(|| {
+                "MCP, external skill directories and Hook bindings share one Hermes YAML transaction"
+                    .to_owned()
+            }),
+        });
+    }
+    finish_plan(request, actions, warnings)
+}
+
+/// The unified renderer may append a new named entry to a foreign YAML container, but may never
+/// replace a same-name MCP server or a marked Hook binding unless the ledger already proves it.
+fn hermes_cross_domain_foreign_entry_reason(
+    target: &ProjectionTarget,
+    members: &[ProjectionMember],
+    mcp_members: &[McpProjectionMember],
+    context: &PlannerContext<'_>,
+    warnings: &mut Vec<PlanWarning>,
+) -> Result<Option<String>, CoreError> {
+    if !target.path.is_file() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(target.path.as_std_path())?;
+    let current_digest = path_fingerprint(&target.path)?.digest;
+    let document = match serde_yaml::from_str::<serde_yaml::Value>(&content) {
+        Ok(document) => document,
+        Err(_) => {
+            return Ok(Some(
+                "Hermes config.yaml cannot be parsed; ownership is not proven".to_owned(),
+            ))
+        }
+    };
+    let Some(root) = document.as_mapping() else {
+        return Ok(Some(
+            "Hermes config.yaml root is not a mapping; ownership is not proven".to_owned(),
+        ));
+    };
+    let key = |name: &str| serde_yaml::Value::String(name.to_owned());
+    if let Some(servers) = root
+        .get(key("mcp_servers"))
+        .and_then(serde_yaml::Value::as_mapping)
+    {
+        for member in mcp_members {
+            if !servers.contains_key(key(&member.name)) {
+                continue;
+            }
+            let Some(record) = ledger_record(context, &member.id, warnings) else {
+                return Ok(Some(
+                    "a same-name Hermes MCP server exists without ledger ownership".to_owned(),
+                ));
+            };
+            if record.mode != ProjectionMode::GeneratedYaml
+                || record.target_path != target.path
+                || record.entry_key.as_deref() != Some(member.entry_key.as_str())
+                || record.target_fingerprint != current_digest.clone().unwrap_or_default()
+            {
+                return Ok(Some(
+                    "a same-name Hermes MCP server is not ledger-proven for this target".to_owned(),
+                ));
+            }
+        }
+    }
+    if let Some(hooks) = root
+        .get(key("hooks"))
+        .and_then(serde_yaml::Value::as_mapping)
+    {
+        for member in members
+            .iter()
+            .filter(|member| member.id.kind == AssetKind::Hook)
+        {
+            let marked_binding_exists = hooks.values().any(|entries| {
+                entries.as_sequence().is_some_and(|entries| {
+                    entries.iter().any(|entry| {
+                        entry.as_mapping().is_some_and(|entry| {
+                            entry
+                                .get(key("managedBy"))
+                                .and_then(serde_yaml::Value::as_str)
+                                == Some("ai-config")
+                                && entry.get(key("hook")).and_then(serde_yaml::Value::as_str)
+                                    == Some(member.id.name.as_str())
+                        })
+                    })
+                })
+            });
+            if !marked_binding_exists {
+                continue;
+            }
+            let Some(record) = ledger_record(context, &member.id, warnings) else {
+                return Ok(Some(
+                    "a marked Hermes Hook binding exists without ledger ownership".to_owned(),
+                ));
+            };
+            if record.mode != ProjectionMode::GeneratedYaml
+                || record.target_path != target.path
+                || record.target_fingerprint != current_digest.clone().unwrap_or_default()
+            {
+                return Ok(Some(
+                    "a marked Hermes Hook binding is not ledger-proven for this target".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn mcp_retract_has_ledger_candidate(
