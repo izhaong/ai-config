@@ -774,7 +774,7 @@ source-first `ProjectionPlan` 降级后交给硬拷贝 executor；T009 在 T007/
 - [x] **T005.3 Implement planner**：接受注入的 `PlannerContext`，遍历 effective assets × requested platforms，并为 Prompt 去重生成唯一 ProjectEntry surface；调用 adapter target、ledger/secret metadata 与 ownership classifier；按规范化 `target.path` 聚合跨 domain generated intents并校验唯一 container renderer；action/member 包含 SourceRef、target fingerprint、reason code/说明，不包含 body/value；任何 adapter parse/renderer disagreement 错误变为 ReportOnly Conflict。
 - [x] **T005.4 Add operations**：Sync 只创建/更新 desired；Retract 只生成 managed removal；Uninstall 是全 scope Retract；orphan 在普通 Sync 只产 ReportOnly OrphanCandidate，单独 cleanup 请求且有 ownership 证据时才产 CleanupOrphan；Import/Migrate 暂只产明确 ReportOnly Unsupported，后续任务实现。
 - [x] **T005.5 Verify deterministic, read-only and budget**：同 fixture 连续 plan 100 次得到同 digest且文件树与 DB 不变；对 1,000 个发现项运行 release-mode benchmark，记录 100 次样本并断言至少 95 次小于 2 秒。
-- [x] **T005.6 Verify**：`cargo test -p ai-config-core --test projection_plan`（19 passed）；release 模式的 1,000 项 × 100 次 p95 < 2 秒门禁通过。
+- [x] **T005.6 Verify**：`cargo test -p ai-config-core --test projection_plan`（20 passed）；release 模式的 1,000 项 × 100 次 p95 < 2 秒门禁通过。
 - [x] **T005.7 Commit checkpoint**：`feat(core): 增加只读投影计划器`。
 
 ### T006 — Transactional direct-link executor
