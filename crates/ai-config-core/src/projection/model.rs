@@ -48,6 +48,78 @@ pub enum ProjectionState {
     Unsupported,
 }
 
+/// canonical asset 的来源层；同名项按 Global → Workspace → Project 覆盖。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceLayer {
+    Global,
+    Workspace,
+    Project,
+}
+
+/// 一次投影请求允许写入的目标边界。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentScope {
+    User,
+    Workspace,
+    Project,
+}
+
+/// Adapter 给 planner 返回的目标路径。聚合容器使用 `entry_key` 标识唯一受管条目。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectionTarget {
+    pub path: Utf8PathBuf,
+    pub entry_key: Option<String>,
+}
+
+/// apply 前的路径形态快照。与 `Equivalent` 的 semantic digest 分开保存。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FingerprintType {
+    Missing,
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PathFingerprint {
+    pub entry_type: FingerprintType,
+    pub digest: Option<String>,
+    pub link_target: Option<Utf8PathBuf>,
+    pub mode: Option<u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projection_target_and_path_fingerprint_are_stably_serializable() {
+        let target = ProjectionTarget {
+            path: Utf8PathBuf::from("/repo/.agents/skills/demo"),
+            entry_key: None,
+        };
+        let fingerprint = PathFingerprint {
+            entry_type: FingerprintType::Directory,
+            digest: Some("digest".to_owned()),
+            link_target: None,
+            mode: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(target).unwrap(),
+            serde_json::json!({"path":"/repo/.agents/skills/demo","entry_key":null})
+        );
+        assert_eq!(
+            serde_json::to_value(fingerprint).unwrap(),
+            serde_json::json!({"entry_type":"directory","digest":"digest","link_target":null,"mode":null})
+        );
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectionRecord {
     pub id: ProjectionId,

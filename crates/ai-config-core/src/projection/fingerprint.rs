@@ -1,10 +1,11 @@
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::error::CoreError;
+use crate::projection::model::{FingerprintType, PathFingerprint};
 
 const LEGACY_MARKER_NAME: &str = ".ai-config-deploy.json";
 
@@ -77,6 +78,55 @@ pub fn path_content_digest(path: &Utf8Path) -> Result<String, CoreError> {
         )));
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+/// 获取 apply 使用的严格路径快照。
+///
+/// `digest` 仍是语义内容摘要；entry type、link target 与 Unix mode 则让 executor
+/// 能在写入前拒绝目标自 plan 后发生的形态变化。
+pub fn path_fingerprint(path: &Utf8Path) -> Result<PathFingerprint, CoreError> {
+    let metadata = fs::symlink_metadata(path.as_std_path())?;
+    let file_type = metadata.file_type();
+    let entry_type = if file_type.is_file() {
+        FingerprintType::File
+    } else if file_type.is_dir() {
+        FingerprintType::Directory
+    } else if file_type.is_symlink() {
+        FingerprintType::Symlink
+    } else {
+        FingerprintType::Other
+    };
+    if entry_type == FingerprintType::Other {
+        return Err(CoreError::InvalidPath(format!(
+            "cannot fingerprint unsupported path type: {path}"
+        )));
+    }
+    let link_target = if entry_type == FingerprintType::Symlink {
+        Utf8PathBuf::from_path_buf(fs::read_link(path.as_std_path())?)
+            .map(Some)
+            .map_err(|non_utf8| CoreError::InvalidPath(non_utf8.to_string_lossy().into_owned()))?
+    } else {
+        None
+    };
+
+    Ok(PathFingerprint {
+        entry_type,
+        digest: Some(path_content_digest(path)?),
+        link_target,
+        mode: path_mode(&metadata),
+    })
+}
+
+#[cfg(unix)]
+fn path_mode(metadata: &fs::Metadata) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+
+    Some(metadata.permissions().mode())
+}
+
+#[cfg(not(unix))]
+fn path_mode(_metadata: &fs::Metadata) -> Option<u32> {
+    None
 }
 
 fn entry_kind(metadata: &fs::Metadata) -> u8 {
@@ -177,5 +227,22 @@ mod tests {
             path_content_digest(&first).unwrap(),
             path_content_digest(&second).unwrap()
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_fingerprint_detects_mode_changes_without_changing_content_digest() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let file = Utf8Path::from_path(temp.path()).unwrap().join("rule.mdc");
+        fs::write(file.as_std_path(), "rule body\n").unwrap();
+        let before = path_fingerprint(&file).unwrap();
+
+        fs::set_permissions(file.as_std_path(), fs::Permissions::from_mode(0o600)).unwrap();
+        let after = path_fingerprint(&file).unwrap();
+
+        assert_eq!(before.digest, after.digest);
+        assert_ne!(before.mode, after.mode);
     }
 }
