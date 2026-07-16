@@ -53,6 +53,32 @@ pub fn directory_digest(root: &Utf8Path) -> Result<String, CoreError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// 计算单个文件、目录或符号链接的语义内容摘要。
+///
+/// 单文件不把文件名纳入摘要，使不同平台目标的同内容 Rule/Command/Agent/Prompt
+/// 可判定为 `Equivalent`；符号链接只记录其 raw target，绝不跟随未知外部路径。
+pub fn path_content_digest(path: &Utf8Path) -> Result<String, CoreError> {
+    let metadata = fs::symlink_metadata(path.as_std_path())?;
+    if metadata.file_type().is_dir() {
+        return directory_digest(path);
+    }
+
+    let mut hasher = Sha256::new();
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path.as_std_path())?;
+        hasher.update(b"link\0");
+        hasher.update(target.as_os_str().as_encoded_bytes());
+    } else if metadata.file_type().is_file() {
+        hasher.update(b"file\0");
+        hasher.update(fs::read(path.as_std_path())?);
+    } else {
+        return Err(CoreError::InvalidPath(format!(
+            "cannot fingerprint unsupported path type: {path}"
+        )));
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
 fn entry_kind(metadata: &fs::Metadata) -> u8 {
     if metadata.file_type().is_symlink() {
         b'l'
@@ -128,5 +154,28 @@ mod tests {
         fs::write(nested.as_std_path(), "changed resource\n").unwrap();
 
         assert_ne!(before, directory_digest(&root).unwrap());
+    }
+
+    #[test]
+    fn path_content_digest_compares_regular_files_without_their_file_names() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let first = root.join("source/rule.mdc");
+        let second = root.join("target/renamed-rule.mdc");
+        fs::create_dir_all(first.parent().unwrap().as_std_path()).unwrap();
+        fs::create_dir_all(second.parent().unwrap().as_std_path()).unwrap();
+        fs::write(first.as_std_path(), "same body\n").unwrap();
+        fs::write(second.as_std_path(), "same body\n").unwrap();
+
+        assert_eq!(
+            path_content_digest(&first).unwrap(),
+            path_content_digest(&second).unwrap()
+        );
+
+        fs::write(second.as_std_path(), "different body\n").unwrap();
+        assert_ne!(
+            path_content_digest(&first).unwrap(),
+            path_content_digest(&second).unwrap()
+        );
     }
 }
