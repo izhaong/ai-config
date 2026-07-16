@@ -975,4 +975,143 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn user_scope_mcp_targets_use_each_platforms_documented_container() {
+        let cursor = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/cursor-user"),
+        };
+        let codex = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/codex-user"),
+        };
+        let claude = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/claude-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Mcp, "catalog", &cursor),
+            generated(
+                "/home/cursor-user/.cursor/mcp.json",
+                "mcpServers.catalog",
+                ProjectionMode::GeneratedJson,
+                PlatformId::Cursor
+            ),
+        );
+        assert_eq!(
+            capability_for(PlatformId::Codex, AssetKind::Mcp, "catalog", &codex),
+            generated(
+                "/home/codex-user/.codex/config.toml",
+                "mcp_servers.catalog",
+                ProjectionMode::GeneratedToml,
+                PlatformId::Codex
+            ),
+        );
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Mcp, "catalog", &claude),
+            generated(
+                "/home/claude-user/.claude.json",
+                "mcpServers.catalog",
+                ProjectionMode::GeneratedJson,
+                PlatformId::Claude
+            ),
+        );
+    }
+
+    #[test]
+    fn user_scope_agents_use_native_generated_formats() {
+        let cursor = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/cursor-user"),
+        };
+        let codex = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/codex-user"),
+        };
+        let claude = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/claude-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Agent, "reviewer", &cursor),
+            generated(
+                "/home/cursor-user/.cursor/agents/reviewer.md",
+                "",
+                ProjectionMode::GeneratedMarkdown,
+                PlatformId::Cursor
+            ),
+        );
+        assert_eq!(
+            capability_for(PlatformId::Codex, AssetKind::Agent, "reviewer", &codex),
+            generated(
+                "/home/codex-user/.codex/agents/reviewer.toml",
+                "",
+                ProjectionMode::GeneratedToml,
+                PlatformId::Codex
+            ),
+        );
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Agent, "reviewer", &claude),
+            generated(
+                "/home/claude-user/.claude/agents/reviewer.md",
+                "",
+                ProjectionMode::GeneratedMarkdown,
+                PlatformId::Claude
+            ),
+        );
+    }
+
+    #[test]
+    fn cursor_and_claude_commands_cover_both_user_and_project_scopes() {
+        let cursor = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/cursor-user"),
+        };
+        let claude = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Command, "review", &cursor),
+            direct(
+                "/home/cursor-user/.cursor/commands/review.md",
+                PlatformId::Cursor
+            ),
+        );
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Command, "review", &claude),
+            direct("/repo/.claude/commands/review.md", PlatformId::Claude),
+        );
+    }
+
+    fn direct(path: &str, platform: PlatformId) -> PlatformCapability {
+        PlatformCapability::DirectLink {
+            target: ProjectionTarget {
+                path: Utf8PathBuf::from(path),
+                entry_key: None,
+            },
+            mode: ProjectionMode::DirectLink,
+            surface: ProjectionSurface::Platform(platform),
+        }
+    }
+
+    fn generated(
+        path: &str,
+        entry_key: &str,
+        mode: ProjectionMode,
+        platform: PlatformId,
+    ) -> PlatformCapability {
+        PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: Utf8PathBuf::from(path),
+                entry_key: (!entry_key.is_empty()).then(|| entry_key.to_owned()),
+            },
+            mode,
+            surface: ProjectionSurface::Platform(platform),
+        }
+    }
 }

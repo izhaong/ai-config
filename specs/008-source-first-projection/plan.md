@@ -676,6 +676,7 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - [x] **T001.7 Commit checkpoint**：`git commit -m "fix(core): 封死未托管资产误删与只读写入"`。
 - [x] **T001.8 Audit regression closure**：补充并先验证 RED：删除 source 时保留未托管普通目录、第三方软链接和无 ownership 的同名平台 MCP；`materialize::retract` 无 expected source 时拒绝任何软链接，只有 canonical-equivalent 的精确 legacy symlink 可收回。验证：`cargo test -p ai-config-core source_delete_preserves_ -- --nocapture`、`cargo test -p ai-config-core retract_ -- --nocapture`、`cargo test -p ai-config-core -p ai-config-cli -- --test-threads=1`。
 - [x] **T001.9 Follow-up commit checkpoint**：仅提交 T001.8 的安全回归、最小修复和计划记录；不得夹带当前 GUI 或其它 feature 的工作树改动。证据：`ba45589 fix(core): 补齐源删除安全边界`。
+- [x] **T001.10 Hook ownership regression closure**：先复现 Cursor 外部 Hook 仅有第三方 binding 时，`hook_adapter::retract` 仍会删除脚本；现在未发现 `ai-config` managed binding 就整体跳过，配置与脚本都保持不变。验证：`retract_preserves_external_hook_script_without_managed_binding` RED→GREEN，随后 `cargo test -p ai-config-core -p ai-config-cli` 全绿。
 
 ### T002 — 统一 projection model、fingerprint 与 optional ledger
 
@@ -727,6 +728,7 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - [x] **T003.1e Commands contract RED→GREEN**：Cursor/Claude Command 都是 user/project `.cursor|.claude/commands/<name>.md` 的逐文件 `DirectLink`；Codex 明确 `unsupported`，历史 `.codex/prompts` 仅供后续 inventory、绝不写 `.codex/commands`；Hermes Command 明确 `unsupported` 并提示改用 Skills。所有分支均为纯 capability 计算，不触发旧 hard-copy 或 GUI 操作。
 - [x] **T003.1f Hooks contract RED→GREEN**：新增复合 `HookCapability`，强制一个 Hook 同时拥有具名 generated binding 和逐项 direct-link 脚本单元，禁止半投影。Cursor `.cursor/hooks.json` + `.cursor/hooks/`、Codex 固定 `.codex/hooks.json`（不写 inline TOML）+ `.codex/hooks/`、Claude `settings.json` + `.claude/hooks/`、Hermes user `config.yaml` + `.hermes/hooks/` 都有 target/format 断言；Hermes project 明确 `unsupported`。所有 adapter 入口同时拒绝空名、`.`、`..`、斜杠、反斜杠与 NUL，不能借资产名越出 deploy scope。
 - [x] **T003.1g 需求文档防偏航索引**：新增 `docs/reference/platform-contracts.md`，以 Spec 008 为唯一权威链接，按同一固定资产顺序收录 global/project target、格式、投影模式、legacy inventory 与 unsupported 边界；`docs/README.md` 与旧 `vercel-skills-agent-paths.md` 明确标注硬拷贝/第三方路径只用于历史盘点，禁止据此修改新 adapter。
+- [x] **T003.1h 补齐 user/project 目标矩阵回归**：在原有 fixed-order RED→GREEN 用例基础上，补充 user MCP 三个平台容器、user Agent 三个平台格式及 Cursor user/Claude project Command 的精确 target 断言；`projection::platform_adapter` 34 项通过。其余 trust/source-scope/workspace policy 仍是 T003 未完成的显式缺口，不能据此标记 T003 完成。
 - [ ] **T003.2 Verify RED**：`cargo test -p ai-config-core platform::`；预期 Codex/Claude 当前旧路径断言失败。
 - [ ] **T003.3 Implement scoped adapters**：平台对象只返回 capability/target；不创建目录、不读取 secret、不写配置。Codex rules 不映射 `.codex/rules`；Hermes workspace/project skills、MCP、Hook 不再写全局。
 - [ ] **T003.4 Record official contracts**：文档写明 URL、verified date、global/project path、format、symlink guarantee、legacy discovery path；测试 fixture 与文档表保持一致。
