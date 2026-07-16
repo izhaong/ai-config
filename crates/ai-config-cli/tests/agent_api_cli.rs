@@ -56,7 +56,7 @@ fn status_json_has_summary_and_assets() {
 }
 
 #[test]
-fn sync_json_reports_outcomes() {
+fn sync_json_returns_a_plan_without_applying() {
     let (home, root) = setup_project();
     let out = cmd(home.path(), root.path())
         .args(["--json", "sync"])
@@ -65,8 +65,18 @@ fn sync_json_reports_outcomes() {
     assert!(out.status.success() || out.status.code() == Some(3));
 
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    assert!(v["outcomes"].is_array());
-    assert!(v["synced"].is_u64());
+    assert!(v["plan"]["schema_version"].is_u64(), "sync report={v:?}");
+    assert!(v["plan"]["plan_digest"].is_string(), "sync report={v:?}");
+    assert!(v["plan"]["actions"].is_array(), "sync report={v:?}");
+    assert!(
+        v.get("apply").is_none(),
+        "sync must remain plan-only without --apply: {v:?}"
+    );
+    assert!(
+        !home.path().join(".agents/skills/foo").exists()
+            && !home.path().join(".cursor/mcp.json").exists(),
+        "plan-only sync must not create platform targets"
+    );
 }
 
 #[test]

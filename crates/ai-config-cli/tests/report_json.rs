@@ -77,7 +77,7 @@ fn doctor_json_has_issues_array() {
 }
 
 #[test]
-fn sync_json_has_outcomes_array() {
+fn sync_json_has_plan_and_no_apply_without_explicit_flag() {
     let (home, root) = setup();
     let out = cmd(home.path(), root.path())
         .args(["--json", "sync"])
@@ -85,7 +85,13 @@ fn sync_json_has_outcomes_array() {
         .expect("sync");
     assert!(out.status.success() || out.status.code() == Some(3));
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(v["outcomes"].is_array());
-    assert!(v["synced"].is_u64());
-    assert!(v["exit_code"].is_u64());
+    assert!(v["plan"]["schema_version"].is_u64());
+    assert!(v["plan"]["plan_digest"].is_string());
+    assert!(v["plan"]["actions"].is_array());
+    assert!(v.get("apply").is_none());
+    assert!(
+        !home.path().join(".agents/skills/foo").exists()
+            && !home.path().join(".cursor/mcp.json").exists(),
+        "default sync must not materialize targets"
+    );
 }

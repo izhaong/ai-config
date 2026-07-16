@@ -121,18 +121,21 @@ fn status_does_not_initialize_global_asset_root() {
 }
 
 #[test]
-fn project_sync_writes_mcp_under_project_deploy_base() {
+fn project_sync_apply_writes_mcp_under_project_deploy_base() {
     let home = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
     let asset_root = repo.path().join(".ai-config");
-    fs::create_dir_all(asset_root.join("skills")).unwrap();
+    fs::create_dir_all(asset_root.join("mcp/servers")).unwrap();
     fs::write(
-        asset_root.join("mcp.json"),
-        r#"{"mcpServers":{"project-only":{"command":"echo"}}}"#,
+        asset_root.join("mcp/servers/project-only.json"),
+        r#"{"enabled":true,"targets":["cursor"],"config":{"command":"echo"}}"#,
     )
     .unwrap();
 
-    cmd(home.path(), repo.path()).arg("sync").assert().success();
+    cmd(home.path(), repo.path())
+        .args(["sync", "--apply"])
+        .assert()
+        .success();
 
     assert!(
         repo.path().join(".cursor/mcp.json").is_file(),

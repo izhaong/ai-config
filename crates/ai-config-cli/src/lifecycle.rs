@@ -1281,7 +1281,11 @@ mod tests {
     }
     impl HomeGuard {
         fn set_to(p: &Path) -> Self {
-            let lock = HOME_TEST_LOCK.lock().expect("HOME test lock");
+            // A prior assertion can unwind after its guard restored HOME. Keep later tests
+            // diagnostic instead of hiding their own contract failures behind lock poisoning.
+            let lock = HOME_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let prev = std::env::var("HOME").ok();
             std::env::set_var("HOME", p);
             // 同时清掉 AI_CONFIG_HOME(防止旧 env 干扰)
@@ -1300,9 +1304,9 @@ mod tests {
 
     // ── 共享测试:install → uninstall → install 幂等(PRD §10 A-3) ─
 
-    /// 安全收回后，未带 marker 的 legacy copy 只能跳过；重复 install 仍须幂等。
+    /// Install / uninstall 默认只返回投影计划；不得沿用旧 lifecycle 写入或报告字段。
     #[test]
-    fn install_uninstall_install_is_idempotent() {
+    fn install_and_uninstall_default_to_plan_only_without_targets() {
         let (root_tmp, root) = make_project();
         let home_tmp = tempfile::tempdir().expect("home tempdir");
         let _home = HomeGuard::set_to(home_tmp.path());
@@ -1315,45 +1319,35 @@ mod tests {
             c
         };
 
-        // 1st install
-        let out = assert(&["--root", root.as_str(), "--quiet", "install"])
-            .output()
-            .expect("1st install");
-        assert!(
-            out.status.success(),
-            "1st install should succeed; stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-
-        // uninstall
-        let out = assert(&["--root", root.as_str(), "--json", "uninstall"])
-            .output()
-            .expect("uninstall");
-        assert!(
-            out.status.success(),
-            "uninstall should succeed; stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        // T001 不再删除整份平台 MCP，未证明 ownership 的历史副本也不得删除。
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json out");
-        assert_eq!(v["mcp_backups"].as_u64(), Some(0), "got {v:?}");
-        assert!(
-            home_tmp
-                .path()
-                .join(".cursor/skills/foo/SKILL.md")
-                .is_file(),
-            "没有 marker 的旧平台副本必须保留"
-        );
-
-        // 2nd install — 应当幂等(链接已撤回,从头开始)
-        let out = assert(&["--root", root.as_str(), "--quiet", "install"])
-            .output()
-            .expect("2nd install");
-        assert!(
-            out.status.success(),
-            "2nd install should also succeed (idempotent); stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        for (command, label) in [("install", "install"), ("uninstall", "uninstall")] {
+            let out = assert(&["--root", root.as_str(), "--json", command])
+                .output()
+                .expect(label);
+            assert!(
+                out.status.success(),
+                "{label} plan should succeed; stderr={}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let report: serde_json::Value =
+                serde_json::from_slice(&out.stdout).expect("projection lifecycle JSON");
+            assert!(report["plan"]["schema_version"].is_u64(), "got {report:?}");
+            assert!(report["plan"]["plan_digest"].is_string(), "got {report:?}");
+            assert!(
+                report.get("apply").is_none(),
+                "{label} without --apply must never execute a plan: {report:?}"
+            );
+        }
+        for target in [
+            home_tmp.path().join(".agents/skills/foo"),
+            home_tmp.path().join(".cursor/mcp.json"),
+            home_tmp.path().join(".claude/skills/foo"),
+        ] {
+            assert!(
+                !target.exists(),
+                "default lifecycle command must not create {}",
+                target.display()
+            );
+        }
 
         // 保留 root_tmp 防止 drop
         drop(root_tmp);
@@ -1482,14 +1476,20 @@ mod tests {
     }
 
     #[test]
-    fn sync_report_produces_outcomes() {
+    fn projection_sync_defaults_to_plan_only_report() {
         let (root_tmp, root) = make_project();
         let home_tmp = tempfile::tempdir().expect("home");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        let report = super::sync_report(&root, false).expect("sync_report");
-        assert!(!report.outcomes.is_empty());
-        assert!(report.synced > 0 || report.failed > 0);
+        let execution = crate::projection::execute(&root, false, false, false)
+            .expect("source-first sync plan");
+        assert_eq!(execution.exit_code, ai_config_core::error::exit_code::SUCCESS);
+        assert!(execution.report.apply.is_none());
+        assert!(!execution.report.plan.actions.is_empty());
+        assert!(
+            !home_tmp.path().join(".agents/skills/foo").exists(),
+            "default projection sync must remain zero-write"
+        );
         drop(root_tmp);
     }
 
@@ -1512,8 +1512,17 @@ mod tests {
         let members = ai_config_core::workspace::discover_members(&ws).unwrap();
         assert_eq!(members.len(), 2);
 
-        let report = super::sync_report(&ws, true).expect("workspace sync");
-        assert!(!report.outcomes.is_empty());
+        let result = crate::projection::execute(&ws, true, false, false);
+        let error = match result {
+            Ok(_) => panic!("workspace projection must fail closed until its adapter exists"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, ai_config_core::error::CoreError::NotImplemented(_)));
+        assert_eq!(error.exit_code(), ai_config_core::error::exit_code::ARG_ERROR);
+        assert!(
+            !home_tmp.path().join(".agents/skills/foo").exists(),
+            "unsupported workspace mode must not write platform targets"
+        );
     }
 
     // ── 共享测试:show 不存在的 name 退出码 3(部分失败) ────────

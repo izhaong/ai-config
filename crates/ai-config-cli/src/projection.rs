@@ -18,43 +18,58 @@ use ai_config_core::projection::model::{
 };
 use ai_config_core::projection::planner::{
     build_hermes_cross_domain_projection_plan, build_mcp_projection_plan, build_projection_plan,
-    PlannerContext, ProjectionAction, ProjectionActionKind, ProjectionOperation, ProjectionPlan,
+    PlannerContext, ProjectionActionKind, ProjectionOperation, ProjectionPlan,
     ProjectionRequest, PROJECTION_PLAN_SCHEMA_VERSION,
 };
 use ai_config_core::projection::source::{resolve_effective_assets, OverlayRoots};
 use ai_config_store::Store;
 use camino::Utf8Path;
+use schemars::JsonSchema;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
-#[derive(Debug, Serialize)]
-struct PublicPlan {
-    schema_version: u16,
-    plan_digest: String,
-    actions: Vec<ProjectionAction>,
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PublicPlan {
+    pub schema_version: u16,
+    pub plan_digest: String,
+    /// The core action model is deliberately exposed as JSON so this public report can remain
+    /// forward-compatible without giving the MCP bridge a second planner-owned schema.
+    pub actions: Vec<serde_json::Value>,
 }
 
-#[derive(Debug, Default, Serialize)]
-struct ApplySummary {
-    changed: usize,
-    unchanged: usize,
-    skipped: usize,
-    conflict: usize,
-    failed: usize,
-    rolled_back: usize,
-    rollback_failed: usize,
-    not_applied: usize,
+#[derive(Debug, Default, Serialize, JsonSchema)]
+pub struct ApplySummary {
+    pub changed: usize,
+    pub unchanged: usize,
+    pub skipped: usize,
+    pub conflict: usize,
+    pub failed: usize,
+    pub rolled_back: usize,
+    pub rollback_failed: usize,
+    pub not_applied: usize,
 }
 
-#[derive(Debug, Serialize)]
-struct LifecycleReport {
-    plan: PublicPlan,
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LifecycleReport {
+    #[schemars(schema_with = "public_plan_schema")]
+    pub plan: PublicPlan,
     #[serde(skip_serializing_if = "Option::is_none")]
-    apply: Option<ApplySummary>,
+    pub apply: Option<ApplySummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    blocking_reason: Option<String>,
+    pub blocking_reason: Option<String>,
+}
+
+fn public_plan_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    PublicPlan::json_schema(generator)
+}
+
+/// A report plus the CLI's process exit code. MCP returns the report directly so an agent can
+/// inspect a foreign-target guard without triggering a side-effecting retry.
+pub struct LifecycleExecution {
+    pub report: LifecycleReport,
+    pub exit_code: u8,
 }
 
 struct PlanBundle {
@@ -133,14 +148,30 @@ pub fn run(
     uninstall: bool,
     mode: OutputMode,
 ) -> ExitCode {
+    match execute(default_root, workspace, apply, uninstall) {
+        Ok(execution) => {
+            emit_report(mode, &execution.report);
+            ExitCode::from(execution.exit_code)
+        }
+        Err(error) => {
+            emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+/// Builds the same source-first lifecycle report for CLI and MCP callers. This is the only
+/// public write path for install/sync/uninstall projection operations.
+pub fn execute(
+    default_root: &Utf8Path,
+    workspace: bool,
+    apply: bool,
+    uninstall: bool,
+) -> Result<LifecycleExecution, CoreError> {
     if workspace {
-        emit_error_envelope(
-            mode,
-            exit_code::ARG_ERROR,
-            "workspace projection lifecycle is not implemented yet",
-            Some("remove --workspace or wait for the workspace projection request adapter"),
-        );
-        return ExitCode::from(exit_code::ARG_ERROR);
+        return Err(CoreError::NotImplemented(
+            "workspace projection lifecycle is not implemented yet; remove --workspace or wait for the workspace projection request adapter",
+        ));
     }
 
     let roots = paths::resolve_sync_roots(default_root);
@@ -152,61 +183,51 @@ pub fn run(
     let ledger_path = roots
         .deploy_base
         .join(".ai-config/projection-ledger.sqlite");
-    let bundle = match build_with_existing_ledger(&roots, operation, &ledger_path) {
-        Ok(bundle) => bundle,
-        Err(error) => {
-            emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
-            return ExitCode::from(error.exit_code());
-        }
-    };
-
+    let bundle = build_with_existing_ledger(&roots, operation, &ledger_path)?;
     let blocking = blocking_reason(&bundle);
     if !apply {
-        let report = LifecycleReport {
-            plan: bundle.public,
-            apply: None,
-            blocking_reason: blocking,
-        };
-        emit_report(mode, &report);
-        return ExitCode::SUCCESS;
+        return Ok(LifecycleExecution {
+            report: LifecycleReport {
+                plan: bundle.public,
+                apply: None,
+                blocking_reason: blocking,
+            },
+            exit_code: exit_code::SUCCESS,
+        });
     }
     if let Some(reason) = blocking {
-        let report = LifecycleReport {
-            plan: bundle.public,
-            apply: None,
-            blocking_reason: Some(reason),
-        };
-        emit_report(mode, &report);
-        return ExitCode::from(exit_code::PARTIAL_FAILURE);
+        return Ok(LifecycleExecution {
+            report: LifecycleReport {
+                plan: bundle.public,
+                apply: None,
+                blocking_reason: Some(reason),
+            },
+            exit_code: exit_code::PARTIAL_FAILURE,
+        });
     }
 
-    let store = match Store::open_at(ledger_path.as_std_path()) {
-        Ok(store) => store,
-        Err(error) => {
-            emit_error_envelope(mode, exit_code::FS_ERROR, &error.to_string(), None);
-            return ExitCode::from(exit_code::FS_ERROR);
-        }
-    };
+    let store = Store::open_at(ledger_path.as_std_path())
+        .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
     let ledger = store.projections();
-    let summary = match apply_bundle(&bundle, &ledger, &roots) {
-        Ok(summary) => summary,
-        Err(error) => {
-            let report = LifecycleReport {
+    let (report, exit_code) = match apply_bundle(&bundle, &ledger, &roots) {
+        Ok(summary) => (
+            LifecycleReport {
+                plan: bundle.public,
+                apply: Some(summary),
+                blocking_reason: None,
+            },
+            exit_code::SUCCESS,
+        ),
+        Err(error) => (
+            LifecycleReport {
                 plan: bundle.public,
                 apply: None,
                 blocking_reason: Some(error.to_string()),
-            };
-            emit_report(mode, &report);
-            return ExitCode::from(error.exit_code());
-        }
+            },
+            error.exit_code(),
+        ),
     };
-    let report = LifecycleReport {
-        plan: bundle.public,
-        apply: Some(summary),
-        blocking_reason: None,
-    };
-    emit_report(mode, &report);
-    ExitCode::SUCCESS
+    Ok(LifecycleExecution { report, exit_code })
 }
 
 fn emit_report(mode: OutputMode, report: &LifecycleReport) {
@@ -310,11 +331,12 @@ fn build_bundle(
             &context,
         )?);
     }
-    let actions = plans
+    let core_actions = plans
         .iter()
         .flat_map(|plan| plan.actions.iter().cloned())
         .collect::<Vec<_>>();
-    let encoded = serde_json::to_vec(&actions).map_err(CoreError::Json)?;
+    let encoded = serde_json::to_vec(&core_actions).map_err(CoreError::Json)?;
+    let actions = serde_json::from_slice(&encoded).map_err(CoreError::Json)?;
     let public = PublicPlan {
         schema_version: PROJECTION_PLAN_SCHEMA_VERSION,
         plan_digest: hex::encode(Sha256::digest(encoded)),
