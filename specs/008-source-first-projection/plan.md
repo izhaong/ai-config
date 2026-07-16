@@ -884,7 +884,9 @@ RED→GREEN 接线（`452bbdc`）：默认只输出 `schema_version`、`plan_dig
 接入相同 lifecycle：`ai_config_sync` 默认 plan-only，`apply=true` 返回同一计划身份及 apply
 摘要；deploy/retract 在安全的单项计划尚未表达前 fail-closed，不能再直写旧 `asset_ops`。该切片
 已验证第二次 apply 为 unchanged。**仍未完成** workspace adapter、以及
-non-Hermes 多子计划在运行期意外失败时的总事务/总回滚；因此 T009 不可标完成，T010–T013
+完整 exit/report 语义（含 missing-secret exit 4）。non-Hermes 多子计划已在 `99ea766` 取得
+一次 lock、共享 undo journal 和最终单次 ledger commit；后续 MCP source 在运行期失效时会全局
+回滚先前 direct/Hook/Prompt/MCP target 与 ledger。T009 仍不可标完成，T010–T013
 不得据此进入真实环境。
 
 - [ ] **T009.1 Write failing CLI contract tests**：default sync zero-write；`sync --apply` 对 direct/MCP/Hook/Prompt 创建 links/generated batches；second apply unchanged；JSON has schema_version/plan_digest/action/member summaries；blocking foreign conflict 以 exit 3 整 plan 零写入；uninstall leaves source/foreign/generated container；MCP tool default no-write；CLI 与 MCP tool 对同一 request 产生相同 digest。
