@@ -6,7 +6,7 @@ use camino::Utf8PathBuf;
 
 use crate::model::{AssetKind, PlatformId};
 use crate::projection::model::{
-    DeploymentScope, ProjectionMode, ProjectionSurface, ProjectionTarget,
+    DeploymentScope, EffectiveAsset, ProjectionMode, ProjectionSurface, ProjectionTarget, SourceRef,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +14,75 @@ pub struct TargetContext {
     pub scope: DeploymentScope,
     /// User scope 为 home；workspace/project scope 为对应 deploy root。
     pub deploy_base: Utf8PathBuf,
+}
+
+/// 平台实际消费的目标格式，独立于“链接/生成”的投影动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetFormat {
+    Directory,
+    DirectoryOrFile,
+    Mdc,
+    Markdown,
+    Json,
+    Toml,
+    Yaml,
+    None,
+}
+
+/// planner 必须在 apply 前满足的信任边界。adapter 只声明要求，不检查机器状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustRequirement {
+    None,
+    TrustedProject,
+    TrustedProjectWithIndependentReview,
+}
+
+/// 旧路径只能供 inventory/migration 使用，不能成为普通 projection target。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyInventoryStatus {
+    AlternateStillConsumed,
+    DeprecatedConsumed,
+    InventoryOnly,
+    DifferentSemanticAsset,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyInventoryPath {
+    pub path: Utf8PathBuf,
+    pub status: LegacyInventoryStatus,
+    pub reason: &'static str,
+}
+
+/// 给 planner 的完整单资产契约。source 永远从 EffectiveAsset 取得，不能由 deploy scope 推断。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityContract {
+    pub source: SourceRef,
+    pub deployment_scope: DeploymentScope,
+    /// 同一物理 target 的全部消费者，固定排序且不重复。
+    pub consumers: Vec<PlatformId>,
+    pub target: Option<ProjectionTarget>,
+    pub format: TargetFormat,
+    pub projection_mode: Option<ProjectionMode>,
+    pub trust_requirement: TrustRequirement,
+    pub legacy_inventory_paths: Vec<LegacyInventoryPath>,
+    /// 保留现有 facade，T009 前旧入口仍可安全共存。
+    pub capability: PlatformCapability,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookCapabilityContract {
+    pub source: SourceRef,
+    pub deployment_scope: DeploymentScope,
+    pub consumers: Vec<PlatformId>,
+    pub binding_target: Option<ProjectionTarget>,
+    pub binding_format: TargetFormat,
+    pub binding_projection_mode: Option<ProjectionMode>,
+    pub script_target: Option<ProjectionTarget>,
+    pub script_format: TargetFormat,
+    pub script_projection_mode: Option<ProjectionMode>,
+    pub trust_requirement: TrustRequirement,
+    pub legacy_inventory_paths: Vec<LegacyInventoryPath>,
+    pub capability: HookCapability,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +179,7 @@ pub fn capability_for(
                 reason: "Cursor user rules have no stable file target".to_owned(),
             }
         }
-        (PlatformId::Cursor, AssetKind::Rule) if context.scope != DeploymentScope::User => {
+        (PlatformId::Cursor, AssetKind::Rule) if context.scope == DeploymentScope::Project => {
             PlatformCapability::DirectLink {
                 target: ProjectionTarget {
                     path: context
@@ -123,6 +192,19 @@ pub fn capability_for(
                 surface: ProjectionSurface::SharedTarget {
                     key: "cursor_hermes_rules".to_owned(),
                 },
+            }
+        }
+        (PlatformId::Cursor, AssetKind::Rule) if context.scope == DeploymentScope::Workspace => {
+            PlatformCapability::DirectLink {
+                target: ProjectionTarget {
+                    path: context
+                        .deploy_base
+                        .join(".cursor/rules")
+                        .join(format!("{name}.mdc")),
+                    entry_key: None,
+                },
+                mode: ProjectionMode::DirectLink,
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
             }
         }
         (PlatformId::Hermes, AssetKind::Rule) if context.scope == DeploymentScope::Project => {
@@ -276,6 +358,213 @@ pub fn capability_for(
     }
 }
 
+/// 以 overlay 后的 EffectiveAsset 生成完整机器可读契约。
+///
+/// 这是新 planner 的入口；旧 `capability_for` 仅保留给尚未迁移的兼容调用方。
+pub fn capability_contract_for(
+    platform: PlatformId,
+    asset: &EffectiveAsset,
+    context: &TargetContext,
+) -> CapabilityContract {
+    let capability = capability_for(platform, asset.kind, &asset.name, context);
+    let (target, projection_mode) = capability_target_and_mode(&capability);
+    let supported = target.is_some();
+    CapabilityContract {
+        source: asset.source_ref(),
+        deployment_scope: context.scope,
+        consumers: if supported {
+            consumers_for(platform, asset.kind, context.scope)
+        } else {
+            Vec::new()
+        },
+        target,
+        format: target_format_for(platform, asset.kind, projection_mode),
+        projection_mode,
+        trust_requirement: trust_requirement_for(platform, asset.kind, context.scope),
+        legacy_inventory_paths: legacy_inventory_paths_for(
+            platform,
+            asset.kind,
+            &asset.name,
+            context,
+        ),
+        capability,
+    }
+}
+
+/// Hook 有 binding/script 两个 target，不能将它们压缩成单一普通资产契约。
+pub fn hook_capability_contract_for(
+    platform: PlatformId,
+    asset: &EffectiveAsset,
+    context: &TargetContext,
+) -> HookCapabilityContract {
+    let capability = if asset.kind == AssetKind::Hook {
+        hook_capability_for(platform, &asset.name, context)
+    } else {
+        HookCapability::Unsupported {
+            reason: "hook contract requires an EffectiveAsset of kind Hook".to_owned(),
+        }
+    };
+    let (binding_target, binding_projection_mode, script_target, script_projection_mode) =
+        match &capability {
+            HookCapability::Supported { binding, script } => {
+                let (binding_target, binding_mode) = capability_target_and_mode(binding);
+                let (script_target, script_mode) = capability_target_and_mode(script);
+                (binding_target, binding_mode, script_target, script_mode)
+            }
+            HookCapability::Unsupported { .. } => (None, None, None, None),
+        };
+    let supported = binding_target.is_some() && script_target.is_some();
+    HookCapabilityContract {
+        source: asset.source_ref(),
+        deployment_scope: context.scope,
+        consumers: supported.then(|| vec![platform]).unwrap_or_default(),
+        binding_target,
+        binding_format: target_format_for(platform, AssetKind::Hook, binding_projection_mode),
+        binding_projection_mode,
+        script_target,
+        script_format: target_format_for(platform, AssetKind::Hook, script_projection_mode),
+        script_projection_mode,
+        trust_requirement: trust_requirement_for(platform, AssetKind::Hook, context.scope),
+        legacy_inventory_paths: legacy_inventory_paths_for(
+            platform,
+            AssetKind::Hook,
+            &asset.name,
+            context,
+        ),
+        capability,
+    }
+}
+
+fn capability_target_and_mode(
+    capability: &PlatformCapability,
+) -> (Option<ProjectionTarget>, Option<ProjectionMode>) {
+    match capability {
+        PlatformCapability::DirectLink { target, mode, .. }
+        | PlatformCapability::ExternalDirectory { target, mode, .. }
+        | PlatformCapability::Generated { target, mode, .. } => (Some(target.clone()), Some(*mode)),
+        PlatformCapability::Unsupported { .. } => (None, None),
+    }
+}
+
+fn consumers_for(platform: PlatformId, kind: AssetKind, scope: DeploymentScope) -> Vec<PlatformId> {
+    match (kind, platform, scope) {
+        (AssetKind::Skill, PlatformId::Cursor | PlatformId::Codex, _) => {
+            vec![PlatformId::Cursor, PlatformId::Codex]
+        }
+        (AssetKind::Rule, PlatformId::Cursor | PlatformId::Hermes, DeploymentScope::Project) => {
+            vec![PlatformId::Cursor, PlatformId::Hermes]
+        }
+        _ => vec![platform],
+    }
+}
+
+fn target_format_for(
+    platform: PlatformId,
+    kind: AssetKind,
+    mode: Option<ProjectionMode>,
+) -> TargetFormat {
+    match mode {
+        None => TargetFormat::None,
+        Some(ProjectionMode::ExternalDirectory) => TargetFormat::Yaml,
+        Some(ProjectionMode::GeneratedJson) => TargetFormat::Json,
+        Some(ProjectionMode::GeneratedToml) => TargetFormat::Toml,
+        Some(ProjectionMode::GeneratedYaml) => TargetFormat::Yaml,
+        Some(ProjectionMode::GeneratedMarkdown) => TargetFormat::Markdown,
+        Some(ProjectionMode::DirectLink) => match kind {
+            AssetKind::Skill => TargetFormat::Directory,
+            AssetKind::Rule if platform != PlatformId::Claude => TargetFormat::Mdc,
+            AssetKind::Hook => TargetFormat::DirectoryOrFile,
+            AssetKind::Rule | AssetKind::Command | AssetKind::Agent | AssetKind::Prompt => {
+                TargetFormat::Markdown
+            }
+            AssetKind::Mcp => TargetFormat::None,
+        },
+        Some(ProjectionMode::CopyFallback) => TargetFormat::None,
+    }
+}
+
+fn trust_requirement_for(
+    platform: PlatformId,
+    kind: AssetKind,
+    scope: DeploymentScope,
+) -> TrustRequirement {
+    match (platform, kind, scope) {
+        (
+            PlatformId::Codex,
+            AssetKind::Mcp,
+            DeploymentScope::Workspace | DeploymentScope::Project,
+        ) => TrustRequirement::TrustedProject,
+        (
+            PlatformId::Codex,
+            AssetKind::Hook,
+            DeploymentScope::Workspace | DeploymentScope::Project,
+        ) => TrustRequirement::TrustedProjectWithIndependentReview,
+        _ => TrustRequirement::None,
+    }
+}
+
+fn legacy_inventory_paths_for(
+    platform: PlatformId,
+    kind: AssetKind,
+    name: &str,
+    context: &TargetContext,
+) -> Vec<LegacyInventoryPath> {
+    let entry = |path: Utf8PathBuf, status, reason| LegacyInventoryPath {
+        path,
+        status,
+        reason,
+    };
+    match (platform, kind) {
+        (PlatformId::Cursor, AssetKind::Skill) => vec![entry(
+            context.deploy_base.join(".cursor/skills").join(name),
+            LegacyInventoryStatus::AlternateStillConsumed,
+            "Cursor alternate skill location; never a new default target",
+        )],
+        (PlatformId::Codex, AssetKind::Skill) => vec![entry(
+            context.deploy_base.join(".codex/skills").join(name),
+            LegacyInventoryStatus::InventoryOnly,
+            "legacy Codex skill location",
+        )],
+        (PlatformId::Codex, AssetKind::Rule) => vec![entry(
+            context
+                .deploy_base
+                .join(".codex/rules")
+                .join(format!("{name}.rules")),
+            LegacyInventoryStatus::DifferentSemanticAsset,
+            "Codex execution policy, not an instruction rule target",
+        )],
+        (PlatformId::Codex, AssetKind::Mcp) => vec![entry(
+            context.deploy_base.join(".codex/mcp.json"),
+            LegacyInventoryStatus::InventoryOnly,
+            "legacy MCP JSON is not a Codex projection target",
+        )],
+        (PlatformId::Codex, AssetKind::Agent) => vec![entry(
+            context.deploy_base.join(".codex/subagents").join(name),
+            LegacyInventoryStatus::InventoryOnly,
+            "legacy subagents directory",
+        )],
+        (PlatformId::Claude, AssetKind::Agent) => vec![entry(
+            context.deploy_base.join(".claude/subagents").join(name),
+            LegacyInventoryStatus::InventoryOnly,
+            "legacy subagents directory",
+        )],
+        (PlatformId::Codex, AssetKind::Command) => vec![entry(
+            context
+                .deploy_base
+                .join(".codex/prompts")
+                .join(format!("{name}.md")),
+            LegacyInventoryStatus::DeprecatedConsumed,
+            "deprecated prompt inventory; recommend migration to Skill",
+        )],
+        (PlatformId::Codex, AssetKind::Hook) => vec![entry(
+            context.deploy_base.join(".codex/config.toml"),
+            LegacyInventoryStatus::InventoryOnly,
+            "inline TOML hooks are inventory-only; new projection uses hooks.json",
+        )],
+        _ => Vec::new(),
+    }
+}
+
 /// 返回 Hook 的 binding 与脚本单元目标，避免出现“只写配置”或“只放脚本”的半投影。
 pub fn hook_capability_for(
     platform: PlatformId,
@@ -350,7 +639,9 @@ fn is_safe_asset_name(name: &str) -> bool {
 mod tests {
     use super::*;
     use crate::model::{AssetKind, PlatformId};
-    use crate::projection::model::{DeploymentScope, ProjectionMode, ProjectionSurface};
+    use crate::projection::model::{
+        DeploymentScope, EffectiveAsset, ProjectionMode, ProjectionSurface, SourceLayer,
+    };
     use camino::Utf8PathBuf;
 
     #[test]
@@ -365,6 +656,188 @@ mod tests {
             PlatformCapability::Unsupported { ref reason }
                 if reason.contains("source-first projection planner")
         ));
+    }
+
+    #[test]
+    fn contract_keeps_global_provenance_separate_from_project_target_and_shared_consumers() {
+        let asset = EffectiveAsset {
+            kind: AssetKind::Skill,
+            name: "demo".to_owned(),
+            source_path: Utf8PathBuf::from("/home/user/.ai-config/skills/demo"),
+            layer: SourceLayer::Global,
+            fingerprint: "source-v1".to_owned(),
+        };
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        let contract = capability_contract_for(PlatformId::Cursor, &asset, &context);
+
+        assert_eq!(contract.source, asset.source_ref());
+        assert_eq!(contract.deployment_scope, DeploymentScope::Project);
+        assert_eq!(
+            contract.consumers,
+            vec![PlatformId::Cursor, PlatformId::Codex]
+        );
+        assert_eq!(contract.trust_requirement, TrustRequirement::None);
+        assert_eq!(contract.format, TargetFormat::Directory);
+        assert_eq!(contract.projection_mode, Some(ProjectionMode::DirectLink));
+        assert_eq!(
+            contract.target.as_ref().map(|target| target.path.as_str()),
+            Some("/repo/.agents/skills/demo")
+        );
+        assert_eq!(contract.legacy_inventory_paths.len(), 1);
+        assert_eq!(
+            contract.legacy_inventory_paths[0].path,
+            Utf8PathBuf::from("/repo/.cursor/skills/demo")
+        );
+        assert_eq!(
+            contract.legacy_inventory_paths[0].status,
+            LegacyInventoryStatus::AlternateStillConsumed
+        );
+    }
+
+    #[test]
+    fn codex_project_mcp_contract_requires_trusted_project() {
+        let asset = EffectiveAsset {
+            kind: AssetKind::Mcp,
+            name: "catalog".to_owned(),
+            source_path: Utf8PathBuf::from("/home/user/.ai-config/mcp/servers/catalog.json"),
+            layer: SourceLayer::Global,
+            fingerprint: "source-v1".to_owned(),
+        };
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        let contract = capability_contract_for(PlatformId::Codex, &asset, &context);
+
+        assert_eq!(contract.trust_requirement, TrustRequirement::TrustedProject);
+        assert_eq!(contract.format, TargetFormat::Toml);
+        assert_eq!(
+            contract.projection_mode,
+            Some(ProjectionMode::GeneratedToml)
+        );
+        assert_eq!(contract.consumers, vec![PlatformId::Codex]);
+        assert_eq!(contract.legacy_inventory_paths.len(), 1);
+        assert_eq!(
+            contract.legacy_inventory_paths[0].path,
+            Utf8PathBuf::from("/repo/.codex/mcp.json")
+        );
+        assert_eq!(
+            contract.legacy_inventory_paths[0].status,
+            LegacyInventoryStatus::InventoryOnly
+        );
+    }
+
+    #[test]
+    fn codex_project_hook_contract_requires_independent_trust_review() {
+        let asset = EffectiveAsset {
+            kind: AssetKind::Hook,
+            name: "format.sh".to_owned(),
+            source_path: Utf8PathBuf::from("/home/user/.ai-config/hooks/format.sh"),
+            layer: SourceLayer::Global,
+            fingerprint: "source-v1".to_owned(),
+        };
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        let contract = hook_capability_contract_for(PlatformId::Codex, &asset, &context);
+
+        assert_eq!(contract.source, asset.source_ref());
+        assert_eq!(
+            contract.trust_requirement,
+            TrustRequirement::TrustedProjectWithIndependentReview
+        );
+        assert_eq!(contract.deployment_scope, DeploymentScope::Project);
+        assert_eq!(contract.consumers, vec![PlatformId::Codex]);
+        assert_eq!(contract.binding_format, TargetFormat::Json);
+        assert_eq!(contract.script_format, TargetFormat::DirectoryOrFile);
+    }
+
+    #[test]
+    fn workspace_cursor_rule_does_not_claim_hermes_as_a_shared_consumer() {
+        let asset = EffectiveAsset {
+            kind: AssetKind::Rule,
+            name: "review".to_owned(),
+            source_path: Utf8PathBuf::from("/home/user/.ai-config/rules/review.mdc"),
+            layer: SourceLayer::Global,
+            fingerprint: "source-v1".to_owned(),
+        };
+        let context = TargetContext {
+            scope: DeploymentScope::Workspace,
+            deploy_base: Utf8PathBuf::from("/workspace"),
+        };
+
+        let contract = capability_contract_for(PlatformId::Cursor, &asset, &context);
+
+        assert_eq!(contract.consumers, vec![PlatformId::Cursor]);
+        assert!(matches!(
+            contract.capability,
+            PlatformCapability::DirectLink {
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn codex_user_mcp_contract_has_no_project_trust_requirement() {
+        let asset = EffectiveAsset {
+            kind: AssetKind::Mcp,
+            name: "catalog".to_owned(),
+            source_path: Utf8PathBuf::from("/repo/.ai-config/mcp/servers/catalog.json"),
+            layer: SourceLayer::Project,
+            fingerprint: "source-v1".to_owned(),
+        };
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/user"),
+        };
+
+        let contract = capability_contract_for(PlatformId::Codex, &asset, &context);
+
+        assert_eq!(contract.source.layer, SourceLayer::Project);
+        assert_eq!(contract.deployment_scope, DeploymentScope::User);
+        assert_eq!(contract.trust_requirement, TrustRequirement::None);
+        assert_eq!(
+            contract.target.as_ref().map(|target| target.path.as_str()),
+            Some("/home/user/.codex/config.toml")
+        );
+    }
+
+    #[test]
+    fn codex_command_legacy_prompt_path_is_inventory_only_not_a_target() {
+        let asset = EffectiveAsset {
+            kind: AssetKind::Command,
+            name: "review".to_owned(),
+            source_path: Utf8PathBuf::from("/home/user/.ai-config/commands/review.md"),
+            layer: SourceLayer::Global,
+            fingerprint: "source-v1".to_owned(),
+        };
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/user"),
+        };
+
+        let contract = capability_contract_for(PlatformId::Codex, &asset, &context);
+
+        assert!(contract.target.is_none());
+        assert_eq!(contract.projection_mode, None);
+        assert_eq!(contract.format, TargetFormat::None);
+        assert_eq!(contract.legacy_inventory_paths.len(), 1);
+        assert_eq!(
+            contract.legacy_inventory_paths[0].path,
+            Utf8PathBuf::from("/home/user/.codex/prompts/review.md")
+        );
+        assert_eq!(
+            contract.legacy_inventory_paths[0].status,
+            LegacyInventoryStatus::DeprecatedConsumed
+        );
     }
 
     #[test]
@@ -1115,16 +1588,7 @@ mod tests {
 
         assert_eq!(
             capability_for(PlatformId::Cursor, AssetKind::Rule, "review", &context),
-            PlatformCapability::DirectLink {
-                target: ProjectionTarget {
-                    path: Utf8PathBuf::from("/workspace/.cursor/rules/review.mdc"),
-                    entry_key: None,
-                },
-                mode: ProjectionMode::DirectLink,
-                surface: ProjectionSurface::SharedTarget {
-                    key: "cursor_hermes_rules".to_owned(),
-                },
-            }
+            direct("/workspace/.cursor/rules/review.mdc", PlatformId::Cursor,)
         );
         assert_eq!(
             capability_for(PlatformId::Claude, AssetKind::Mcp, "catalog", &context),
