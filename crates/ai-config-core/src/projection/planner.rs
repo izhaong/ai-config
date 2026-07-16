@@ -53,12 +53,84 @@ pub struct ProjectionRequest {
 /// 注入式只读依赖。账本不可读时不推断任何 generated target 属于本工具。
 pub struct PlannerContext<'a> {
     ledger: &'a dyn ProjectionLedger,
+    link_availability: LinkAvailability,
+    copy_fallback_policy: CopyFallbackPolicy,
+    copy_fallback_authorization: CopyFallbackAuthorization,
 }
 
 impl<'a> PlannerContext<'a> {
     pub fn new(ledger: &'a dyn ProjectionLedger) -> Self {
-        Self { ledger }
+        Self {
+            ledger,
+            link_availability: LinkAvailability::Available,
+            copy_fallback_policy: CopyFallbackPolicy::Never,
+            copy_fallback_authorization: CopyFallbackAuthorization::Denied,
+        }
     }
+
+    /// Copy fallback is intentionally an injected planning condition, not an executor retry.
+    /// Production callers may set `WindowsExplicit` only after the adapter has established that
+    /// this target cannot create a link and the user has explicitly authorized a copied state.
+    pub fn with_copy_fallback(
+        ledger: &'a dyn ProjectionLedger,
+        link_availability: LinkAvailability,
+        copy_fallback_policy: CopyFallbackPolicy,
+        copy_fallback_authorization: CopyFallbackAuthorization,
+    ) -> Self {
+        Self {
+            ledger,
+            link_availability,
+            copy_fallback_policy,
+            copy_fallback_authorization,
+        }
+    }
+
+    fn copy_fallback_is_authorized_for(&self, consumers: &[PlatformId]) -> bool {
+        self.link_availability == LinkAvailability::Unavailable
+            && self.copy_fallback_authorization == CopyFallbackAuthorization::Granted
+            && self.copy_fallback_policy.allows_any(consumers)
+    }
+}
+
+/// Link availability is measured before planning and injected so dry-run remains read-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkAvailability {
+    Available,
+    Unavailable,
+}
+
+/// Copying is a Windows-only escape hatch. `Never` is the default and is the only policy used
+/// unless a platform adapter explicitly opts into a Windows fallback request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CopyFallbackPolicy {
+    Never,
+    WindowsExplicit { platforms: Vec<PlatformId> },
+}
+
+impl CopyFallbackPolicy {
+    pub fn windows_explicit_for(platforms: impl IntoIterator<Item = PlatformId>) -> Self {
+        let mut platforms = platforms.into_iter().collect::<Vec<_>>();
+        platforms.sort_by_key(platform_key);
+        platforms.dedup();
+        Self::WindowsExplicit { platforms }
+    }
+
+    fn allows_any(&self, consumers: &[PlatformId]) -> bool {
+        match self {
+            Self::Never => false,
+            Self::WindowsExplicit { platforms } => consumers
+                .iter()
+                .any(|consumer| platforms.contains(consumer)),
+        }
+    }
+}
+
+/// A user confirmation is represented separately from platform policy, so policy alone can
+/// never turn a normal sync into a copy operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyFallbackAuthorization {
+    Denied,
+    Granted,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -66,6 +138,10 @@ impl<'a> PlannerContext<'a> {
 pub enum ProjectionActionKind {
     CreateLink,
     RemoveManagedLink,
+    /// Explicit Windows-only copied projection. It is never emitted as an automatic retry.
+    CopyFallback,
+    /// Removal is permitted only when the planned digest still matches the ledger proof.
+    RemoveManagedCopy,
     RemoveGeneratedEntries,
     AdoptEquivalent,
     Noop,
@@ -225,6 +301,7 @@ pub fn build_projection_plan(
                 PlatformCapability::DirectLink {
                     target,
                     mode,
+                    copy_fallback_allowed,
                     surface,
                 } => {
                     let id = projection_id(request, asset, surface);
@@ -235,6 +312,7 @@ pub fn build_projection_plan(
                             consumers: contract.consumers,
                             target,
                             mode,
+                            adapter_allows_copy_fallback: copy_fallback_allowed,
                         },
                         request.operation,
                         &mut warnings,
@@ -594,8 +672,13 @@ fn plan_hook_asset(
                         continue;
                     }
                 };
-                let (script_target, script_mode) = match script {
-                    PlatformCapability::DirectLink { target, mode, .. } => (target, mode),
+                let (script_target, script_mode, script_copy_fallback_allowed) = match script {
+                    PlatformCapability::DirectLink {
+                        target,
+                        mode,
+                        copy_fallback_allowed,
+                        ..
+                    } => (target, mode, copy_fallback_allowed),
                     _ => {
                         report_only.push(hook_report_only(
                             request,
@@ -640,6 +723,7 @@ fn plan_hook_asset(
                         consumers: contract.consumers,
                         target: script_target,
                         mode: script_mode,
+                        adapter_allows_copy_fallback: script_copy_fallback_allowed,
                     },
                     request.operation,
                     warnings,
@@ -698,6 +782,9 @@ struct DirectLinkIntent {
     consumers: Vec<PlatformId>,
     target: ProjectionTarget,
     mode: ProjectionMode,
+    /// The adapter returned a dedicated direct-link target; only that explicit contract may be
+    /// considered for a policy-authorized fallback.
+    adapter_allows_copy_fallback: bool,
 }
 
 fn plan_project_entry_prompt(
@@ -743,6 +830,7 @@ fn plan_project_entry_prompt(
                 entry_key: None,
             },
             mode: ProjectionMode::DirectLink,
+            adapter_allows_copy_fallback: false,
         },
         request.operation,
         warnings,
@@ -769,9 +857,23 @@ fn plan_direct_link(
         source_content_digest: intent.source.fingerprint.clone(),
     };
     let record = ledger_record(context, &intent.id, warnings);
-    let state = classify_projection(&expectation, &observation, record.as_ref());
+    let copy_ownership = copied_ownership(&intent, &precondition, record.as_ref());
+    let state = match copy_ownership {
+        CopiedOwnership::Current | CopiedOwnership::SourceChanged => ProjectionState::Copied,
+        CopiedOwnership::Drifted => ProjectionState::Drifted,
+        CopiedOwnership::NotCopied => {
+            classify_projection(&expectation, &observation, record.as_ref())
+        }
+    };
+    let copy_fallback_allowed = intent.adapter_allows_copy_fallback
+        && context.copy_fallback_is_authorized_for(&intent.consumers);
     let (kind, reason_code, reason) = match operation {
         ProjectionOperation::Sync => match state {
+            ProjectionState::Missing if copy_fallback_allowed => (
+                ProjectionActionKind::CopyFallback,
+                "copy_fallback_target_missing",
+                "an explicitly authorized Windows copy fallback will materialize the missing target",
+            ),
             ProjectionState::Missing => (
                 ProjectionActionKind::CreateLink,
                 "direct_target_missing",
@@ -787,13 +889,27 @@ fn plan_direct_link(
                 "equivalent_requires_explicit_adoption",
                 "equivalent unmanaged content requires explicit adoption",
             ),
+            ProjectionState::Copied if copy_ownership == CopiedOwnership::Current => (
+                ProjectionActionKind::Noop,
+                "managed_copy_noop",
+                "ledger-proven copied target still matches its recorded digest",
+            ),
+            ProjectionState::Copied if copy_fallback_allowed => (
+                ProjectionActionKind::CopyFallback,
+                "managed_copy_source_changed",
+                "an explicitly authorized Windows copy fallback will refresh the ledger-proven copy",
+            ),
+            ProjectionState::Copied => (
+                ProjectionActionKind::ReportOnly,
+                "copy_refresh_requires_explicit_authorization",
+                "a copied target may be refreshed only by a newly explicit Windows fallback plan",
+            ),
             ProjectionState::Foreign | ProjectionState::Conflict | ProjectionState::Drifted => (
                 ProjectionActionKind::ReportOnly,
                 "direct_target_conflict",
-                "target is not proven to be an owned direct link",
+                "target is not proven to be an owned direct link or unchanged copied projection",
             ),
             ProjectionState::ManagedGenerated
-            | ProjectionState::Copied
             | ProjectionState::Unsupported => (
                 ProjectionActionKind::ReportOnly,
                 "direct_target_incompatible_state",
@@ -805,6 +921,11 @@ fn plan_direct_link(
                 ProjectionActionKind::RemoveManagedLink,
                 "managed_link_retract",
                 "exact canonical link is safe to retract",
+            ),
+            ProjectionState::Copied if copy_ownership == CopiedOwnership::Current => (
+                ProjectionActionKind::RemoveManagedCopy,
+                "managed_copy_retract",
+                "ledger-proven copied target still matches its recorded digest",
             ),
             ProjectionState::Missing => (
                 ProjectionActionKind::Noop,
@@ -827,7 +948,15 @@ fn plan_direct_link(
         kind,
         target: Some(intent.target),
         precondition: Some(precondition),
-        ownership_fingerprint: None,
+        ownership_fingerprint: (matches!(kind, ProjectionActionKind::RemoveManagedCopy)
+            || (kind == ProjectionActionKind::CopyFallback
+                && copy_ownership == CopiedOwnership::SourceChanged))
+            .then(|| {
+                record
+                    .as_ref()
+                    .map(|record| record.target_fingerprint.clone())
+            })
+            .flatten(),
         generated_renderer: None,
         members: vec![ProjectionMember {
             id: intent.id,
@@ -835,10 +964,57 @@ fn plan_direct_link(
             entry_key: None,
         }],
         consumers: intent.consumers,
-        state: Some(state_name(state).to_owned()),
+        state: Some(
+            if kind == ProjectionActionKind::CopyFallback {
+                "copied"
+            } else {
+                state_name(state)
+            }
+            .to_owned(),
+        ),
         reason_code: reason_code.to_owned(),
         reason: reason.to_owned(),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopiedOwnership {
+    NotCopied,
+    Current,
+    SourceChanged,
+    Drifted,
+}
+
+/// A copied projection has no link target to prove ownership. Its proof is therefore stricter:
+/// a matching ledger ID/mode/source path plus the unchanged recorded target digest. A missing
+/// ledger entry or any target drift is intentionally never removable.
+fn copied_ownership(
+    intent: &DirectLinkIntent,
+    precondition: &PathFingerprint,
+    record: Option<&ProjectionRecord>,
+) -> CopiedOwnership {
+    let Some(record) = record else {
+        return CopiedOwnership::NotCopied;
+    };
+    if record.id != intent.id || record.mode != ProjectionMode::CopyFallback {
+        return CopiedOwnership::NotCopied;
+    }
+    if precondition.entry_type == super::model::FingerprintType::Missing {
+        return CopiedOwnership::NotCopied;
+    }
+    if !matches!(
+        precondition.entry_type,
+        super::model::FingerprintType::File | super::model::FingerprintType::Directory
+    ) || precondition.digest.as_deref() != Some(record.target_fingerprint.as_str())
+        || record.source_path != intent.source.absolute_path
+    {
+        return CopiedOwnership::Drifted;
+    }
+    if record.source_fingerprint == intent.source.fingerprint {
+        CopiedOwnership::Current
+    } else {
+        CopiedOwnership::SourceChanged
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1221,12 +1397,14 @@ fn action_kind_key(kind: ProjectionActionKind) -> u8 {
     match kind {
         ProjectionActionKind::CreateLink => 0,
         ProjectionActionKind::RemoveManagedLink => 1,
-        ProjectionActionKind::RemoveGeneratedEntries => 2,
-        ProjectionActionKind::AdoptEquivalent => 3,
-        ProjectionActionKind::UpsertGeneratedBatch => 4,
-        ProjectionActionKind::Noop => 5,
-        ProjectionActionKind::CleanupOrphan => 6,
-        ProjectionActionKind::ReportOnly => 7,
+        ProjectionActionKind::CopyFallback => 2,
+        ProjectionActionKind::RemoveManagedCopy => 3,
+        ProjectionActionKind::RemoveGeneratedEntries => 4,
+        ProjectionActionKind::AdoptEquivalent => 5,
+        ProjectionActionKind::UpsertGeneratedBatch => 6,
+        ProjectionActionKind::Noop => 7,
+        ProjectionActionKind::CleanupOrphan => 8,
+        ProjectionActionKind::ReportOnly => 9,
     }
 }
 

@@ -13,7 +13,8 @@ use ai_config_core::projection::model::{
     ProjectionRecord, SourceLayer,
 };
 use ai_config_core::projection::planner::{
-    build_projection_plan, PlannerContext, ProjectionOperation, ProjectionRequest,
+    build_projection_plan, CopyFallbackAuthorization, CopyFallbackPolicy, LinkAvailability,
+    PlannerContext, ProjectionActionKind, ProjectionOperation, ProjectionRequest,
 };
 use camino::Utf8Path;
 use tempfile::TempDir;
@@ -40,6 +41,38 @@ impl ProjectionLedger for FailingLedger {
     }
 }
 
+struct FailingLedgerWithRecord {
+    record: ProjectionRecord,
+}
+
+impl ProjectionLedger for FailingLedgerWithRecord {
+    fn get(&self, id: &ProjectionId) -> Result<Option<ProjectionRecord>, CoreError> {
+        Ok((id == &self.record.id).then(|| self.record.clone()))
+    }
+
+    fn get_many(&self, ids: &[ProjectionId]) -> Result<Vec<ProjectionRecord>, CoreError> {
+        Ok(if ids.iter().any(|id| id == &self.record.id) {
+            vec![self.record.clone()]
+        } else {
+            Vec::new()
+        })
+    }
+
+    fn list_scope(&self, scope_key: &str) -> Result<Vec<ProjectionRecord>, CoreError> {
+        Ok(if scope_key == self.record.id.scope_key {
+            vec![self.record.clone()]
+        } else {
+            Vec::new()
+        })
+    }
+
+    fn apply_batch(&self, _mutations: &[LedgerMutation]) -> Result<(), CoreError> {
+        Err(CoreError::ProjectionLedger(
+            "test ledger write failure".to_owned(),
+        ))
+    }
+}
+
 fn skill(root: &Utf8Path, name: &str) -> EffectiveAsset {
     let source_path = root.join("source/skills").join(name);
     fs::create_dir_all(source_path.as_std_path()).unwrap();
@@ -50,6 +83,19 @@ fn skill(root: &Utf8Path, name: &str) -> EffectiveAsset {
     .unwrap();
     EffectiveAsset {
         kind: AssetKind::Skill,
+        name: name.to_owned(),
+        fingerprint: path_content_digest(&source_path).unwrap(),
+        source_path,
+        layer: SourceLayer::Project,
+    }
+}
+
+fn rule(root: &Utf8Path, name: &str) -> EffectiveAsset {
+    let source_path = root.join("source/rules").join(format!("{name}.mdc"));
+    fs::create_dir_all(source_path.parent().unwrap().as_std_path()).unwrap();
+    fs::write(source_path.as_std_path(), "---\ndescription: review\n---\n").unwrap();
+    EffectiveAsset {
+        kind: AssetKind::Rule,
         name: name.to_owned(),
         fingerprint: path_content_digest(&source_path).unwrap(),
         source_path,
@@ -694,6 +740,407 @@ fn ledger_failure_restores_an_adopted_equivalent_target() {
     assert!(fs::symlink_metadata(target.as_std_path()).unwrap().is_dir());
     assert_eq!(
         fs::read_to_string(target.join("SKILL.md").as_std_path()).unwrap(),
+        "canonical skill"
+    );
+}
+
+#[test]
+fn copy_fallback_requires_policy_authorization_and_unavailable_links_before_planning() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+
+    let default_plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    assert_eq!(
+        default_plan.actions[0].kind,
+        ProjectionActionKind::CreateLink
+    );
+
+    let missing_authorization = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Denied,
+    );
+    let denied_plan = build_projection_plan(&request, &missing_authorization).unwrap();
+    assert_eq!(
+        denied_plan.actions[0].kind,
+        ProjectionActionKind::CreateLink
+    );
+
+    let available_link = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Available,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let available_plan = build_projection_plan(&request, &available_link).unwrap();
+    assert_eq!(
+        available_plan.actions[0].kind,
+        ProjectionActionKind::CreateLink
+    );
+
+    let explicit = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let copy_plan = build_projection_plan(&request, &explicit).unwrap();
+    assert_eq!(
+        copy_plan.actions[0].kind,
+        ProjectionActionKind::CopyFallback
+    );
+    assert_eq!(copy_plan.actions[0].state.as_deref(), Some("copied"));
+}
+
+#[test]
+fn explicit_copy_fallback_gates_do_not_upgrade_a_direct_target_without_adapter_permission() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = rule(root, "review");
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let fallback = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+
+    let plan = build_projection_plan(&request, &fallback).unwrap();
+
+    assert_eq!(plan.actions[0].kind, ProjectionActionKind::CreateLink);
+}
+
+#[test]
+fn explicit_copy_fallback_copies_and_only_retracts_a_ledger_proven_unchanged_target() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    fs::write(
+        asset.source_path.join("references.md").as_std_path(),
+        "copy this too",
+    )
+    .unwrap();
+    let asset = EffectiveAsset {
+        fingerprint: path_content_digest(&asset.source_path).unwrap(),
+        ..asset
+    };
+    let sync_request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset.clone()],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(sync_request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let fallback = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let sync_plan = build_projection_plan(&sync_request, &fallback).unwrap();
+    assert_eq!(
+        sync_plan.actions[0].kind,
+        ProjectionActionKind::CopyFallback
+    );
+
+    apply_projection_plan(
+        &sync_plan,
+        &ExecutorContext::new(
+            &ledger,
+            sync_request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&sync_plan),
+    )
+    .unwrap();
+
+    let target = sync_request.deploy_base.join(".agents/skills/review");
+    assert!(fs::symlink_metadata(target.as_std_path()).unwrap().is_dir());
+    assert!(!fs::symlink_metadata(target.as_std_path())
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_to_string(target.join("references.md").as_std_path()).unwrap(),
+        "copy this too"
+    );
+    let id = sync_plan.actions[0].members[0].id.clone();
+    assert_eq!(
+        ledger.get(&id).unwrap().unwrap().mode,
+        ProjectionMode::CopyFallback
+    );
+
+    let retract_request = ProjectionRequest {
+        operation: ProjectionOperation::Retract,
+        ..sync_request
+    };
+    let retract_plan =
+        build_projection_plan(&retract_request, &PlannerContext::new(&ledger)).unwrap();
+    assert_eq!(
+        retract_plan.actions[0].kind,
+        ProjectionActionKind::RemoveManagedCopy
+    );
+    apply_projection_plan(
+        &retract_plan,
+        &ExecutorContext::new(
+            &ledger,
+            retract_request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&retract_plan),
+    )
+    .unwrap();
+    assert!(fs::symlink_metadata(target.as_std_path()).is_err());
+    assert_eq!(ledger.get(&id).unwrap(), None);
+}
+
+#[test]
+fn copy_fallback_drift_is_report_only_and_never_deleted_on_retract() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let sync_request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset.clone()],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(sync_request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let fallback = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let sync_plan = build_projection_plan(&sync_request, &fallback).unwrap();
+    apply_projection_plan(
+        &sync_plan,
+        &ExecutorContext::new(
+            &ledger,
+            sync_request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&sync_plan),
+    )
+    .unwrap();
+    let target = sync_request.deploy_base.join(".agents/skills/review");
+    fs::write(target.join("user-edit.md").as_std_path(), "do not delete").unwrap();
+
+    let retract_request = ProjectionRequest {
+        operation: ProjectionOperation::Retract,
+        ..sync_request
+    };
+    let retract_plan =
+        build_projection_plan(&retract_request, &PlannerContext::new(&ledger)).unwrap();
+    assert_eq!(
+        retract_plan.actions[0].kind,
+        ProjectionActionKind::ReportOnly
+    );
+    assert_eq!(retract_plan.actions[0].state.as_deref(), Some("drifted"));
+    assert!(apply_projection_plan(
+        &retract_plan,
+        &ExecutorContext::new(
+            &ledger,
+            retract_request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&retract_plan),
+    )
+    .is_err());
+    assert_eq!(
+        fs::read_to_string(target.join("user-edit.md").as_std_path()).unwrap(),
+        "do not delete"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn copy_fallback_rejects_a_source_tree_containing_a_symlink_without_creating_the_target() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let outside = root.join("outside.txt");
+    fs::write(outside.as_std_path(), "must not be followed").unwrap();
+    std::os::unix::fs::symlink(
+        outside.as_std_path(),
+        asset.source_path.join("outside-link").as_std_path(),
+    )
+    .unwrap();
+    let asset = EffectiveAsset {
+        fingerprint: path_content_digest(&asset.source_path).unwrap(),
+        ..asset
+    };
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let fallback = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let plan = build_projection_plan(&request, &fallback).unwrap();
+    let target = request.deploy_base.join(".agents/skills/review");
+
+    let result = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    );
+
+    assert!(result.is_err());
+    assert!(fs::symlink_metadata(target.as_std_path()).is_err());
+    assert_eq!(ledger.get(&plan.actions[0].members[0].id).unwrap(), None);
+}
+
+#[test]
+fn ledger_failure_rolls_back_a_new_copy_fallback_without_a_partial_record() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = FailingLedger;
+    let fallback = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let plan = build_projection_plan(&request, &fallback).unwrap();
+    let target = request.deploy_base.join(".agents/skills/review");
+
+    let failure = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap_err();
+
+    assert_eq!(failure.report.rolled_back, 1);
+    assert!(fs::symlink_metadata(target.as_std_path()).is_err());
+    assert_eq!(ledger.get(&plan.actions[0].members[0].id).unwrap(), None);
+}
+
+#[test]
+fn ledger_failure_restores_the_old_copied_target_during_a_copy_refresh() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset.clone()],
+        platforms: vec![PlatformId::Cursor],
+    };
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let fallback = PlannerContext::with_copy_fallback(
+        &ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let initial_plan = build_projection_plan(&request, &fallback).unwrap();
+    apply_projection_plan(
+        &initial_plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&initial_plan),
+    )
+    .unwrap();
+    let id = initial_plan.actions[0].members[0].id.clone();
+    let initial_record = ledger.get(&id).unwrap().unwrap();
+    let target = request.deploy_base.join(".agents/skills/review/SKILL.md");
+    assert_eq!(
+        fs::read_to_string(target.as_std_path()).unwrap(),
+        "canonical skill"
+    );
+
+    fs::write(
+        asset.source_path.join("SKILL.md").as_std_path(),
+        "new source body",
+    )
+    .unwrap();
+    let refreshed_asset = EffectiveAsset {
+        fingerprint: path_content_digest(&asset.source_path).unwrap(),
+        ..asset
+    };
+    let refresh_request = ProjectionRequest {
+        assets: vec![refreshed_asset],
+        ..request
+    };
+    let failing_ledger = FailingLedgerWithRecord {
+        record: initial_record,
+    };
+    let refresh_fallback = PlannerContext::with_copy_fallback(
+        &failing_ledger,
+        LinkAvailability::Unavailable,
+        CopyFallbackPolicy::windows_explicit_for([PlatformId::Cursor]),
+        CopyFallbackAuthorization::Granted,
+    );
+    let refresh_plan = build_projection_plan(&refresh_request, &refresh_fallback).unwrap();
+    assert_eq!(
+        refresh_plan.actions[0].kind,
+        ProjectionActionKind::CopyFallback
+    );
+
+    let failure = apply_projection_plan(
+        &refresh_plan,
+        &ExecutorContext::new(
+            &failing_ledger,
+            refresh_request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&refresh_plan),
+    )
+    .unwrap_err();
+
+    assert_eq!(failure.report.rolled_back, 1);
+    assert_eq!(
+        fs::read_to_string(target.as_std_path()).unwrap(),
         "canonical skill"
     );
 }

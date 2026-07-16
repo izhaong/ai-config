@@ -92,6 +92,9 @@ pub enum PlatformCapability {
     DirectLink {
         target: ProjectionTarget,
         mode: ProjectionMode,
+        /// Direct-link capability alone is not permission to copy. Only explicitly reviewed
+        /// platform targets may opt into a Windows fallback plan.
+        copy_fallback_allowed: bool,
         surface: ProjectionSurface,
     },
     ExternalDirectory {
@@ -148,6 +151,7 @@ pub fn capability_for(
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: true,
                 surface: ProjectionSurface::SharedTarget {
                     key: "agents_skills".to_owned(),
                 },
@@ -159,6 +163,7 @@ pub fn capability_for(
                 entry_key: None,
             },
             mode: ProjectionMode::DirectLink,
+            copy_fallback_allowed: true,
             surface: ProjectionSurface::Platform(PlatformId::Claude),
         },
         (PlatformId::Hermes, AssetKind::Skill) if context.scope == DeploymentScope::User => {
@@ -191,6 +196,7 @@ pub fn capability_for(
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: false,
                 surface: ProjectionSurface::SharedTarget {
                     key: "cursor_hermes_rules".to_owned(),
                 },
@@ -206,6 +212,7 @@ pub fn capability_for(
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: false,
                 surface: ProjectionSurface::Platform(PlatformId::Cursor),
             }
         }
@@ -219,6 +226,7 @@ pub fn capability_for(
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: false,
                 surface: ProjectionSurface::SharedTarget {
                     key: "cursor_hermes_rules".to_owned(),
                 },
@@ -325,6 +333,7 @@ pub fn capability_for(
                 entry_key: None,
             },
             mode: ProjectionMode::DirectLink,
+            copy_fallback_allowed: false,
             surface: ProjectionSurface::Platform(PlatformId::Cursor),
         },
         (PlatformId::Claude, AssetKind::Command) => PlatformCapability::DirectLink {
@@ -336,6 +345,7 @@ pub fn capability_for(
                 entry_key: None,
             },
             mode: ProjectionMode::DirectLink,
+            copy_fallback_allowed: false,
             surface: ProjectionSurface::Platform(PlatformId::Claude),
         },
         (PlatformId::Hermes, AssetKind::Command) => PlatformCapability::Unsupported {
@@ -632,6 +642,7 @@ pub fn hook_capability_for(
                 entry_key: None,
             },
             mode: ProjectionMode::DirectLink,
+            copy_fallback_allowed: false,
             surface: ProjectionSurface::Platform(platform),
         },
     }
@@ -861,6 +872,7 @@ mod tests {
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: true,
                 surface: ProjectionSurface::SharedTarget {
                     key: "agents_skills".to_owned(),
                 },
@@ -896,6 +908,7 @@ mod tests {
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: true,
                 surface: ProjectionSurface::Platform(PlatformId::Claude),
             }
         );
@@ -979,6 +992,7 @@ mod tests {
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: false,
                 surface: ProjectionSurface::SharedTarget {
                     key: "cursor_hermes_rules".to_owned(),
                 },
@@ -1276,6 +1290,7 @@ mod tests {
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: false,
                 surface: ProjectionSurface::Platform(PlatformId::Cursor),
             }
         );
@@ -1296,6 +1311,7 @@ mod tests {
                     entry_key: None,
                 },
                 mode: ProjectionMode::DirectLink,
+                copy_fallback_allowed: false,
                 surface: ProjectionSurface::Platform(PlatformId::Claude),
             }
         );
@@ -1340,6 +1356,7 @@ mod tests {
                         entry_key: None,
                     },
                     mode: ProjectionMode::DirectLink,
+                    copy_fallback_allowed: false,
                     surface: ProjectionSurface::Platform(PlatformId::Cursor),
                 },
             }
@@ -1370,6 +1387,7 @@ mod tests {
                         entry_key: None,
                     },
                     mode: ProjectionMode::DirectLink,
+                    copy_fallback_allowed: false,
                     surface: ProjectionSurface::Platform(PlatformId::Codex),
                 },
             }
@@ -1400,6 +1418,7 @@ mod tests {
                         entry_key: None,
                     },
                     mode: ProjectionMode::DirectLink,
+                    copy_fallback_allowed: false,
                     surface: ProjectionSurface::Platform(PlatformId::Claude),
                 },
             }
@@ -1434,6 +1453,7 @@ mod tests {
                         entry_key: None,
                     },
                     mode: ProjectionMode::DirectLink,
+                    copy_fallback_allowed: false,
                     surface: ProjectionSurface::Platform(PlatformId::Hermes),
                 },
             }
@@ -1622,6 +1642,7 @@ mod tests {
                 entry_key: None,
             },
             mode: ProjectionMode::DirectLink,
+            copy_fallback_allowed: false,
             surface: ProjectionSurface::Platform(platform),
         }
     }

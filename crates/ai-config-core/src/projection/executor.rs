@@ -207,12 +207,29 @@ enum FileUndo {
         source: Utf8PathBuf,
         backup: Utf8PathBuf,
     },
+    RemoveCopied {
+        target: Utf8PathBuf,
+        digest: String,
+        created_parents: Vec<Utf8PathBuf>,
+    },
+    RestoreCopiedBackup {
+        target: Utf8PathBuf,
+        digest: String,
+        backup: Utf8PathBuf,
+    },
 }
 
 struct CreatedLink {
     target: Utf8PathBuf,
     source: Utf8PathBuf,
     created_parents: Vec<Utf8PathBuf>,
+}
+
+struct CreatedCopy {
+    target: Utf8PathBuf,
+    digest: String,
+    created_parents: Vec<Utf8PathBuf>,
+    replaced_backup: Option<Utf8PathBuf>,
 }
 
 struct SafeParent {
@@ -338,7 +355,41 @@ pub fn apply_projection_plan(
                     report.set_status(index, ApplyActionStatus::Applied);
                     Ok(())
                 }),
-            ProjectionActionKind::Noop => direct_record_mutation(action).map(|mutation| {
+            ProjectionActionKind::CopyFallback => {
+                apply_copy_fallback(action, context).and_then(|created| {
+                    mutations.push(copy_record_mutation(action)?);
+                    let undo_operation = match created.replaced_backup {
+                        Some(backup) => FileUndo::RestoreCopiedBackup {
+                            target: created.target,
+                            digest: created.digest,
+                            backup,
+                        },
+                        None => FileUndo::RemoveCopied {
+                            target: created.target,
+                            digest: created.digest,
+                            created_parents: created.created_parents,
+                        },
+                    };
+                    undo.push((index, undo_operation));
+                    report.set_status(index, ApplyActionStatus::Applied);
+                    Ok(())
+                })
+            }
+            ProjectionActionKind::RemoveManagedCopy => apply_remove_managed_copy(action, context)
+                .and_then(|removed| {
+                    mutations.push(LedgerMutation::Remove(direct_member_id(action)?));
+                    undo.push((
+                        index,
+                        FileUndo::RestoreCopiedBackup {
+                            target: removed.0,
+                            digest: removed.1,
+                            backup: removed.2,
+                        },
+                    ));
+                    report.set_status(index, ApplyActionStatus::Applied);
+                    Ok(())
+                }),
+            ProjectionActionKind::Noop => record_mutation_for_action(action).map(|mutation| {
                 mutations.push(mutation);
                 report.set_status(index, ApplyActionStatus::Unchanged);
             }),
@@ -608,6 +659,139 @@ fn apply_adopt_equivalent(
     Ok((target.path.clone(), source.clone(), backup))
 }
 
+/// Materialize an explicitly planned copy without following any source symlink. This is not a
+/// fallback inside link creation: the action kind and the reviewed plan both make the copied
+/// state visible before any bytes are written.
+fn apply_copy_fallback(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<CreatedCopy, CoreError> {
+    let target = action
+        .target
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("CopyFallback action has no target".to_owned()))?;
+    let source = action
+        .members
+        .first()
+        .map(|member| &member.source.absolute_path)
+        .ok_or_else(|| {
+            CoreError::InvalidPath("CopyFallback action has no source member".to_owned())
+        })?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let expected = action.precondition.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("CopyFallback action has no target precondition".to_owned())
+    })?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected {
+        return Err(CoreError::InvalidPath(
+            "projection target changed after the plan was created".to_owned(),
+        ));
+    }
+    let replacing_proven_copy = action.state.as_deref() == Some("copied")
+        && action.kind == ProjectionActionKind::CopyFallback;
+    if actual.entry_type != super::model::FingerprintType::Missing && !replacing_proven_copy {
+        return Err(CoreError::InvalidPath(
+            "CopyFallback may only create a missing target or refresh a ledger-proven copy"
+                .to_owned(),
+        ));
+    }
+    if actual.entry_type != super::model::FingerprintType::Missing
+        && action.ownership_fingerprint.as_deref() != actual.digest.as_deref()
+    {
+        return Err(CoreError::InvalidPath(
+            "CopyFallback refresh requires a matching ledger ownership digest".to_owned(),
+        ));
+    }
+    if !source.exists() {
+        return Err(CoreError::ConfigNotFound {
+            path: source.to_string(),
+            hint: "重新生成投影计划，确认 canonical source 仍存在".to_owned(),
+        });
+    }
+    ensure_source_matches_plan(action, source)?;
+
+    let parent = ensure_safe_target_parent(&target.path, &context.deploy_base)?;
+    let temporary = copy_temporary_path(&parent.path, &target.path)?;
+    if let Err(error) = copy_path_without_symlinks(source, &temporary) {
+        let _ = remove_copied_path(&temporary, None);
+        return Err(error);
+    }
+    let copied = path_fingerprint(&temporary)?;
+    let digest = copied.digest.ok_or_else(|| {
+        CoreError::InvalidPath("temporary copied target has no digest".to_owned())
+    })?;
+
+    if actual.entry_type == super::model::FingerprintType::Missing {
+        if let Err(error) = fs::rename(temporary.as_std_path(), target.path.as_std_path()) {
+            let _ = remove_copied_path(&temporary, None);
+            return Err(CoreError::Io(error));
+        }
+        return Ok(CreatedCopy {
+            target: target.path.clone(),
+            digest,
+            created_parents: parent.created_parents,
+            replaced_backup: None,
+        });
+    }
+
+    let backup = allocate_backup_path(&context.backup_root, &target.path)?;
+    write_backup_manifest(&backup, &target.path, expected)?;
+    fs::rename(target.path.as_std_path(), backup.as_std_path())?;
+    if let Err(error) = fs::rename(temporary.as_std_path(), target.path.as_std_path()) {
+        let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        let _ = remove_copied_path(&temporary, None);
+        return Err(CoreError::Io(error));
+    }
+    Ok(CreatedCopy {
+        target: target.path.clone(),
+        digest,
+        created_parents: parent.created_parents,
+        replaced_backup: Some(backup),
+    })
+}
+
+/// A copied target is never unlinked by shape alone. The planner puts the ledger target digest
+/// in `ownership_fingerprint`; apply verifies it again immediately before moving it to backup.
+fn apply_remove_managed_copy(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<(Utf8PathBuf, String, Utf8PathBuf), CoreError> {
+    let target = action.target.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("RemoveManagedCopy action has no target".to_owned())
+    })?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let expected = action.precondition.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("RemoveManagedCopy action has no target precondition".to_owned())
+    })?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected {
+        return Err(CoreError::InvalidPath(
+            "projection target changed after the plan was created".to_owned(),
+        ));
+    }
+    if !matches!(
+        actual.entry_type,
+        super::model::FingerprintType::File | super::model::FingerprintType::Directory
+    ) {
+        return Err(CoreError::InvalidPath(
+            "RemoveManagedCopy may only remove a regular file or directory".to_owned(),
+        ));
+    }
+    let digest = actual.digest.clone().ok_or_else(|| {
+        CoreError::InvalidPath("RemoveManagedCopy target has no digest".to_owned())
+    })?;
+    if action.ownership_fingerprint.as_deref() != Some(digest.as_str()) {
+        return Err(CoreError::InvalidPath(
+            "RemoveManagedCopy requires a matching ledger ownership digest".to_owned(),
+        ));
+    }
+    ensure_path_has_no_symlinks(&target.path)?;
+    let backup = allocate_backup_path(&context.backup_root, &target.path)?;
+    write_backup_manifest(&backup, &target.path, expected)?;
+    fs::rename(target.path.as_std_path(), backup.as_std_path())?;
+    Ok((target.path.clone(), digest, backup))
+}
+
 fn ensure_source_matches_plan(
     action: &ProjectionAction,
     source: &Utf8Path,
@@ -621,6 +805,139 @@ fn ensure_source_matches_plan(
             "canonical source changed after the plan was created".to_owned(),
         ));
     }
+    Ok(())
+}
+
+fn copy_temporary_path(parent: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathBuf, CoreError> {
+    let filename = target
+        .file_name()
+        .ok_or_else(|| CoreError::InvalidPath("projection target has no file name".to_owned()))?;
+    let sequence = TEMP_LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    Ok(parent.join(format!(".{filename}.ai-config-copy-{sequence}.tmp")))
+}
+
+/// Copy only regular files/directories. In particular, never flatten or follow a symlink inside
+/// a canonical tree: on Windows that would silently copy data outside the approved source.
+fn copy_path_without_symlinks(source: &Utf8Path, destination: &Utf8Path) -> Result<(), CoreError> {
+    let metadata = fs::symlink_metadata(source.as_std_path())?;
+    if metadata.file_type().is_symlink() {
+        return Err(CoreError::InvalidPath(
+            "CopyFallback rejects symlinked canonical sources".to_owned(),
+        ));
+    }
+    if metadata.is_file() {
+        fs::copy(source.as_std_path(), destination.as_std_path())?;
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Err(CoreError::InvalidPath(
+            "CopyFallback source must be a regular file or directory".to_owned(),
+        ));
+    }
+    fs::create_dir(destination.as_std_path())?;
+    copy_directory_without_symlinks(source, destination)
+}
+
+fn copy_directory_without_symlinks(
+    source: &Utf8Path,
+    destination: &Utf8Path,
+) -> Result<(), CoreError> {
+    for entry in fs::read_dir(source.as_std_path())? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let source_child = source.join(name.as_ref());
+        let destination_child = destination.join(name.as_ref());
+        let metadata = fs::symlink_metadata(source_child.as_std_path())?;
+        if metadata.file_type().is_symlink() {
+            return Err(CoreError::InvalidPath(
+                "CopyFallback rejects source trees containing symlinks".to_owned(),
+            ));
+        }
+        if metadata.is_dir() {
+            fs::create_dir(destination_child.as_std_path())?;
+            copy_directory_without_symlinks(&source_child, &destination_child)?;
+        } else if metadata.is_file() {
+            fs::copy(source_child.as_std_path(), destination_child.as_std_path())?;
+        } else {
+            return Err(CoreError::InvalidPath(
+                "CopyFallback source tree contains a non-regular entry".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_path_has_no_symlinks(path: &Utf8Path) -> Result<(), CoreError> {
+    let metadata = fs::symlink_metadata(path.as_std_path())?;
+    if metadata.file_type().is_symlink() {
+        return Err(CoreError::InvalidPath(
+            "CopyFallback target contains a symlink".to_owned(),
+        ));
+    }
+    if metadata.is_file() {
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Err(CoreError::InvalidPath(
+            "CopyFallback target is not a regular file or directory".to_owned(),
+        ));
+    }
+    for entry in fs::read_dir(path.as_std_path())? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let child = path.join(name.to_string_lossy().as_ref());
+        ensure_path_has_no_symlinks(&child)?;
+    }
+    Ok(())
+}
+
+/// Remove a known copied path without ever following a symlink. If an expected digest is given,
+/// the final target must still match it; this makes rollback fail closed under concurrent edits.
+fn remove_copied_path(path: &Utf8Path, expected_digest: Option<&str>) -> Result<(), CoreError> {
+    let fingerprint = path_fingerprint(path)?;
+    if let Some(expected_digest) = expected_digest {
+        if fingerprint.digest.as_deref() != Some(expected_digest) {
+            return Err(CoreError::InvalidPath(
+                "copied target changed before safe removal".to_owned(),
+            ));
+        }
+    }
+    ensure_path_has_no_symlinks(path)?;
+    if fingerprint.entry_type == super::model::FingerprintType::File {
+        fs::remove_file(path.as_std_path())?;
+    } else if fingerprint.entry_type == super::model::FingerprintType::Directory {
+        remove_directory_without_symlinks(path)?;
+    } else {
+        return Err(CoreError::InvalidPath(
+            "copied target is not removable as a regular file or directory".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn remove_directory_without_symlinks(path: &Utf8Path) -> Result<(), CoreError> {
+    for entry in fs::read_dir(path.as_std_path())? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let child = path.join(name.to_string_lossy().as_ref());
+        let metadata = fs::symlink_metadata(child.as_std_path())?;
+        if metadata.file_type().is_symlink() {
+            return Err(CoreError::InvalidPath(
+                "CopyFallback refuses to remove a tree containing symlinks".to_owned(),
+            ));
+        }
+        if metadata.is_dir() {
+            remove_directory_without_symlinks(&child)?;
+        } else if metadata.is_file() {
+            fs::remove_file(child.as_std_path())?;
+        } else {
+            return Err(CoreError::InvalidPath(
+                "CopyFallback target tree contains a non-regular entry".to_owned(),
+            ));
+        }
+    }
+    fs::remove_dir(path.as_std_path())?;
     Ok(())
 }
 
@@ -668,7 +985,27 @@ fn direct_member_id(action: &ProjectionAction) -> Result<super::model::Projectio
         .ok_or_else(|| CoreError::InvalidPath("direct-link action has no source member".to_owned()))
 }
 
+fn record_mutation_for_action(action: &ProjectionAction) -> Result<LedgerMutation, CoreError> {
+    let mode = if action.state.as_deref() == Some("copied") {
+        ProjectionMode::CopyFallback
+    } else {
+        ProjectionMode::DirectLink
+    };
+    record_mutation(action, mode)
+}
+
 fn direct_record_mutation(action: &ProjectionAction) -> Result<LedgerMutation, CoreError> {
+    record_mutation(action, ProjectionMode::DirectLink)
+}
+
+fn copy_record_mutation(action: &ProjectionAction) -> Result<LedgerMutation, CoreError> {
+    record_mutation(action, ProjectionMode::CopyFallback)
+}
+
+fn record_mutation(
+    action: &ProjectionAction,
+    mode: ProjectionMode,
+) -> Result<LedgerMutation, CoreError> {
     let target = action
         .target
         .as_ref()
@@ -682,7 +1019,7 @@ fn direct_record_mutation(action: &ProjectionAction) -> Result<LedgerMutation, C
     })?;
     Ok(LedgerMutation::Upsert(ProjectionRecord {
         id: member.id.clone(),
-        mode: ProjectionMode::DirectLink,
+        mode,
         source_path: member.source.absolute_path.clone(),
         target_path: target.path.clone(),
         entry_key: None,
@@ -765,6 +1102,42 @@ fn rollback(undo: &[(usize, FileUndo)], context: &ExecutorContext<'_>) -> Vec<(u
                     } else {
                         false
                     }
+                } else {
+                    false
+                }
+            }
+            FileUndo::RemoveCopied {
+                target,
+                digest,
+                created_parents,
+            } => {
+                let removed = remove_copied_path(target, Some(digest)).is_ok();
+                if removed {
+                    for parent in created_parents.iter().rev() {
+                        let is_empty = fs::read_dir(parent.as_std_path())
+                            .ok()
+                            .and_then(|mut entries| entries.next())
+                            .is_none();
+                        if is_empty {
+                            let _ = fs::remove_dir(parent.as_std_path());
+                        }
+                    }
+                }
+                removed
+            }
+            FileUndo::RestoreCopiedBackup {
+                target,
+                digest,
+                backup,
+            } => {
+                if remove_copied_path(target, Some(digest)).is_ok()
+                    && path_fingerprint(target)
+                        .map(|fingerprint| {
+                            fingerprint.entry_type == super::model::FingerprintType::Missing
+                        })
+                        .unwrap_or(false)
+                {
+                    fs::rename(backup.as_std_path(), target.as_std_path()).is_ok()
                 } else {
                     false
                 }
