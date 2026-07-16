@@ -43,45 +43,41 @@ fn cmd(home: &Path, root: &Path) -> Command {
 }
 
 #[test]
-fn deploy_copies_mcp_json_to_platform() {
+fn deploy_refuses_legacy_write_without_creating_platform_file() {
     let (home, root) = setup();
     let cursor_mcp = home.path().join(".cursor").join("mcp.json");
+    let source = root.path().join("mcp.json");
+    let source_before = fs::read(&source).expect("read source before");
     assert!(!cursor_mcp.exists());
 
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "cursor"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
-    let content = fs::read_to_string(&cursor_mcp).expect("mcp.json created");
-    let v: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
-    let mcp = v["mcpServers"].as_object().expect("mcpServers object");
-    assert!(mcp.contains_key("minio"));
-    assert_eq!(
-        mcp["minio"]["env"]["ENDPOINT"].as_str().unwrap(),
-        "minio.example.com:443"
+    assert!(
+        !cursor_mcp.exists(),
+        "deploy must not materialize legacy MCP"
     );
+    assert_eq!(fs::read(source).unwrap(), source_before);
 }
 
 #[test]
 fn retract_preserves_platform_mcp_without_ownership_evidence() {
     let (home, root) = setup();
     let cursor_mcp = home.path().join(".cursor").join("mcp.json");
-
-    cmd(home.path(), root.path())
-        .args(["mcp", "deploy", "minio", "cursor"])
-        .assert()
-        .success();
-    assert!(cursor_mcp.exists());
+    let before = r#"{"mcpServers":{"minio":{"command":"docker"}}}"#;
+    fs::write(&cursor_mcp, before).unwrap();
 
     cmd(home.path(), root.path())
         .args(["mcp", "retract", "minio", "cursor"])
         .assert()
-        .failure();
+        .failure()
+        .code(2);
 
     let raw = fs::read_to_string(&cursor_mcp).expect("platform mcp.json preserved");
-    let v: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-    assert!(v["mcpServers"].get("minio").is_some());
+    assert_eq!(raw, before);
 }
 
 #[test]
@@ -182,9 +178,10 @@ fn deploy_does_not_touch_other_platforms() {
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "cursor"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
-    assert!(cursor_mcp.exists());
+    assert!(!cursor_mcp.exists());
     let codex_after = fs::read_to_string(&codex_mcp).unwrap();
     assert_eq!(codex_after, codex_before);
 }
@@ -202,20 +199,18 @@ fn deploy_merges_into_existing_platform_mcp_json() {
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "cursor"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
     let v: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&cursor_mcp).unwrap()).unwrap();
     let mcp = v["mcpServers"].as_object().unwrap();
-    assert!(mcp.contains_key("minio"));
-    assert!(
-        mcp.contains_key("user-thing"),
-        "per-server deploy must preserve other platform entries"
-    );
+    assert!(!mcp.contains_key("minio"));
+    assert!(mcp.contains_key("user-thing"));
 }
 
 #[test]
-fn deploy_hermes_writes_config_yaml_preserving_other_keys() {
+fn deploy_hermes_refuses_legacy_write_preserving_other_keys() {
     let (home, root) = setup();
     let hermes_dir = home.path().join(".hermes");
     fs::create_dir_all(&hermes_dir).unwrap();
@@ -225,13 +220,11 @@ fn deploy_hermes_writes_config_yaml_preserving_other_keys() {
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "hermes"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
     let content = fs::read_to_string(&config_yaml).expect("config.yaml updated");
-    assert!(content.contains("model: gpt-test"));
-    assert!(content.contains("mcp_servers:"));
-    assert!(content.contains("minio:"));
-    assert!(content.contains("minio.example.com:443"));
+    assert_eq!(content, "model: gpt-test\n");
 }
 
 #[test]
@@ -240,21 +233,17 @@ fn retract_hermes_preserves_server_without_ownership_evidence() {
     let hermes_dir = home.path().join(".hermes");
     fs::create_dir_all(&hermes_dir).unwrap();
     let config_yaml = hermes_dir.join("config.yaml");
-    fs::write(&config_yaml, "model: gpt-test\n").unwrap();
-
-    cmd(home.path(), root.path())
-        .args(["mcp", "deploy", "minio", "hermes"])
-        .assert()
-        .success();
+    let before = "model: gpt-test\nmcp_servers:\n  minio:\n    command: docker\n";
+    fs::write(&config_yaml, before).unwrap();
 
     cmd(home.path(), root.path())
         .args(["mcp", "retract", "minio", "hermes"])
         .assert()
-        .failure();
+        .failure()
+        .code(2);
 
     let content = fs::read_to_string(&config_yaml).expect("config.yaml still exists");
-    assert!(content.contains("model: gpt-test"));
-    assert!(content.contains("minio:"));
+    assert_eq!(content, before);
 }
 
 #[test]

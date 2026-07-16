@@ -1,29 +1,19 @@
 //! `ai-config mcp ...` 子命令(PRD §4.2 / §5.1 / §10 A-7 / A-8 / A-15)。
 //!
-//! 关键约束:
-//! - **per-item × per-platform**(§4.2):每条 server × 4 平台 — `add` / `remove` /
-//!   `enable` / `disable` 影响 `mcp/servers/<name>.json`;`deploy <name> <to>` /
-//!   `retract <name> <from>` 只渲染/移除**该** server 到/从**该**平台 mcp.json
-//!   (不触其它条目,保留用户手写)。
-//! - **A-7** 加 server → 4 份 mcp.json 一致(在 4 平台都 deploy 的话)
-//! - **A-8** 删 server → 4 份 mcp.json 不残留(retract 全部 → 4 份都清干净)
-//! - **A-15** 单条 deploy/retract 不影响其它条目:这是本模块最核心的不变量,见
-//!   `deploy_one_internal` / `retract_one_internal` 的实现。
+//! T007 安全边界：source-first per-server CRUD 与 generated executor 就绪前，
+//! `add` / `remove` / `enable` / `disable` / `deploy` / `retract` 一律 fail-closed。
+//! 仅 `list` / `show` 和 migration 的 `--dry-run` 可读取现有状态。
 
-use std::io::{self, IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::mcp_json;
-use ai_config_core::model::{McpServer, McpTransport, PlatformId};
+use ai_config_core::model::McpServer;
 use ai_config_core::paths;
-use ai_config_core::platform;
 use ai_config_core::projection::mcp::source::load_mcp_definitions;
-use ai_config_core::source;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
@@ -43,12 +33,12 @@ pub enum McpCmd {
     Disable {
         name: String,
     },
-    /// 单条 × 单平台下发(PRD §4.2 + §10 A-15)
+    /// 兼容保留的旧写入口；T007 期间一律拒绝。
     Deploy {
         name: String,
         to: String,
     },
-    /// 单条 × 单平台收回(PRD §4.2 + §10 A-15)
+    /// 兼容保留的旧写入口；T007 期间一律拒绝。
     Retract {
         name: String,
         from: String,
@@ -76,24 +66,27 @@ impl McpCmd {
         match self {
             McpCmd::List => run_list(mode, default_root),
             McpCmd::Show { name } => run_show(mode, default_root, &name),
-            McpCmd::Add => run_add(mode, default_root),
-            McpCmd::Remove { name } => run_remove(mode, default_root, &name),
-            McpCmd::Enable { name } => run_set_enabled(mode, default_root, &name, true),
-            McpCmd::Disable { name } => run_set_enabled(mode, default_root, &name, false),
-            McpCmd::Deploy { name, to } => match parse_platform(&to) {
-                Ok(plat) => run_deploy(mode, default_root, &name, plat),
-                Err(e) => {
-                    emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                    ExitCode::from(exit_code::ARG_ERROR)
-                }
-            },
-            McpCmd::Retract { name, from } => match parse_platform(&from) {
-                Ok(plat) => run_retract(mode, default_root, &name, plat),
-                Err(e) => {
-                    emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                    ExitCode::from(exit_code::ARG_ERROR)
-                }
-            },
+            McpCmd::Add => refuse_legacy_write(mode, "add"),
+            McpCmd::Remove { name } => {
+                let _ = name;
+                refuse_legacy_write(mode, "remove")
+            }
+            McpCmd::Enable { name } => {
+                let _ = name;
+                refuse_legacy_write(mode, "enable")
+            }
+            McpCmd::Disable { name } => {
+                let _ = name;
+                refuse_legacy_write(mode, "disable")
+            }
+            McpCmd::Deploy { name, to } => {
+                let _ = (name, to);
+                refuse_legacy_write(mode, "deploy")
+            }
+            McpCmd::Retract { name, from } => {
+                let _ = (name, from);
+                refuse_legacy_write(mode, "retract")
+            }
             McpCmd::Migrate { source, dry_run } => {
                 run_migrate(mode, default_root, source.as_deref(), dry_run)
             }
@@ -167,162 +160,18 @@ fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-// ── add / remove / enable / disable ─────────────────────────────
+// ── legacy writes: fail closed until source-first CRUD + executor exists ──
 
-fn run_add(mode: OutputMode, root: &Utf8Path) -> ExitCode {
-    let stdin = io::stdin();
-    let parsed = if stdin.is_terminal() {
-        match add_interactive() {
-            Ok(p) => p,
-            Err(e) => {
-                emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                return ExitCode::from(exit_code::ARG_ERROR);
-            }
-        }
-    } else {
-        match add_from_stdin() {
-            Ok(p) => p,
-            Err(e) => {
-                emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                return ExitCode::from(exit_code::ARG_ERROR);
-            }
-        }
-    };
-    let (name, transport, _enabled, config) = parsed;
-    if let Err(e) = upsert_server(root, &name, &config) {
-        emit_error_envelope(mode, exit_code::FS_ERROR, &e.to_string(), None);
-        return ExitCode::from(exit_code::FS_ERROR);
-    }
-    if mode.is_json() {
-        emit_json(
-            mode,
-            &serde_json::json!({
-                "ok": true,
-                "action": "add",
-                "name": name,
-                "transport": transport,
-            }),
-        );
-    } else {
-        emit_line(mode, format!("mcp `{name}` 已写入 mcp.json"));
-    }
-    ExitCode::SUCCESS
-}
-
-fn add_interactive() -> Result<(String, McpTransport, bool, Value), String> {
-    let name = prompt_required("server name")?;
-    let transport_raw = prompt_optional("transport (stdio|http|sse)", "stdio")?;
-    let command = prompt_optional("command (e.g. uvx)", "")?;
-    let args_raw = prompt_optional("args (逗号分隔,留空跳过)", "")?;
-    let env_raw = prompt_optional("env (KEY=VAL, 逗号分隔, 留空跳过)", "")?;
-    let enabled_raw = prompt_optional("enabled (y/n, 默认 y)", "y")?;
-    let enabled = !enabled_raw.trim().eq_ignore_ascii_case("n");
-
-    let transport = match transport_raw.to_ascii_lowercase().as_str() {
-        "stdio" => McpTransport::Stdio,
-        "http" => McpTransport::Http,
-        "sse" => McpTransport::Sse,
-        other => return Err(format!("未知 transport: {other}")),
-    };
-
-    let args: Vec<String> = if args_raw.trim().is_empty() {
-        vec![]
-    } else {
-        args_raw.split(',').map(|s| s.trim().to_string()).collect()
-    };
-    let env: Map<String, Value> = if env_raw.trim().is_empty() {
-        Map::new()
-    } else {
-        let mut m = Map::new();
-        for kv in env_raw.split(',') {
-            let kv = kv.trim();
-            if let Some((k, v)) = kv.split_once('=') {
-                m.insert(k.trim().to_string(), Value::String(v.trim().to_string()));
-            }
-        }
-        m
-    };
-
-    let mut config = Map::new();
-    if !command.trim().is_empty() {
-        config.insert(
-            "command".to_string(),
-            Value::String(command.trim().to_string()),
-        );
-    }
-    if !args.is_empty() {
-        config.insert(
-            "args".to_string(),
-            Value::Array(args.into_iter().map(Value::String).collect()),
-        );
-    }
-    if !env.is_empty() {
-        config.insert("env".to_string(), Value::Object(env));
-    }
-    Ok((name, transport, enabled, Value::Object(config)))
-}
-
-fn add_from_stdin() -> Result<(String, McpTransport, bool, Value), String> {
-    let mut buf = String::new();
-    io::stdin()
-        .read_to_string(&mut buf)
-        .map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&buf).map_err(|e| e.to_string())?;
-    let name = v
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "stdin JSON 缺 `name` 字段".to_string())?
-        .to_string();
-    let transport = match v
-        .get("transport")
-        .and_then(Value::as_str)
-        .unwrap_or("stdio")
-    {
-        "stdio" => McpTransport::Stdio,
-        "http" => McpTransport::Http,
-        "sse" => McpTransport::Sse,
-        other => return Err(format!("未知 transport: {other}")),
-    };
-    let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(true);
-    let config = v
-        .get("config")
-        .cloned()
-        .ok_or_else(|| "stdin JSON 缺 `config` 字段".to_string())?;
-    Ok((name, transport, enabled, config))
-}
-
-fn prompt_required(label: &str) -> Result<String, String> {
-    loop {
-        eprint!("{label}> ");
-        io::stderr().flush().ok();
-        let mut buf = String::new();
-        io::stdin().read_line(&mut buf).map_err(|e| e.to_string())?;
-        let v = buf.trim().to_string();
-        if !v.is_empty() {
-            return Ok(v);
-        }
-    }
-}
-
-fn prompt_optional(label: &str, default: &str) -> Result<String, String> {
-    eprint!("{label} [{default}]> ");
-    io::stderr().flush().ok();
-    let mut buf = String::new();
-    io::stdin().read_line(&mut buf).map_err(|e| e.to_string())?;
-    let v = buf.trim();
-    if v.is_empty() {
-        Ok(default.to_string())
-    } else {
-        Ok(v.to_string())
-    }
-}
-
-fn upsert_server(root: &Utf8Path, name: &str, config: &Value) -> Result<(), String> {
-    if name.is_empty() || name.contains('/') {
-        return Err("server name 非法: 不可为空,不可含 '/'".to_string());
-    }
-    mcp_json::ensure_mcp_json(root).map_err(|e| e.to_string())?;
-    mcp_json::upsert_server_in_document(root, name, config.clone()).map_err(|e| e.to_string())
+fn refuse_legacy_write(mode: OutputMode, action: &str) -> ExitCode {
+    emit_error_envelope(
+        mode,
+        exit_code::ARG_ERROR,
+        &format!(
+            "legacy MCP `{action}` 已禁用：source-first per-server CRUD 与 generated executor 尚未就绪，拒绝写入旧 MCP 资产"
+        ),
+        Some("可使用 `ai-config mcp list` / `show` 或 migration 的 `--dry-run` 盘点；待 source-first apply 就绪后再执行单项变更"),
+    );
+    ExitCode::from(exit_code::ARG_ERROR)
 }
 
 // ── migrate(legacy inputs → source-first plan; writes are deliberately disabled) ──
@@ -381,134 +230,6 @@ fn count_template_servers(path: &Utf8Path) -> Result<usize, String> {
         .unwrap_or(0))
 }
 
-fn run_remove(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
-    let found = match find_server(root, name) {
-        Ok(v) => v,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code_kind(), &e.to_string(), e.hint_text());
-            return ExitCode::from(e.exit_code_kind());
-        }
-    };
-    let Some((server, _path)) = found else {
-        let msg = format!("mcp server `{name}` 找不到");
-        let hint = "跑 `ai-config mcp list` 看全部";
-        emit_error_envelope(mode, exit_code::PARTIAL_FAILURE, &msg, Some(hint));
-        return ExitCode::from(exit_code::PARTIAL_FAILURE);
-    };
-    if let Err(e) = mcp_json::remove_server_from_document(root, &server.name) {
-        emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-        return ExitCode::from(e.exit_code());
-    }
-    if mode.is_json() {
-        emit_json(
-            mode,
-            &serde_json::json!({
-                "ok": true,
-                "action": "remove",
-                "name": name,
-            }),
-        );
-    } else {
-        emit_line(mode, format!("mcp `{name}` 已从 mcp.json 移除"));
-    }
-    ExitCode::SUCCESS
-}
-
-fn run_set_enabled(mode: OutputMode, root: &Utf8Path, name: &str, enabled: bool) -> ExitCode {
-    if enabled {
-        let msg = "单文件 mcp.json 模式不支持 enable;请用 `mcp add` 或编辑 mcp.json";
-        emit_error_envelope(mode, exit_code::ARG_ERROR, msg, None);
-        return ExitCode::from(exit_code::ARG_ERROR);
-    }
-    run_remove(mode, root, name)
-}
-
-// ── deploy / retract(per-item × per-platform) ─────────────────
-
-fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
-    let adapter = match platform::for_id(plat) {
-        Ok(a) => a,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-    let dest = adapter.mcp_deploy_path();
-    let src_mcp = match mcp_json_path_for_root(root) {
-        Ok(p) => p,
-        Err(e) => {
-            emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
-            return ExitCode::from(exit_code::FS_ERROR);
-        }
-    };
-    let config = match mcp_json::get_server_config(root, name) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            let msg = format!("mcp server `{name}` 找不到");
-            emit_error_envelope(
-                mode,
-                exit_code::PARTIAL_FAILURE,
-                &msg,
-                Some("跑 `ai-config mcp list` 看全部"),
-            );
-            return ExitCode::from(exit_code::PARTIAL_FAILURE);
-        }
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-    let result = mcp_json::upsert_server_on_platform(plat, &dest, name, &config, Some(&src_mcp));
-    match result {
-        Ok(()) => {
-            if mode.is_json() {
-                emit_json(
-                    mode,
-                    &serde_json::json!({
-                        "ok": true,
-                        "action": "deploy",
-                        "name": name,
-                        "to": plat,
-                        "dest": dest.to_string(),
-                    }),
-                );
-            } else if plat == PlatformId::Hermes {
-                emit_line(
-                    mode,
-                    format!("mcp `{name}` 已写入 Hermes config.yaml ({dest})"),
-                );
-            } else {
-                emit_line(mode, format!("mcp.json 已 deploy 到 {plat:?}"));
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            ExitCode::from(e.exit_code())
-        }
-    }
-}
-
-fn run_retract(mode: OutputMode, _root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
-    let adapter = match platform::for_id(plat) {
-        Ok(a) => a,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-    let dest = adapter.mcp_deploy_path();
-    let error = CoreError::LinkFailed {
-        src: "ai-config MCP ownership record".to_owned(),
-        dest: dest.to_string(),
-        reason: format!("尚不能证明 MCP server `{name}` 由 ai-config 管理"),
-        hint: "当前版本不会收回平台 MCP；请等待 source-first 迁移计划生成可验证的所有权记录"
-            .to_owned(),
-    };
-    emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
-    ExitCode::from(error.exit_code())
-}
-
 fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {
     let home = paths::home_dir();
     let legacy = home.join(".hermes/mcp.json");
@@ -543,18 +264,6 @@ fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {
     ExitCode::from(exit_code::ARG_ERROR)
 }
 
-// ── 平台 ID 解析 ────────────────────────────────────────────────
-
-fn parse_platform(s: &str) -> Result<PlatformId, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "cursor" => Ok(PlatformId::Cursor),
-        "codex" => Ok(PlatformId::Codex),
-        "claude" | "claudecode" | "claude-code" => Ok(PlatformId::Claude),
-        "hermes" => Ok(PlatformId::Hermes),
-        other => Err(format!("未知平台: {other};可选 cursor/codex/claude/hermes")),
-    }
-}
-
 // ── 工具:从 mcp.json 读 servers ─────────────────────────────────
 
 trait CliErrorExt {
@@ -570,12 +279,6 @@ impl CliErrorExt for anyhow::Error {
     fn hint_text(&self) -> Option<&str> {
         self.downcast_ref::<CoreError>().and_then(|e| e.hint())
     }
-}
-
-fn mcp_json_path_for_root(root: &Utf8Path) -> Result<Utf8PathBuf, String> {
-    let scan = source::scan_project_root(root).map_err(|e| e.to_string())?;
-    scan.mcp_json
-        .ok_or_else(|| format!("`{}` 不存在", mcp_json::MCP_ASSET_NAME))
 }
 
 fn load_canonical_servers(root: &Utf8Path) -> anyhow::Result<Vec<McpListEntry>> {
@@ -601,34 +304,4 @@ fn find_canonical_server(
         .into_iter()
         .find(|definition| definition.server.name == name)
         .map(|definition| (definition.server, definition.source_path)))
-}
-
-fn find_server(root: &Utf8Path, name: &str) -> anyhow::Result<Option<(McpServer, Utf8PathBuf)>> {
-    let path = mcp_json_path_for_root(root).map_err(|e| anyhow::anyhow!(e))?;
-    let doc = mcp_json::load_mcp_document(root)?;
-    let Some(doc) = doc else {
-        return Ok(None);
-    };
-    let Some(config) = doc
-        .get("mcpServers")
-        .and_then(|v| v.as_object())
-        .and_then(|m| m.get(name))
-    else {
-        return Ok(None);
-    };
-    Ok(Some((server_from_config(name, config), path)))
-}
-
-fn server_from_config(name: &str, config: &Value) -> McpServer {
-    let transport = if config.get("url").is_some()
-        || config
-            .get("type")
-            .and_then(|v| v.as_str())
-            .is_some_and(|t| t.eq_ignore_ascii_case("http") || t.eq_ignore_ascii_case("sse"))
-    {
-        McpTransport::Http
-    } else {
-        McpTransport::Stdio
-    };
-    McpServer::new(0, name, transport, config.clone())
 }
