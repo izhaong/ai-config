@@ -675,7 +675,7 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - [x] **T001.6 Verify GREEN**：运行 `cargo test -p ai-config-core -p ai-config-cli`；预期全部通过，且 `git status --short` 只包含本任务源码/测试变更。
 - [x] **T001.7 Commit checkpoint**：`git commit -m "fix(core): 封死未托管资产误删与只读写入"`。
 - [x] **T001.8 Audit regression closure**：补充并先验证 RED：删除 source 时保留未托管普通目录、第三方软链接和无 ownership 的同名平台 MCP；`materialize::retract` 无 expected source 时拒绝任何软链接，只有 canonical-equivalent 的精确 legacy symlink 可收回。验证：`cargo test -p ai-config-core source_delete_preserves_ -- --nocapture`、`cargo test -p ai-config-core retract_ -- --nocapture`、`cargo test -p ai-config-core -p ai-config-cli -- --test-threads=1`。
-- [ ] **T001.9 Follow-up commit checkpoint**：仅提交 T001.8 的安全回归、最小修复和计划记录；不得夹带当前 GUI 或其它 feature 的工作树改动。
+- [x] **T001.9 Follow-up commit checkpoint**：仅提交 T001.8 的安全回归、最小修复和计划记录；不得夹带当前 GUI 或其它 feature 的工作树改动。证据：`ba45589 fix(core): 补齐源删除安全边界`。
 
 ### T002 — 统一 projection model、fingerprint 与 optional ledger
 
