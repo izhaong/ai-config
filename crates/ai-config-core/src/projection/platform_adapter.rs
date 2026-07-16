@@ -119,6 +119,55 @@ pub fn capability_for(
         (PlatformId::Hermes, AssetKind::Rule) => PlatformCapability::Unsupported {
             reason: "Hermes user rules are unsupported; do not write SOUL.md".to_owned(),
         },
+        (PlatformId::Codex, AssetKind::Mcp) => PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: context.deploy_base.join(".codex/config.toml"),
+                entry_key: Some(format!("mcp_servers.{name}")),
+            },
+            mode: ProjectionMode::GeneratedToml,
+            surface: ProjectionSurface::Platform(PlatformId::Codex),
+        },
+        (PlatformId::Cursor, AssetKind::Mcp) => PlatformCapability::Generated {
+            target: ProjectionTarget {
+                path: context.deploy_base.join(".cursor/mcp.json"),
+                entry_key: Some(format!("mcpServers.{name}")),
+            },
+            mode: ProjectionMode::GeneratedJson,
+            surface: ProjectionSurface::Platform(PlatformId::Cursor),
+        },
+        (PlatformId::Claude, AssetKind::Mcp) if context.scope == DeploymentScope::User => {
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: context.deploy_base.join(".claude.json"),
+                    entry_key: Some(format!("mcpServers.{name}")),
+                },
+                mode: ProjectionMode::GeneratedJson,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        }
+        (PlatformId::Claude, AssetKind::Mcp) if context.scope == DeploymentScope::Project => {
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: context.deploy_base.join(".mcp.json"),
+                    entry_key: Some(format!("mcpServers.{name}")),
+                },
+                mode: ProjectionMode::GeneratedJson,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        }
+        (PlatformId::Hermes, AssetKind::Mcp) if context.scope == DeploymentScope::User => {
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: context.deploy_base.join(".hermes/config.yaml"),
+                    entry_key: Some(format!("mcp_servers.{name}")),
+                },
+                mode: ProjectionMode::GeneratedYaml,
+                surface: ProjectionSurface::Platform(PlatformId::Hermes),
+            }
+        }
+        (PlatformId::Hermes, AssetKind::Mcp) => PlatformCapability::Unsupported {
+            reason: "Hermes project MCP is unsupported; do not modify global config.yaml".to_owned(),
+        },
         (PlatformId::Claude, AssetKind::Rule) => PlatformCapability::Generated {
             target: ProjectionTarget {
                 path: context
@@ -349,6 +398,122 @@ mod tests {
             capability_for(PlatformId::Hermes, AssetKind::Rule, "review", &context),
             PlatformCapability::Unsupported {
                 reason: "Hermes user rules are unsupported; do not write SOUL.md".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn codex_mcp_uses_config_toml() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Codex, AssetKind::Mcp, "catalog", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.codex/config.toml"),
+                    entry_key: Some("mcp_servers.catalog".to_owned()),
+                },
+                mode: ProjectionMode::GeneratedToml,
+                surface: ProjectionSurface::Platform(PlatformId::Codex),
+            }
+        );
+    }
+
+    #[test]
+    fn cursor_mcp_uses_json_server_entry() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Cursor, AssetKind::Mcp, "catalog", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.cursor/mcp.json"),
+                    entry_key: Some("mcpServers.catalog".to_owned()),
+                },
+                mode: ProjectionMode::GeneratedJson,
+                surface: ProjectionSurface::Platform(PlatformId::Cursor),
+            }
+        );
+    }
+
+    #[test]
+    fn claude_user_mcp_uses_claude_json() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/claude-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Mcp, "catalog", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/home/claude-user/.claude.json"),
+                    entry_key: Some("mcpServers.catalog".to_owned()),
+                },
+                mode: ProjectionMode::GeneratedJson,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        );
+    }
+
+    #[test]
+    fn claude_project_mcp_uses_project_dot_mcp_json() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Claude, AssetKind::Mcp, "catalog", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/repo/.mcp.json"),
+                    entry_key: Some("mcpServers.catalog".to_owned()),
+                },
+                mode: ProjectionMode::GeneratedJson,
+                surface: ProjectionSurface::Platform(PlatformId::Claude),
+            }
+        );
+    }
+
+    #[test]
+    fn hermes_user_mcp_uses_yaml_server_entry() {
+        let context = TargetContext {
+            scope: DeploymentScope::User,
+            deploy_base: Utf8PathBuf::from("/home/hermes-user"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Hermes, AssetKind::Mcp, "catalog", &context),
+            PlatformCapability::Generated {
+                target: ProjectionTarget {
+                    path: Utf8PathBuf::from("/home/hermes-user/.hermes/config.yaml"),
+                    entry_key: Some("mcp_servers.catalog".to_owned()),
+                },
+                mode: ProjectionMode::GeneratedYaml,
+                surface: ProjectionSurface::Platform(PlatformId::Hermes),
+            }
+        );
+    }
+
+    #[test]
+    fn hermes_project_mcp_is_unsupported_without_global_configuration() {
+        let context = TargetContext {
+            scope: DeploymentScope::Project,
+            deploy_base: Utf8PathBuf::from("/repo"),
+        };
+
+        assert_eq!(
+            capability_for(PlatformId::Hermes, AssetKind::Mcp, "catalog", &context),
+            PlatformCapability::Unsupported {
+                reason: "Hermes project MCP is unsupported; do not modify global config.yaml"
+                    .to_owned(),
             }
         );
     }
