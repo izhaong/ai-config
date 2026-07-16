@@ -510,27 +510,7 @@ pub struct CapabilityIssue {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── env 守卫:设/恢复 HERMES_SKILLS_DIR 等,避免污染其它测试 ──────
-    struct EnvGuard {
-        key: &'static str,
-        prev: Option<String>,
-    }
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let prev = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, prev }
-        }
-    }
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => std::env::set_var(self.key, v),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
+    use crate::test_env::EnvGuard;
 
     // ── 4 个适配器目录路径正确(macOS 用 dirs::home_dir 验证前缀) ───
 
@@ -547,6 +527,7 @@ mod tests {
 
     #[test]
     fn cursor_paths_live_under_home() {
+        let _env_read_guard = crate::test_env::read_guard();
         let a = cursor_adapter().unwrap();
         assert_eq!(a.id(), PlatformId::Cursor);
         assert!(a.skills_dir().as_str().ends_with(".cursor/skills"));
@@ -565,6 +546,7 @@ mod tests {
 
     #[test]
     fn codex_paths_live_under_home() {
+        let _env_read_guard = crate::test_env::read_guard();
         let a = codex_adapter().unwrap();
         assert_eq!(a.id(), PlatformId::Codex);
         assert!(a.skills_dir().as_str().ends_with(".codex/skills"));
@@ -584,6 +566,7 @@ mod tests {
 
     #[test]
     fn claude_paths_live_under_home() {
+        let _env_read_guard = crate::test_env::read_guard();
         let a = claude_adapter().unwrap();
         assert_eq!(a.id(), PlatformId::Claude);
         assert!(a.skills_dir().as_str().ends_with(".claude/skills"));
@@ -603,12 +586,7 @@ mod tests {
 
     #[test]
     fn hermes_paths_live_under_home_when_env_unset() {
-        // 清掉可能的残留 env
-        let _g = EnvGuard::set("HERMES_SKILLS_DIR", "/tmp/ignored-for-this-assert");
-        // 撤掉刚才的 set,改成 remove,确保走默认路径
-        drop(_g);
-        let prev = std::env::var("HERMES_SKILLS_DIR").ok();
-        std::env::remove_var("HERMES_SKILLS_DIR");
+        let _guard = EnvGuard::unset("HERMES_SKILLS_DIR");
 
         let a = hermes_adapter().unwrap();
         assert_eq!(a.id(), PlatformId::Hermes);
@@ -622,11 +600,6 @@ mod tests {
             .ends_with(".hermes/config.yaml"));
         for p in [a.skills_dir(), a.rules_dir(), a.mcp_deploy_path()] {
             assert_starts_with_home(&p);
-        }
-
-        // 恢复
-        if let Some(v) = prev {
-            std::env::set_var("HERMES_SKILLS_DIR", v);
         }
     }
 
@@ -679,17 +652,13 @@ mod tests {
 
     #[test]
     fn hermes_project_scope_rules_and_global_skills() {
-        let prev = std::env::var("HERMES_SKILLS_DIR").ok();
-        std::env::remove_var("HERMES_SKILLS_DIR");
+        let _guard = EnvGuard::unset("HERMES_SKILLS_DIR");
         let repo = Utf8PathBuf::from("/tmp/hermes-repo-fixture");
         let a = for_scope(PlatformId::Hermes, &repo).unwrap();
         assert!(a.supports(AssetKind::Rule));
         assert_eq!(a.rules_dir(), repo.join(".cursor/rules"));
         assert!(a.skills_dir().as_str().ends_with(".hermes/skills"));
         assert_ne!(a.skills_dir(), repo.join(".hermes/skills"));
-        if let Some(v) = prev {
-            std::env::set_var("HERMES_SKILLS_DIR", v);
-        }
     }
 
     // ── HermesAdapter 读 HERMES_SKILLS_DIR env(PRD §5.x) ───────────
@@ -714,13 +683,9 @@ mod tests {
 
     #[test]
     fn hermes_skills_dir_falls_back_to_default_when_env_unset() {
-        let prev = std::env::var("HERMES_SKILLS_DIR").ok();
-        std::env::remove_var("HERMES_SKILLS_DIR");
+        let _guard = EnvGuard::unset("HERMES_SKILLS_DIR");
         let a = hermes_adapter().unwrap();
         assert!(a.skills_dir().as_str().ends_with(".hermes/skills"));
-        if let Some(v) = prev {
-            std::env::set_var("HERMES_SKILLS_DIR", v);
-        }
     }
 
     #[test]
@@ -784,12 +749,8 @@ mod tests {
 
     #[test]
     fn for_id_hermes_has_no_agent_deploy() {
-        let prev = std::env::var("HERMES_SKILLS_DIR").ok();
-        std::env::remove_var("HERMES_SKILLS_DIR");
+        let _guard = EnvGuard::unset("HERMES_SKILLS_DIR");
         let a = for_id(PlatformId::Hermes).unwrap();
         assert!(!a.supports(AssetKind::Agent));
-        if let Some(v) = prev {
-            std::env::set_var("HERMES_SKILLS_DIR", v);
-        }
     }
 }
