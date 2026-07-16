@@ -47,6 +47,13 @@ pub fn load_mcp_definitions(asset_root: &Utf8Path) -> Result<Vec<McpDefinition>,
         .collect()
 }
 
+/// Re-parse one plan-bound canonical server after the executor has verified its content digest.
+/// This deliberately takes an explicit path rather than deriving a location from HOME or a
+/// platform container, keeping source authority outside the executor.
+pub fn load_mcp_definition_at(path: &Utf8Path) -> Result<McpDefinition, CoreError> {
+    parse_definition(path)
+}
+
 /// Resolve complete server entries by `project > workspace > global`; no field-level merging is
 /// allowed because a lower-layer credential or target policy must not leak into an override.
 pub fn resolve_effective_mcp_definitions(

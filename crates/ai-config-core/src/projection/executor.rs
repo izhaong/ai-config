@@ -4,30 +4,50 @@
 //! actions. Generated rendering, adoption, copy fallback and cleanup are added by later T006
 //! tests; they must never fall back to the legacy materialize path.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::error::CoreError;
 
 use super::fingerprint::{path_content_digest, path_fingerprint};
 use super::ledger::ProjectionLedger;
+use super::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
+use super::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
+use super::mcp::entry_fingerprint::{
+    inspect_codex_mcp_entries, inspect_cursor_mcp_entries, inspect_hermes_mcp_entries,
+    McpEntryFingerprint,
+};
+use super::mcp::hermes_yaml::{render_hermes_mcp_yaml, YamlServerIntent};
+use super::mcp::source::load_mcp_definition_at;
 use super::model::{LedgerMutation, ProjectionMode, ProjectionRecord};
-use super::planner::{ProjectionAction, ProjectionActionKind, ProjectionPlan};
+use super::planner::{
+    GeneratedContainerRenderer, McpProjectionMember, ProjectionAction, ProjectionActionKind,
+    ProjectionPlan,
+};
 
 static TEMP_LINK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const APPLY_LOCK_NAME: &str = ".ai-config-projection.lock";
+
+/// Resolve a secret only when a plan-bound MCP source declares its exact variable name. Core
+/// deliberately has no environment or HOME fallback: callers choose their own secret boundary.
+/// Implementations must not surface returned values through errors or logs.
+pub trait McpSecretProvider {
+    fn resolve(&self, key: &str) -> Result<Option<String>, CoreError>;
+}
 
 /// Apply-time dependencies. The deploy root is an explicit allowlist boundary, never HOME.
 pub struct ExecutorContext<'a> {
     ledger: &'a dyn ProjectionLedger,
     deploy_base: Utf8PathBuf,
     backup_root: Utf8PathBuf,
+    mcp_secret_provider: Option<&'a dyn McpSecretProvider>,
 }
 
 impl<'a> ExecutorContext<'a> {
@@ -40,7 +60,15 @@ impl<'a> ExecutorContext<'a> {
             ledger,
             deploy_base,
             backup_root,
+            mcp_secret_provider: None,
         }
+    }
+
+    /// Inject a caller-owned secret resolver for MCP source hydration. The executor never
+    /// consults process environment variables or user home directories on its own.
+    pub fn with_mcp_secret_provider(mut self, provider: &'a dyn McpSecretProvider) -> Self {
+        self.mcp_secret_provider = Some(provider);
+        self
     }
 }
 
@@ -216,6 +244,12 @@ enum FileUndo {
         target: Utf8PathBuf,
         digest: String,
         backup: Utf8PathBuf,
+    },
+    RestoreGenerated {
+        target: Utf8PathBuf,
+        rendered_digest: String,
+        backup: Option<Utf8PathBuf>,
+        created_parents: Vec<Utf8PathBuf>,
     },
 }
 
@@ -416,11 +450,18 @@ pub fn apply_projection_plan(
                     Ok(())
                 }
             }
-            ProjectionActionKind::RemoveGeneratedEntries
-            | ProjectionActionKind::UpsertGeneratedBatch
-            | ProjectionActionKind::CleanupOrphan => Err(CoreError::NotImplemented(
-                "projection action requires its dedicated transactional executor slice",
-            )),
+            ProjectionActionKind::UpsertGeneratedBatch => {
+                apply_mcp_generated_upsert(action, context).map(|applied| {
+                    mutations.extend(applied.mutations);
+                    undo.push((index, applied.undo));
+                    report.set_status(index, ApplyActionStatus::Applied);
+                })
+            }
+            ProjectionActionKind::RemoveGeneratedEntries | ProjectionActionKind::CleanupOrphan => {
+                Err(CoreError::NotImplemented(
+                    "projection action requires its dedicated transactional executor slice",
+                ))
+            }
             ProjectionActionKind::ReportOnly => unreachable!("checked before writes"),
         };
         if let Err(error) = outcome {
@@ -808,6 +849,328 @@ fn ensure_source_matches_plan(
     Ok(())
 }
 
+struct AppliedGeneratedMcp {
+    mutations: Vec<LedgerMutation>,
+    undo: FileUndo,
+}
+
+/// Apply exactly one plan-bound MCP container batch. Non-MCP generated actions stay fail-closed
+/// until their own renderer/ownership transaction exists.
+fn apply_mcp_generated_upsert(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<AppliedGeneratedMcp, CoreError> {
+    if !action.members.is_empty() || action.mcp_members.is_empty() {
+        return Err(CoreError::InvalidPath(
+            "generated upsert is not a source-first MCP batch".to_owned(),
+        ));
+    }
+    let renderer = action
+        .generated_renderer
+        .ok_or_else(|| CoreError::InvalidPath("MCP generated action has no renderer".to_owned()))?;
+    if !matches!(
+        renderer,
+        GeneratedContainerRenderer::McpJson
+            | GeneratedContainerRenderer::McpToml
+            | GeneratedContainerRenderer::McpYaml
+    ) {
+        return Err(CoreError::InvalidPath(
+            "generated upsert renderer is not an MCP container renderer".to_owned(),
+        ));
+    }
+    let target = action
+        .target
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("MCP generated action has no target".to_owned()))?;
+    let expected = action.precondition.as_ref().ok_or_else(|| {
+        CoreError::InvalidPath("MCP generated action has no target precondition".to_owned())
+    })?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected {
+        return Err(CoreError::InvalidPath(
+            "projection target changed after the plan was created".to_owned(),
+        ));
+    }
+    if !matches!(
+        actual.entry_type,
+        super::model::FingerprintType::Missing | super::model::FingerprintType::File
+    ) {
+        return Err(CoreError::InvalidPath(
+            "MCP generated target must be a regular file or be absent".to_owned(),
+        ));
+    }
+
+    // Re-validate every canonical file before reading any target or allocating a temporary path.
+    // This makes a plan stale rather than allowing a changed source to be rendered implicitly.
+    let intents = action
+        .mcp_members
+        .iter()
+        .map(|member| load_and_hydrate_mcp_member(member, context))
+        .collect::<Result<Vec<_>, _>>()?;
+    let existing = match actual.entry_type {
+        super::model::FingerprintType::Missing => empty_mcp_container(renderer),
+        super::model::FingerprintType::File => fs::read_to_string(target.path.as_std_path())?,
+        _ => unreachable!("validated above"),
+    };
+    let rendered = render_mcp_container(renderer, &existing, &intents)?;
+    let entry_fingerprints = inspect_mcp_entries(renderer, &rendered)?
+        .into_iter()
+        .map(|entry| (entry.name, entry.digest))
+        .collect::<BTreeMap<_, _>>();
+
+    let parent = ensure_safe_target_parent(&target.path, &context.deploy_base)?;
+    let temporary = generated_temporary_path(&parent.path, &target.path)?;
+    if let Err(error) = write_private_generated_file(&temporary, rendered.as_bytes()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    let rendered_digest = path_fingerprint(&temporary)?
+        .digest
+        .ok_or_else(|| CoreError::InvalidPath("rendered MCP target has no digest".to_owned()))?;
+    // All fallible ledger mutation construction is completed before target replacement. The
+    // content digest is identical after the atomic rename, so no post-swap validation step can
+    // strand a newly rendered container without a rollback record.
+    let mode = mcp_projection_mode(renderer)?;
+    let mutations = action
+        .mcp_members
+        .iter()
+        .map(|member| {
+            let entry_fingerprint =
+                entry_fingerprints
+                    .get(&member.name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        CoreError::InvalidPath(
+                            "MCP renderer did not emit a planned server entry".to_owned(),
+                        )
+                    })?;
+            Ok(LedgerMutation::Upsert(ProjectionRecord {
+                id: member.id.clone(),
+                mode,
+                source_path: member.source.absolute_path.clone(),
+                target_path: target.path.clone(),
+                entry_key: Some(member.entry_key.clone()),
+                source_fingerprint: member.source.fingerprint.clone(),
+                entry_fingerprint: Some(entry_fingerprint),
+                target_fingerprint: rendered_digest.clone(),
+                applied_at: Utc::now(),
+            }))
+        })
+        .collect::<Result<Vec<_>, CoreError>>()?;
+    let backup = if actual.entry_type == super::model::FingerprintType::File {
+        let backup = allocate_backup_path(&context.backup_root, &target.path)?;
+        write_backup_manifest(&backup, &target.path, expected)?;
+        if let Err(error) = fs::rename(target.path.as_std_path(), backup.as_std_path()) {
+            let _ = fs::remove_file(temporary.as_std_path());
+            return Err(CoreError::Io(error));
+        }
+        if let Err(error) = set_private_file_permissions(&backup) {
+            let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+            let _ = fs::remove_file(temporary.as_std_path());
+            return Err(error);
+        }
+        Some(backup)
+    } else {
+        None
+    };
+    if let Err(error) = fs::rename(temporary.as_std_path(), target.path.as_std_path()) {
+        if let Some(backup) = &backup {
+            let _ = fs::rename(backup.as_std_path(), target.path.as_std_path());
+        }
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+
+    Ok(AppliedGeneratedMcp {
+        mutations,
+        undo: FileUndo::RestoreGenerated {
+            target: target.path.clone(),
+            rendered_digest,
+            backup,
+            created_parents: parent.created_parents,
+        },
+    })
+}
+
+#[derive(Clone)]
+struct HydratedMcpIntent {
+    name: String,
+    config: Value,
+}
+
+fn load_and_hydrate_mcp_member(
+    member: &McpProjectionMember,
+    context: &ExecutorContext<'_>,
+) -> Result<HydratedMcpIntent, CoreError> {
+    let actual = path_content_digest(&member.source.absolute_path)?;
+    if actual != member.source.fingerprint {
+        return Err(CoreError::InvalidPath(
+            "canonical source changed after the plan was created".to_owned(),
+        ));
+    }
+    let definition = load_mcp_definition_at(&member.source.absolute_path)?;
+    if definition.server.name != member.name {
+        return Err(CoreError::InvalidPath(
+            "canonical MCP source no longer matches the planned server name".to_owned(),
+        ));
+    }
+    let mut expected_keys = member.secret_keys.clone();
+    expected_keys.sort();
+    expected_keys.dedup();
+    if definition.server.secret_keys != expected_keys {
+        return Err(CoreError::InvalidPath(
+            "canonical MCP source secret references no longer match the plan".to_owned(),
+        ));
+    }
+    let config = hydrate_mcp_config(definition.server.config, &expected_keys, context)?;
+    Ok(HydratedMcpIntent {
+        name: member.name.clone(),
+        config,
+    })
+}
+
+fn hydrate_mcp_config(
+    mut config: Value,
+    secret_keys: &[String],
+    context: &ExecutorContext<'_>,
+) -> Result<Value, CoreError> {
+    if secret_keys.is_empty() {
+        return Ok(config);
+    }
+    let provider = context.mcp_secret_provider.ok_or_else(|| {
+        CoreError::InvalidPath("MCP plan needs a caller-provided secret resolver".to_owned())
+    })?;
+    let root = config.as_object_mut().ok_or_else(|| {
+        CoreError::InvalidPath("canonical MCP config must be an object".to_owned())
+    })?;
+    for field in ["env", "headers"] {
+        let Some(values) = root.get_mut(field).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        for value in values.values_mut() {
+            let placeholder = value.as_str().ok_or_else(|| {
+                CoreError::InvalidPath(
+                    "MCP secret reference is not a string placeholder".to_owned(),
+                )
+            })?;
+            let key = placeholder
+                .strip_prefix("${")
+                .and_then(|value| value.strip_suffix('}'))
+                .filter(|key| secret_keys.iter().any(|expected| expected == key))
+                .ok_or_else(|| {
+                    CoreError::InvalidPath(
+                        "MCP secret reference does not match the plan".to_owned(),
+                    )
+                })?;
+            let secret = provider.resolve(key).map_err(|_| {
+                CoreError::InvalidPath(format!("MCP secret lookup failed for declared key {key}"))
+            })?;
+            let secret = secret.ok_or_else(|| {
+                CoreError::InvalidPath(format!(
+                    "MCP secret resolver has no value for declared key {key}"
+                ))
+            })?;
+            *value = Value::String(secret);
+        }
+    }
+    Ok(config)
+}
+
+fn render_mcp_container(
+    renderer: GeneratedContainerRenderer,
+    existing: &str,
+    intents: &[HydratedMcpIntent],
+) -> Result<String, CoreError> {
+    match renderer {
+        GeneratedContainerRenderer::McpJson => render_cursor_mcp_json(
+            existing,
+            &intents
+                .iter()
+                .map(|intent| JsonServerIntent::new(&intent.name, intent.config.clone()))
+                .collect::<Vec<_>>(),
+            &[],
+        ),
+        GeneratedContainerRenderer::McpToml => render_codex_mcp_toml(
+            existing,
+            &intents
+                .iter()
+                .map(|intent| TomlServerIntent::new(&intent.name, intent.config.clone()))
+                .collect::<Vec<_>>(),
+            &[],
+        ),
+        GeneratedContainerRenderer::McpYaml => render_hermes_mcp_yaml(
+            existing,
+            &intents
+                .iter()
+                .map(|intent| YamlServerIntent::new(&intent.name, intent.config.clone()))
+                .collect::<Vec<_>>(),
+            &[],
+        ),
+        _ => Err(CoreError::InvalidPath(
+            "generated upsert renderer is not an MCP container renderer".to_owned(),
+        )),
+    }
+}
+
+fn inspect_mcp_entries(
+    renderer: GeneratedContainerRenderer,
+    rendered: &str,
+) -> Result<Vec<McpEntryFingerprint>, CoreError> {
+    match renderer {
+        GeneratedContainerRenderer::McpJson => inspect_cursor_mcp_entries(rendered),
+        GeneratedContainerRenderer::McpToml => inspect_codex_mcp_entries(rendered),
+        GeneratedContainerRenderer::McpYaml => inspect_hermes_mcp_entries(rendered),
+        _ => Err(CoreError::InvalidPath(
+            "generated upsert renderer is not an MCP container renderer".to_owned(),
+        )),
+    }
+}
+
+fn empty_mcp_container(renderer: GeneratedContainerRenderer) -> String {
+    match renderer {
+        GeneratedContainerRenderer::McpJson => "{\"mcpServers\":{}}".to_owned(),
+        GeneratedContainerRenderer::McpToml | GeneratedContainerRenderer::McpYaml => String::new(),
+        _ => String::new(),
+    }
+}
+
+fn mcp_projection_mode(renderer: GeneratedContainerRenderer) -> Result<ProjectionMode, CoreError> {
+    match renderer {
+        GeneratedContainerRenderer::McpJson => Ok(ProjectionMode::GeneratedJson),
+        GeneratedContainerRenderer::McpToml => Ok(ProjectionMode::GeneratedToml),
+        GeneratedContainerRenderer::McpYaml => Ok(ProjectionMode::GeneratedYaml),
+        _ => Err(CoreError::InvalidPath(
+            "generated upsert renderer is not an MCP container renderer".to_owned(),
+        )),
+    }
+}
+
+fn generated_temporary_path(
+    parent: &Utf8Path,
+    target: &Utf8Path,
+) -> Result<Utf8PathBuf, CoreError> {
+    let filename = target
+        .file_name()
+        .ok_or_else(|| CoreError::InvalidPath("projection target has no file name".to_owned()))?;
+    let sequence = TEMP_LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    Ok(parent.join(format!(".{filename}.ai-config-generated-{sequence}.tmp")))
+}
+
+fn write_private_generated_file(path: &Utf8Path, content: &[u8]) -> Result<(), CoreError> {
+    fs::write(path.as_std_path(), content)?;
+    set_private_file_permissions(path)
+}
+
+fn set_private_file_permissions(path: &Utf8Path) -> Result<(), CoreError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path.as_std_path(), fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 fn copy_temporary_path(parent: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathBuf, CoreError> {
     let filename = target
         .file_name()
@@ -1140,6 +1503,36 @@ fn rollback(undo: &[(usize, FileUndo)], context: &ExecutorContext<'_>) -> Vec<(u
                     fs::rename(backup.as_std_path(), target.as_std_path()).is_ok()
                 } else {
                     false
+                }
+            }
+            FileUndo::RestoreGenerated {
+                target,
+                rendered_digest,
+                backup,
+                created_parents,
+            } => {
+                let removed = path_fingerprint(target)
+                    .map(|fingerprint| {
+                        fingerprint.entry_type == super::model::FingerprintType::File
+                            && fingerprint.digest.as_deref() == Some(rendered_digest)
+                            && fs::remove_file(target.as_std_path()).is_ok()
+                    })
+                    .unwrap_or(false);
+                if !removed {
+                    false
+                } else if let Some(backup) = backup {
+                    fs::rename(backup.as_std_path(), target.as_std_path()).is_ok()
+                } else {
+                    for parent in created_parents.iter().rev() {
+                        let is_empty = fs::read_dir(parent.as_std_path())
+                            .ok()
+                            .and_then(|mut entries| entries.next())
+                            .is_none();
+                        if is_empty {
+                            let _ = fs::remove_dir(parent.as_std_path());
+                        }
+                    }
+                    true
                 }
             }
         };

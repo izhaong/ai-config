@@ -1,6 +1,10 @@
 use std::fs;
 
+use ai_config_core::error::CoreError;
 use ai_config_core::model::PlatformId;
+use ai_config_core::projection::executor::{
+    apply_projection_plan, ApplyOptions, ExecutorContext, McpSecretProvider,
+};
 use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
 use ai_config_core::projection::mcp::claude_json::{
     render_claude_mcp_json, ClaudeJsonServerIntent,
@@ -42,6 +46,36 @@ fn mcp_request(root: &Utf8Path, platforms: Vec<PlatformId>) -> ProjectionRequest
         deploy_base: root.join("deploy"),
         assets: Vec::new(),
         platforms,
+    }
+}
+
+struct StaticSecretProvider;
+
+impl McpSecretProvider for StaticSecretProvider {
+    fn resolve(&self, key: &str) -> Result<Option<String>, CoreError> {
+        Ok((key == "CATALOG_TOKEN").then(|| "test-secret-value".to_owned()))
+    }
+}
+
+struct FailingMcpLedger;
+
+impl ProjectionLedger for FailingMcpLedger {
+    fn get(&self, _id: &ProjectionId) -> Result<Option<ProjectionRecord>, CoreError> {
+        Ok(None)
+    }
+
+    fn get_many(&self, _ids: &[ProjectionId]) -> Result<Vec<ProjectionRecord>, CoreError> {
+        Ok(Vec::new())
+    }
+
+    fn list_scope(&self, _scope_key: &str) -> Result<Vec<ProjectionRecord>, CoreError> {
+        Ok(Vec::new())
+    }
+
+    fn apply_batch(&self, _mutations: &[LedgerMutation]) -> Result<(), CoreError> {
+        Err(CoreError::ProjectionLedger(
+            "test ledger failure".to_owned(),
+        ))
     }
 }
 
@@ -144,6 +178,303 @@ fn mcp_planner_can_add_a_missing_managed_entry_without_claiming_foreign_entries(
     ));
     assert_eq!(plan.actions[0].reason_code, "generated_entries_missing");
     assert_eq!(plan.actions[0].mcp_members[0].name, "catalog");
+}
+
+#[test]
+fn mcp_apply_updates_only_the_planned_cursor_entry_and_records_entry_ownership() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#,
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+
+    apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap();
+
+    let rendered: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(target.as_std_path()).unwrap()).unwrap();
+    assert_eq!(rendered["userField"], true);
+    assert_eq!(rendered["mcpServers"]["foreign"]["command"], "external");
+    assert_eq!(rendered["mcpServers"]["catalog"]["command"], "catalog-mcp");
+
+    let record = ledger
+        .get(&plan.actions[0].mcp_members[0].id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.entry_key.as_deref(), Some("mcpServers.catalog"));
+    assert!(record.entry_fingerprint.is_some());
+}
+
+#[test]
+fn mcp_apply_refuses_a_source_that_changed_after_planning_before_writing() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#,
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"changed-after-plan"}}"#,
+    );
+
+    let error = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("canonical source changed"));
+    assert_eq!(
+        error
+            .report
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("action_apply_failed")
+    );
+    assert_eq!(
+        fs::read_to_string(target.as_std_path()).unwrap(),
+        r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#
+    );
+}
+
+#[test]
+fn mcp_apply_uses_the_mcp_renderer_for_each_supported_platform_container() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor","codex","claude","hermes"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "user:/mcp-fixture".to_owned(),
+        scope: DeploymentScope::User,
+        deploy_base: root.join("deploy"),
+        assets: Vec::new(),
+        platforms: vec![
+            PlatformId::Cursor,
+            PlatformId::Codex,
+            PlatformId::Claude,
+            PlatformId::Hermes,
+        ],
+    };
+    let cursor = request.deploy_base.join(".cursor/mcp.json");
+    let codex = request.deploy_base.join(".codex/config.toml");
+    let claude = request.deploy_base.join(".claude.json");
+    let hermes = request.deploy_base.join(".hermes/config.yaml");
+    for (path, content) in [
+        (
+            &cursor,
+            r#"{"mcpServers":{"foreign":{"command":"cursor-foreign"}},"keep":true}"#,
+        ),
+        (
+            &codex,
+            "[mcp_servers.foreign]\ncommand = \"codex-foreign\"\n[keep]\nvalue = true\n",
+        ),
+        (
+            &claude,
+            r#"{"mcpServers":{"foreign":{"command":"claude-foreign"}},"projects":{}}"#,
+        ),
+        (
+            &hermes,
+            "provider: openai\nmcp_servers:\n  foreign:\n    command: hermes-foreign\n",
+        ),
+    ] {
+        fs::create_dir_all(path.parent().unwrap().as_std_path()).unwrap();
+        fs::write(path.as_std_path(), content).unwrap();
+    }
+    let ledger = MemoryProjectionLedger::default();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+
+    apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap();
+
+    let cursor: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(cursor).unwrap()).unwrap();
+    let claude: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(claude).unwrap()).unwrap();
+    let codex: toml::Value = fs::read_to_string(codex).unwrap().parse().unwrap();
+    let hermes: serde_yaml::Value =
+        serde_yaml::from_str(&fs::read_to_string(hermes).unwrap()).unwrap();
+    assert_eq!(cursor["mcpServers"]["foreign"]["command"], "cursor-foreign");
+    assert_eq!(claude["mcpServers"]["foreign"]["command"], "claude-foreign");
+    assert_eq!(
+        codex["mcp_servers"]["foreign"]["command"].as_str(),
+        Some("codex-foreign")
+    );
+    assert_eq!(
+        hermes["mcp_servers"]["foreign"]["command"],
+        serde_yaml::Value::String("hermes-foreign".to_owned())
+    );
+    assert_eq!(cursor["mcpServers"]["catalog"]["command"], "catalog-mcp");
+    assert_eq!(claude["mcpServers"]["catalog"]["command"], "catalog-mcp");
+    assert_eq!(
+        codex["mcp_servers"]["catalog"]["command"].as_str(),
+        Some("catalog-mcp")
+    );
+    assert_eq!(
+        hermes["mcp_servers"]["catalog"]["command"],
+        serde_yaml::Value::String("catalog-mcp".to_owned())
+    );
+}
+
+#[test]
+fn mcp_apply_hydrates_declared_secrets_only_through_the_injected_provider() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp","env":{"TOKEN":"${CATALOG_TOKEN}"}}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    fs::create_dir_all(request.deploy_base.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    assert!(!serde_json::to_string(&plan)
+        .unwrap()
+        .contains("test-secret-value"));
+
+    let missing_provider = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap_err();
+    assert!(missing_provider
+        .to_string()
+        .contains("caller-provided secret resolver"));
+
+    let report = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups"))
+            .with_mcp_secret_provider(&StaticSecretProvider),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap();
+    assert_eq!(report.changed, 1);
+    let rendered: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(request.deploy_base.join(".cursor/mcp.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        rendered["mcpServers"]["catalog"]["env"]["TOKEN"],
+        "test-secret-value"
+    );
+}
+
+#[test]
+fn mcp_apply_restores_the_original_container_when_ledger_commit_fails() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["cursor"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Cursor]);
+    let target = request.deploy_base.join(".cursor/mcp.json");
+    let original = r#"{"mcpServers":{"foreign":{"command":"external"}},"userField":true}"#;
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(target.as_std_path(), original).unwrap();
+    let planning_ledger = MemoryProjectionLedger::default();
+    let plan = build_mcp_projection_plan(
+        &request,
+        &definitions,
+        &PlannerContext::new(&planning_ledger),
+    )
+    .unwrap();
+
+    let error = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(
+            &FailingMcpLedger,
+            request.deploy_base.clone(),
+            root.join("backups"),
+        ),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error
+            .report
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("ledger_apply_failed")
+    );
+    assert_eq!(fs::read_to_string(target.as_std_path()).unwrap(), original);
 }
 
 #[test]
