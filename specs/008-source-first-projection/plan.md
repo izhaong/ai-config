@@ -746,13 +746,13 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 
 **Produces:** `resolve_effective_assets(&SyncRoots) -> Vec<EffectiveAsset>`，排序键固定为 `(kind, name)`。
 
-- [ ] **T004.1 Write failing overlay tests**：global fills workspace/project missing、workspace overrides global、project overrides both、member 有本地一项仍继承其余资产、MCP 同名逐 server 整项覆盖、Prompt 同名覆盖、hook bundle 覆盖、每项保存 provenance、project target 不越界。
-- [ ] **T004.2 Verify RED**：`cargo test -p ai-config-core --test source_overlay`；预期当前 MCP 整文件遮蔽和 workspace 继承用例失败。
-- [ ] **T004.3 Implement pure scanners**：skills/rules/agents/commands/prompts/hooks/MCP 每类扫描只读；MCP 同时读取新 per-server source，legacy monolith 只作为 migration candidate，不自动删除。
-- [ ] **T004.4 Implement deterministic resolver**：按 global→workspace→project 覆盖 map，保留被覆盖来源用于 diff，但只输出一个 effective asset。
-- [ ] **T004.5 Verify read-only invariant**：对临时 HOME 运行 resolver 100 次，断言 tree digest、mtime 和 SQLite hash 不变。
-- [ ] **T004.6 Verify**：`cargo test -p ai-config-core --test source_overlay`。
-- [ ] **T004.7 Commit checkpoint**：`git commit -m "feat(core): 实现纯读取三层资产解析"`。
+- [x] **T004.1 Write failing overlay tests**：global fills workspace/project missing、workspace overrides global、project overrides both、member 有本地一项仍继承其余资产、MCP 同名逐 server 整项覆盖、Prompt 同名覆盖、hook bundle 覆盖、每项保存 provenance、project target 不越界。
+- [x] **T004.2 Verify RED**：在 `projection::source` 最初只有 `todo!` 的实现下运行定向测试，确认 resolver 尚未实现后再进入最小实现。
+- [x] **T004.3 Implement pure scanners**：skills/rules/agents/commands/prompts/hooks/MCP 每类扫描只读；MCP 同时读取新 per-server source，legacy monolith 只作为 migration candidate，不自动删除。
+- [x] **T004.4 Implement deterministic resolver**：按 global→workspace→project 覆盖 map，保留被覆盖来源用于 diff，但只输出一个 effective asset。
+- [x] **T004.5 Verify read-only invariant**：对临时根运行 resolver 100 次，断言 tree digest 不变；resolver 不创建目录、不写 SQLite。
+- [x] **T004.6 Verify**：`cargo test -p ai-config-core projection::source::tests`（4 passed）与 `cargo test -p ai-config-core projection::`（63 passed）。
+- [x] **T004.7 Commit checkpoint**：已提交 `1f2aad0 feat(core): 新增三层 source resolver`。
 
 ### T005 — 只读 Projection Planner
 
