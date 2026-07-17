@@ -152,6 +152,7 @@ struct CanonicalAsset {
     kind: AssetKind,
     secret_keys: Vec<String>,
     targets: Option<Vec<PlatformId>>,
+    hook_binding_digest: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -187,12 +188,14 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
     let mut effective = BTreeMap::new();
     let mut issues = Vec::new();
     let mut legacy_canonical_agents = Vec::new();
+    let mut canonical_hook_findings = Vec::new();
     for root in layers {
         for asset in canonical_assets(
             root,
             request.scope,
             &mut issues,
             &mut legacy_canonical_agents,
+            &mut canonical_hook_findings,
         )? {
             effective.insert(
                 (asset_kind_order(asset.kind), asset.name.clone()),
@@ -226,6 +229,45 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         .map(|asset| canonical_entry(asset, request.scope))
         .collect::<Vec<_>>();
     entries.extend(legacy_canonical_agents);
+    let split_cross_layer_hooks = canonical_hook_findings
+        .iter()
+        .filter(|finding| {
+            canonical_hook_findings.iter().any(|other| {
+                finding.name == other.name
+                    && finding.source_layer != other.source_layer
+                    && matches!(
+                        (finding.reason_code.as_str(), other.reason_code.as_str(),),
+                        (
+                            "canonical_hook_binding_without_script",
+                            "canonical_hook_script_without_binding",
+                        ) | (
+                            "canonical_hook_script_without_binding",
+                            "canonical_hook_binding_without_script",
+                        )
+                    )
+            })
+        })
+        .map(|finding| finding.name.clone())
+        .collect::<BTreeSet<_>>();
+    for finding in &mut canonical_hook_findings {
+        if matches!(
+            finding.reason_code.as_str(),
+            "canonical_hook_binding_without_script" | "canonical_hook_script_without_binding"
+        ) {
+            let key = (asset_kind_order(AssetKind::Hook), finding.name.clone());
+            if split_cross_layer_hooks.contains(&finding.name)
+                || effective.get(&key).is_some_and(|asset| {
+                    finding
+                        .source_layer
+                        .is_some_and(|layer| layer > asset.layer)
+                })
+            {
+                finding.reason_code = "cross_layer_hook_pair".to_owned();
+                effective.remove(&key);
+            }
+        }
+    }
+    entries.extend(canonical_hook_findings);
     let mut unsupported = Vec::new();
 
     scan_skill_root(
@@ -284,6 +326,13 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         &mut issues,
     )?;
     scan_command_targets(
+        request,
+        &effective,
+        &mut entries,
+        &mut unsupported,
+        &mut issues,
+    )?;
+    scan_hook_targets(
         request,
         &effective,
         &mut entries,
@@ -388,6 +437,7 @@ fn canonical_assets(
     scope: InventoryScope,
     issues: &mut Vec<MigrationInventoryIssue>,
     legacy_agents: &mut Vec<MigrationInventoryEntry>,
+    canonical_hook_findings: &mut Vec<MigrationInventoryEntry>,
 ) -> Result<Vec<CanonicalAsset>, CoreError> {
     let mut assets = Vec::new();
     for entry in direct_lstat_entries(&root.asset_root.join("skills"))? {
@@ -420,6 +470,7 @@ fn canonical_assets(
     }
     scan_canonical_agents(root, scope, issues, legacy_agents, &mut assets)?;
     scan_canonical_commands(root, scope, issues, &mut assets)?;
+    scan_canonical_hooks(root, scope, issues, canonical_hook_findings, &mut assets)?;
     let mcp_servers = root.asset_root.join("mcp/servers");
     if let Some(parent_issue) = mcp_parent_issue(&root.asset_root, &mcp_servers) {
         let reason_code = match parent_issue {
@@ -617,6 +668,1152 @@ fn scan_canonical_commands(
         }
     }
     Ok(())
+}
+
+fn scan_canonical_hooks(
+    root: &CanonicalLayerRoot,
+    scope: InventoryScope,
+    issues: &mut Vec<MigrationInventoryIssue>,
+    findings: &mut Vec<MigrationInventoryEntry>,
+    assets: &mut Vec<CanonicalAsset>,
+) -> Result<(), CoreError> {
+    let root_metadata = match fs::symlink_metadata(root.asset_root.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                &root.asset_root,
+                scope,
+                "unreadable_canonical_hook_root",
+            );
+            return Ok(());
+        }
+    };
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            &root.asset_root,
+            scope,
+            "unsafe_canonical_hook_root",
+        );
+        return Ok(());
+    }
+
+    let manifest = root.asset_root.join("hooks.json");
+    let manifest_bindings = canonical_hook_binding_names(root, &manifest, scope, issues, findings)?;
+    let hooks = root.asset_root.join("hooks");
+    let hook_units = canonical_hook_units(&hooks, scope, issues)?;
+    let names = manifest_bindings
+        .keys()
+        .chain(hook_units.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for name in names {
+        match (manifest_bindings.get(&name), hook_units.get(&name)) {
+            (Some(binding_digest), Some(path)) => {
+                match canonical_asset(root.layer, AssetKind::Hook, name, path.clone()) {
+                    Ok(mut asset) => {
+                        asset.hook_binding_digest = Some(binding_digest.clone());
+                        assets.push(asset);
+                    }
+                    Err(_) => push_inventory_issue(
+                        issues,
+                        AssetKind::Hook,
+                        path,
+                        scope,
+                        "unreadable_canonical_hook_unit",
+                    ),
+                }
+            }
+            (Some(_), None) => findings.push(canonical_hook_finding(
+                root,
+                scope,
+                name,
+                manifest.clone(),
+                "canonical_hook_binding_without_script",
+                "json",
+            )),
+            (None, Some(path)) => findings.push(canonical_hook_finding(
+                root,
+                scope,
+                name,
+                path.clone(),
+                "canonical_hook_script_without_binding",
+                hook_unit_format(path),
+            )),
+            (None, None) => unreachable!("name came from binding or unit"),
+        }
+    }
+    Ok(())
+}
+
+fn canonical_hook_binding_names(
+    root: &CanonicalLayerRoot,
+    manifest: &Utf8Path,
+    scope: InventoryScope,
+    issues: &mut Vec<MigrationInventoryIssue>,
+    findings: &mut Vec<MigrationInventoryEntry>,
+) -> Result<BTreeMap<String, String>, CoreError> {
+    let metadata = match fs::symlink_metadata(manifest.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                manifest,
+                scope,
+                "unreadable_canonical_hook_manifest",
+            );
+            return Ok(BTreeMap::new());
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            manifest,
+            scope,
+            "unsafe_canonical_hook_manifest",
+        );
+        return Ok(BTreeMap::new());
+    }
+    let raw = match fs::read_to_string(manifest.as_std_path()) {
+        Ok(raw) => raw,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                manifest,
+                scope,
+                "unreadable_canonical_hook_manifest",
+            );
+            return Ok(BTreeMap::new());
+        }
+    };
+    let document = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(document) => document,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                manifest,
+                scope,
+                "invalid_canonical_hook_manifest",
+            );
+            return Ok(BTreeMap::new());
+        }
+    };
+    let Some(hooks) = document.get("hooks").and_then(serde_json::Value::as_object) else {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            manifest,
+            scope,
+            "invalid_canonical_hook_manifest",
+        );
+        return Ok(BTreeMap::new());
+    };
+    let mut bindings = BTreeMap::<String, Vec<Vec<u8>>>::new();
+    for (lifecycle, entries) in hooks {
+        let Some(entries) = entries.as_array() else {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                manifest,
+                scope,
+                "invalid_canonical_hook_binding",
+            );
+            continue;
+        };
+        for entry in entries {
+            let command = entry.get("command").and_then(serde_json::Value::as_str);
+            let Some(command) = command else {
+                push_inventory_issue(
+                    issues,
+                    AssetKind::Hook,
+                    manifest,
+                    scope,
+                    if entry.get("prompt").is_some()
+                        || entry.get("type").is_some_and(|value| value == "prompt")
+                    {
+                        "unsupported_canonical_hook_prompt"
+                    } else {
+                        "invalid_canonical_hook_binding"
+                    },
+                );
+                continue;
+            };
+            let name =
+                hook_name_from_any_command(command).unwrap_or_else(|| "invalid-hook".to_owned());
+            if Utf8Path::new(command.split_whitespace().next().unwrap_or_default()).is_absolute() {
+                findings.push(canonical_hook_finding(
+                    root,
+                    scope,
+                    name,
+                    manifest.to_path_buf(),
+                    "canonical_hook_command_absolute",
+                    "json",
+                ));
+                continue;
+            }
+            if command.split_whitespace().next().is_some_and(|path| {
+                Utf8Path::new(path)
+                    .components()
+                    .any(|component| component.as_str() == "..")
+            }) {
+                findings.push(canonical_hook_finding(
+                    root,
+                    scope,
+                    name,
+                    manifest.to_path_buf(),
+                    "canonical_hook_command_parent_escape",
+                    "json",
+                ));
+                continue;
+            }
+            let Some(name) = canonical_hook_name_from_command(command) else {
+                push_inventory_issue(
+                    issues,
+                    AssetKind::Hook,
+                    manifest,
+                    scope,
+                    "invalid_canonical_hook_binding",
+                );
+                continue;
+            };
+            if !is_supported_canonical_hook_lifecycle(lifecycle) {
+                push_inventory_issue(
+                    issues,
+                    AssetKind::Hook,
+                    manifest,
+                    scope,
+                    "unsupported_canonical_hook_lifecycle",
+                );
+                continue;
+            }
+            let executable = command.split_whitespace().next().unwrap_or_default();
+            let relative = executable.strip_prefix("./").unwrap_or(executable);
+            let target = root.asset_root.join(relative);
+            let target_is_safe_file = matches!(
+                fs::symlink_metadata(target.as_std_path()),
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink()
+            );
+            if !target_is_safe_file {
+                let unit = root.asset_root.join("hooks").join(&name);
+                match fs::symlink_metadata(unit.as_std_path()) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        // Preserve a binding-only component so overlay resolution can
+                        // distinguish a forbidden cross-layer pair from an ordinary
+                        // missing command leaf.
+                    }
+                    Ok(metadata) => {
+                        let reason = if metadata.is_file() && target != unit {
+                            "canonical_hook_command_unit_shape_mismatch"
+                        } else {
+                            "canonical_hook_command_missing_entry"
+                        };
+                        push_inventory_issue(issues, AssetKind::Hook, manifest, scope, reason);
+                        continue;
+                    }
+                    Err(_) => {
+                        push_inventory_issue(
+                            issues,
+                            AssetKind::Hook,
+                            manifest,
+                            scope,
+                            "canonical_hook_command_missing_entry",
+                        );
+                        continue;
+                    }
+                }
+            }
+            let encoded = serde_json::to_vec(&serde_json::json!({
+                "lifecycle": lifecycle,
+                "binding": entry,
+            }))
+            .map_err(CoreError::Json)?;
+            bindings.entry(name).or_default().push(encoded);
+        }
+    }
+    Ok(bindings
+        .into_iter()
+        .map(|(name, mut encoded)| {
+            encoded.sort();
+            let mut hasher = Sha256::new();
+            for value in encoded {
+                hasher.update(value);
+                hasher.update([0]);
+            }
+            (name, hex::encode(hasher.finalize()))
+        })
+        .collect())
+}
+
+fn is_supported_canonical_hook_lifecycle(lifecycle: &str) -> bool {
+    crate::hook_lifecycle::CURSOR_LIFECYCLES
+        .iter()
+        .any(|definition| definition.id == lifecycle)
+}
+
+fn canonical_hook_finding(
+    root: &CanonicalLayerRoot,
+    scope: InventoryScope,
+    name: String,
+    path: Utf8PathBuf,
+    reason_code: &str,
+    format: &str,
+) -> MigrationInventoryEntry {
+    let mut entry = target_entry(
+        name.clone(),
+        path.clone(),
+        AssetKind::Hook,
+        InventoryClassification::Foreign,
+        InventoryProvenance::Canonical,
+        reason_code.to_owned(),
+        None,
+        false,
+        true,
+        false,
+        None,
+        Vec::new(),
+        scope,
+    );
+    entry.source_layer = Some(root.layer);
+    entry.canonical_path = Some(path);
+    entry.entry_key = Some(format!("hooks.{name}"));
+    entry.format = Some(format.to_owned());
+    entry
+}
+
+fn canonical_hook_name_from_command(command: &str) -> Option<String> {
+    let executable = command.split_whitespace().next()?;
+    let relative = executable.strip_prefix("./hooks/")?;
+    let path = Utf8Path::new(relative);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component.as_str(), "" | "." | ".."))
+    {
+        return None;
+    }
+    let name = path.components().next()?.as_str();
+    is_safe_asset_name(name).then(|| name.to_owned())
+}
+
+fn hook_name_from_any_command(command: &str) -> Option<String> {
+    let executable = command.split_whitespace().next()?;
+    let path = Utf8Path::new(executable);
+    let components = path
+        .components()
+        .map(|component| component.as_str())
+        .collect::<Vec<_>>();
+    if let Some(index) = components
+        .iter()
+        .position(|component| *component == "hooks")
+    {
+        if let Some(name) = components
+            .get(index + 1)
+            .filter(|name| is_safe_asset_name(name))
+        {
+            return Some((*name).to_owned());
+        }
+    }
+    path.file_name()
+        .filter(|name| is_safe_asset_name(name))
+        .map(str::to_owned)
+}
+
+fn hook_unit_format(path: &Utf8Path) -> &'static str {
+    match fs::symlink_metadata(path.as_std_path()) {
+        Ok(metadata) if metadata.is_dir() => "directory",
+        Ok(metadata) if metadata.is_file() => "file",
+        _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod hook_inventory_p1_red_tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write(path: &Utf8Path, contents: &str) {
+        fs::create_dir_all(path.parent().unwrap().as_std_path()).unwrap();
+        fs::write(path.as_std_path(), contents).unwrap();
+    }
+
+    fn global_request(home: &Utf8Path, asset_root: &Utf8Path) -> InventoryRequest {
+        InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: asset_root.to_path_buf(),
+            }],
+            deploy_base: home.to_path_buf(),
+            scope: InventoryScope::Global,
+        }
+    }
+
+    #[test]
+    fn cursor_catalog_lifecycles_are_valid_canonical_hook_bindings() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = global_request(home, &asset_root);
+        let lifecycle_names = [
+            "beforeReadFile",
+            "afterAgentResponse",
+            "afterAgentThought",
+            "beforeTabFileRead",
+            "workspaceOpen",
+        ];
+        let catalog_names = crate::hook_lifecycle::CURSOR_LIFECYCLES
+            .iter()
+            .map(|lifecycle| lifecycle.id)
+            .collect::<BTreeSet<_>>();
+        assert!(
+            lifecycle_names
+                .iter()
+                .all(|lifecycle| catalog_names.contains(lifecycle)),
+            "test contract must stay aligned with the canonical Cursor lifecycle catalog"
+        );
+
+        let mut hooks = serde_json::Map::new();
+        for lifecycle in lifecycle_names {
+            let name = format!("{lifecycle}.sh");
+            write(&asset_root.join("hooks").join(&name), "#!/bin/sh\n");
+            hooks.insert(
+                lifecycle.to_owned(),
+                serde_json::json!([{
+                    "command": format!("./hooks/{name}"),
+                }]),
+            );
+        }
+        write(
+            &asset_root.join("hooks.json"),
+            &serde_json::to_string(&serde_json::json!({
+                "version": 1,
+                "hooks": hooks,
+            }))
+            .unwrap(),
+        );
+
+        let report = inventory(&request).unwrap();
+        let accepted = report
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == AssetKind::Hook
+                    && entry.classification == InventoryClassification::CanonicalSource
+            })
+            .map(|entry| entry.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let expected = lifecycle_names
+            .iter()
+            .map(|lifecycle| format!("{lifecycle}.sh"))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            accepted,
+            expected.iter().map(String::as_str).collect(),
+            "every lifecycle in the canonical Cursor catalog must remain inventoryable"
+        );
+        assert!(
+            report.issues.iter().all(|issue| {
+                issue.kind != AssetKind::Hook
+                    || issue.reason_code != "unsupported_canonical_hook_lifecycle"
+            }),
+            "catalog lifecycle was incorrectly rejected: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn malformed_native_hook_container_shapes_are_blocking() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = global_request(home, &asset_root);
+        let scalar = home.join(".cursor/hooks.json");
+        let array = home.join(".codex/hooks.json");
+        write(&scalar, r#"{"hooks":"not-an-event-map"}"#);
+        write(&array, r#"{"hooks":[{"command":".codex/hooks/run.sh"}]}"#);
+        write(&home.join(".codex/hooks/run.sh"), "#!/bin/sh\n");
+
+        let report = inventory(&request).unwrap();
+        let missing = [&scalar, &array]
+            .into_iter()
+            .filter(|path| {
+                !report.issues.iter().any(|issue| {
+                    issue.kind == AssetKind::Hook && issue.path == **path && issue.blocking
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "malformed native Hook containers must fail closed: missing={missing:?}; issues={:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn malformed_native_hook_document_roots_are_blocking() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = global_request(home, &asset_root);
+        let cursor = home.join(".cursor/hooks.json");
+        let hermes = home.join(".hermes/config.yaml");
+        write(&cursor, "[]");
+        write(&hermes, "scalar-root\n");
+
+        let report = inventory(&request).unwrap();
+        let missing = [&cursor, &hermes]
+            .into_iter()
+            .filter(|path| {
+                !report.issues.iter().any(|issue| {
+                    issue.kind == AssetKind::Hook
+                        && issue.path == **path
+                        && issue.reason_code == "invalid_hook_container"
+                        && issue.blocking
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "non-object native Hook document roots must fail closed: \
+             missing={missing:?}; issues={:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn platform_hook_binding_cannot_pair_with_a_different_script_root() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = global_request(home, &asset_root);
+        let container = home.join(".cursor/hooks.json");
+        write(
+            &container,
+            r#"{"hooks":{"afterShellExecution":[{"command":"/tmp/hooks/run.sh","hook":"run.sh"}]}}"#,
+        );
+        write(&home.join(".cursor/hooks/run.sh"), "#!/bin/sh\n");
+
+        let report = inventory(&request).unwrap();
+        let unsafe_binding_blocked = report.issues.iter().any(|issue| {
+            issue.kind == AssetKind::Hook
+                && issue.path == container
+                && issue.blocking
+                && (issue.reason_code.contains("mismatch") || issue.reason_code.contains("invalid"))
+        });
+        assert!(
+            unsafe_binding_blocked,
+            "a binding outside the platform Hook root must not pair with the local script: \
+             entries={:?}; issues={:?}",
+            report.entries, report.issues
+        );
+    }
+
+    #[test]
+    fn inventory_recognizes_current_adapter_hook_command_paths() {
+        let global_temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(global_temp.path()).unwrap();
+        let global_assets = home.join(".ai-config");
+        let global_request = global_request(home, &global_assets);
+        let cursor_container = home.join(".cursor/hooks.json");
+        let codex_container = home.join(".codex/hooks.json");
+        let claude_container = home.join(".claude/settings.json");
+        write(&home.join(".cursor/hooks/cursor.sh"), "#!/bin/sh\n");
+        write(&home.join(".codex/hooks/codex.sh"), "#!/bin/sh\n");
+        write(&home.join(".claude/hooks/claude.sh"), "#!/bin/sh\n");
+        write(
+            &cursor_container,
+            r#"{"hooks":{"afterShellExecution":[{"command":"./hooks/cursor.sh","hook":"cursor.sh"}]}}"#,
+        );
+        write(
+            &codex_container,
+            &serde_json::to_string(&serde_json::json!({
+                "hooks": {
+                    "PostToolUse": [{
+                        "hooks": [{
+                            "command": home.join(".codex/hooks/codex.sh").as_str(),
+                            "hook": "codex.sh",
+                        }],
+                    }],
+                },
+            }))
+            .unwrap(),
+        );
+        write(
+            &claude_container,
+            &serde_json::to_string(&serde_json::json!({
+                "hooks": {
+                    "PostToolUse": [{
+                        "hooks": [{
+                            "command": home.join(".claude/hooks/claude.sh").as_str(),
+                            "hook": "claude.sh",
+                        }],
+                    }],
+                },
+            }))
+            .unwrap(),
+        );
+
+        let global_report = inventory(&global_request).unwrap();
+        let missing_global = [
+            (PlatformId::Cursor, "cursor.sh", &cursor_container),
+            (PlatformId::Codex, "codex.sh", &codex_container),
+            (PlatformId::Claude, "claude.sh", &claude_container),
+        ]
+        .into_iter()
+        .filter(|(platform, name, container)| {
+            !global_report.entries.iter().any(|entry| {
+                entry.kind == AssetKind::Hook
+                    && entry.name == *name
+                    && entry.path == **container
+                    && entry.consumers == vec![*platform]
+            })
+        })
+        .map(|(platform, name, _)| (platform, name))
+        .collect::<Vec<_>>();
+        let global_path_issue = global_report.issues.iter().any(|issue| {
+            issue.kind == AssetKind::Hook
+                && matches!(
+                    issue.reason_code.as_str(),
+                    "hook_binding_script_name_mismatch" | "hook_half_projection"
+                )
+        });
+
+        let project_temp = TempDir::new().unwrap();
+        let project = Utf8Path::from_path(project_temp.path()).unwrap();
+        let project_assets = project.join(".ai-config");
+        let project_request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Project,
+                asset_root: project_assets,
+            }],
+            deploy_base: project.to_path_buf(),
+            scope: InventoryScope::Project,
+        };
+        let project_cursor_container = project.join(".cursor/hooks.json");
+        let project_claude_container = project.join(".claude/settings.json");
+        write(&project.join(".cursor/hooks/shared.sh"), "#!/bin/sh\n");
+        write(
+            &project_cursor_container,
+            r#"{"hooks":{"afterShellExecution":[{"command":".cursor/hooks/shared.sh","hook":"shared.sh"}]}}"#,
+        );
+        write(
+            &project_claude_container,
+            r#"{"hooks":{"PostToolUse":[{"hooks":[{"command":".cursor/hooks/shared.sh","hook":"shared.sh"}]}]}}"#,
+        );
+
+        let project_report = inventory(&project_request).unwrap();
+        let project_binding_recognized = project_report.entries.iter().any(|entry| {
+            entry.kind == AssetKind::Hook
+                && entry.name == "shared.sh"
+                && entry.path == project_claude_container
+                && entry.consumers == vec![PlatformId::Claude]
+        });
+        let project_path_issue = project_report.issues.iter().any(|issue| {
+            issue.kind == AssetKind::Hook
+                && matches!(
+                    issue.reason_code.as_str(),
+                    "hook_binding_script_name_mismatch" | "hook_half_projection"
+                )
+        });
+
+        assert!(
+            missing_global.is_empty()
+                && !global_path_issue
+                && project_binding_recognized
+                && !project_path_issue,
+            "current adapter Hook paths must remain recognizable and complete: \
+             missing_global={missing_global:?} global_issues={:?} \
+             project_binding_recognized={project_binding_recognized} project_issues={:?} \
+             project_entries={:?}",
+            global_report.issues,
+            project_report.issues,
+            project_report.entries
+        );
+    }
+
+    #[test]
+    fn claude_only_project_binding_can_use_the_shared_cursor_hook_script_root() {
+        let temp = TempDir::new().unwrap();
+        let project = Utf8Path::from_path(temp.path()).unwrap();
+        let project_assets = project.join(".ai-config");
+        let request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Project,
+                asset_root: project_assets,
+            }],
+            deploy_base: project.to_path_buf(),
+            scope: InventoryScope::Project,
+        };
+        let shared_script = project.join(".cursor/hooks/shared.sh");
+        write(&shared_script, "#!/bin/sh\n");
+        write(
+            &project.join(".claude/settings.json"),
+            r#"{"hooks":{"PostToolUse":[{"hooks":[{"command":".cursor/hooks/shared.sh","hook":"shared.sh"}]}]}}"#,
+        );
+
+        let report = inventory(&request).unwrap();
+        let script = report
+            .entries
+            .iter()
+            .find(|entry| entry.kind == AssetKind::Hook && entry.path == shared_script)
+            .expect("shared Cursor-path Hook script inventory row");
+        assert!(
+            script.consumers.contains(&PlatformId::Claude),
+            "shared script must disclose Claude consumption: {script:?}"
+        );
+        assert!(
+            report.issues.iter().all(|issue| {
+                issue.kind != AssetKind::Hook
+                    || issue.reason_code != "hook_half_projection"
+                    || issue.path != shared_script
+            }),
+            "a complete Claude-only shared Hook must not retain Cursor's early half issue: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn unknown_nested_command_does_not_forge_a_platform_hook_binding() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = global_request(home, &asset_root);
+        let container = home.join(".cursor/hooks.json");
+        write(
+            &container,
+            r#"{"hooks":{"foreignExtension":{"nested":{"command":".cursor/hooks/ghost.sh"}}}}"#,
+        );
+
+        let report = inventory(&request).unwrap();
+        assert!(
+            report.entries.iter().all(|entry| {
+                entry.kind != AssetKind::Hook || entry.path != container || entry.name != "ghost.sh"
+            }),
+            "unknown nested commands must not be interpreted as native Hook bindings: {:?}",
+            report.entries
+        );
+        assert!(
+            report.issues.iter().all(|issue| {
+                issue.kind != AssetKind::Hook
+                    || issue.path != container
+                    || issue.reason_code != "hook_half_projection"
+            }),
+            "a forged binding must not create a half-projection conflict: {:?}",
+            report.issues
+        );
+    }
+
+    #[test]
+    fn platform_hook_binding_digest_is_isolated_from_siblings_and_unknown_fields() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = global_request(home, &asset_root);
+        let container = home.join(".cursor/hooks.json");
+        for name in ["alpha.sh", "beta.sh"] {
+            write(&home.join(".cursor/hooks").join(name), "#!/bin/sh\n");
+        }
+        let write_container = |beta_matcher: &str, foreign_revision: u64| {
+            write(
+                &container,
+                &serde_json::to_string(&serde_json::json!({
+                    "hooks": {
+                        "afterShellExecution": [
+                            {
+                                "command": ".cursor/hooks/alpha.sh",
+                                "matcher": "alpha",
+                            },
+                            {
+                                "command": ".cursor/hooks/beta.sh",
+                                "matcher": beta_matcher,
+                            },
+                        ],
+                        "foreignExtension": {
+                            "revision": foreign_revision,
+                        },
+                    },
+                }))
+                .unwrap(),
+            );
+        };
+        let alpha_digest = |report: &MigrationInventory| {
+            report
+                .entries
+                .iter()
+                .find(|entry| {
+                    entry.kind == AssetKind::Hook
+                        && entry.path == container
+                        && entry.name == "alpha.sh"
+                })
+                .and_then(|entry| entry.content_digest.clone())
+                .expect("alpha binding digest")
+        };
+
+        write_container("beta-v1", 1);
+        let baseline = inventory(&request).unwrap();
+        write_container("beta-v2", 1);
+        let sibling_changed = inventory(&request).unwrap();
+        write_container("beta-v2", 2);
+        let unknown_changed = inventory(&request).unwrap();
+
+        assert_eq!(
+            alpha_digest(&baseline),
+            alpha_digest(&sibling_changed),
+            "changing beta must not drift alpha's named binding digest"
+        );
+        assert_eq!(
+            alpha_digest(&sibling_changed),
+            alpha_digest(&unknown_changed),
+            "changing an unknown foreign field must not drift alpha's named binding digest"
+        );
+    }
+
+    #[test]
+    fn hook_inventory_fingerprints_canonical_bindings_and_nested_platform_matchers() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let source = asset_root.join("hooks/run.sh");
+        let request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: asset_root.clone(),
+            }],
+            deploy_base: home.to_path_buf(),
+            scope: InventoryScope::Global,
+        };
+        write(&source, "#!/bin/sh\nexit 0\n");
+
+        let write_manifest = |lifecycle: &str, matcher: &str, argument: &str| {
+            write(
+                &asset_root.join("hooks.json"),
+                &serde_json::to_string(&serde_json::json!({
+                    "version": 1,
+                    "hooks": {
+                        lifecycle: [{
+                            "command": format!("./hooks/run.sh {argument}"),
+                            "matcher": matcher,
+                        }],
+                    },
+                }))
+                .unwrap(),
+            );
+        };
+        let write_nested_platform_binding = |path: &Utf8Path, script_root: &str, matcher: &str| {
+            write(
+                path,
+                &serde_json::to_string(&serde_json::json!({
+                    "hooks": {
+                        "PostToolUse": [{
+                            "matcher": matcher,
+                            "timeout": 3,
+                            "hooks": [{
+                                "type": "command",
+                                "command": format!("{script_root}/run.sh"),
+                                "hook": "run.sh",
+                            }],
+                        }],
+                    },
+                }))
+                .unwrap(),
+            );
+        };
+
+        write_manifest("afterShellExecution", "Bash", "first");
+        write_nested_platform_binding(&home.join(".codex/hooks.json"), ".codex/hooks", "Bash");
+        write_nested_platform_binding(&home.join(".claude/settings.json"), ".claude/hooks", "Bash");
+        let before = inventory(&request).unwrap();
+
+        write_manifest("beforeShellExecution", "Edit|Write", "second");
+        write_nested_platform_binding(
+            &home.join(".codex/hooks.json"),
+            ".codex/hooks",
+            "Edit|Write",
+        );
+        write_nested_platform_binding(
+            &home.join(".claude/settings.json"),
+            ".claude/hooks",
+            "Edit|Write",
+        );
+        let after = inventory(&request).unwrap();
+
+        let digest_at = |report: &MigrationInventory, path: &Utf8Path| {
+            report
+                .entries
+                .iter()
+                .find(|entry| {
+                    entry.kind == AssetKind::Hook && entry.name == "run.sh" && entry.path == path
+                })
+                .and_then(|entry| entry.content_digest.clone())
+                .unwrap_or_else(|| panic!("missing Hook digest at {path}"))
+        };
+        let canonical_changed = digest_at(&before, &source) != digest_at(&after, &source);
+        let codex_changed = digest_at(&before, &home.join(".codex/hooks.json"))
+            != digest_at(&after, &home.join(".codex/hooks.json"));
+        let claude_changed = digest_at(&before, &home.join(".claude/settings.json"))
+            != digest_at(&after, &home.join(".claude/settings.json"));
+        let plan_changed = before.plan_digest != after.plan_digest;
+
+        assert!(
+            canonical_changed && codex_changed && claude_changed && plan_changed,
+            "Hook semantic fingerprints must include canonical lifecycle/matcher/args and \
+             nested platform matcher: canonical_changed={canonical_changed} \
+             codex_changed={codex_changed} claude_changed={claude_changed} \
+             plan_changed={plan_changed}"
+        );
+    }
+
+    #[test]
+    fn invalid_hook_lifecycle_and_unresolvable_command_leaf_are_never_canonical_sources() {
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: asset_root.clone(),
+            }],
+            deploy_base: home.to_path_buf(),
+            scope: InventoryScope::Global,
+        };
+        write(&asset_root.join("hooks/unknown.sh"), "#!/bin/sh\n");
+        write(
+            &asset_root.join("hooks/bundle/hook.yaml"),
+            "entry: scripts/missing.sh\n",
+        );
+        write(&asset_root.join("hooks/file.sh"), "#!/bin/sh\n");
+        write(
+            &asset_root.join("hooks.json"),
+            &serde_json::to_string(&serde_json::json!({
+                "version": 1,
+                "hooks": {
+                    "notARealLifecycle": [{
+                        "command": "./hooks/unknown.sh",
+                    }],
+                    "sessionStart": [
+                        {
+                            "command": "./hooks/bundle/scripts/missing.sh",
+                        },
+                        {
+                            "command": "./hooks/file.sh/missing",
+                        },
+                    ],
+                },
+            }))
+            .unwrap(),
+        );
+
+        let report = inventory(&request).unwrap();
+        let accepted = report
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == AssetKind::Hook
+                    && entry.classification == InventoryClassification::CanonicalSource
+            })
+            .map(|entry| entry.name.clone())
+            .collect::<BTreeSet<_>>();
+        let blocking_reasons = report
+            .issues
+            .iter()
+            .filter(|issue| issue.kind == AssetKind::Hook && issue.blocking)
+            .map(|issue| issue.reason_code.as_str())
+            .collect::<BTreeSet<_>>();
+        let unknown_is_unsupported = report.unsupported.iter().any(|entry| {
+            entry.kind == AssetKind::Hook
+                && entry.name == "unknown.sh"
+                && entry.reason_code.contains("lifecycle")
+        });
+
+        assert!(
+            accepted.is_empty()
+                && (unknown_is_unsupported
+                    || blocking_reasons.contains("unsupported_canonical_hook_lifecycle"))
+                && blocking_reasons.contains("canonical_hook_command_missing_entry")
+                && blocking_reasons.contains("canonical_hook_command_unit_shape_mismatch"),
+            "invalid Hook bindings must fail closed: accepted={accepted:?} \
+             blocking_reasons={blocking_reasons:?} unsupported={:?}",
+            report.unsupported
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hook_bundles_with_non_regular_nodes_fail_closed_in_source_and_platform_targets() {
+        use std::os::unix::net::UnixListener;
+
+        let temp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        let request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: asset_root.clone(),
+            }],
+            deploy_base: home.to_path_buf(),
+            scope: InventoryScope::Global,
+        };
+        write(
+            &asset_root.join("hooks/bad-bundle/scripts/run.sh"),
+            "#!/bin/sh\n",
+        );
+        write(
+            &asset_root.join("hooks/good-bundle/scripts/run.sh"),
+            "#!/bin/sh\n",
+        );
+        write(
+            &asset_root.join("hooks.json"),
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":"./hooks/bad-bundle/scripts/run.sh"},{"command":"./hooks/good-bundle/scripts/run.sh"}]}}"#,
+        );
+        let _canonical_socket =
+            UnixListener::bind(asset_root.join("hooks/bad-bundle/state.sock").as_std_path())
+                .unwrap();
+
+        write(
+            &home.join(".cursor/hooks/good-bundle/scripts/run.sh"),
+            "#!/bin/sh\n",
+        );
+        let platform_bundle = home.join(".cursor/hooks/good-bundle");
+        let _platform_socket =
+            UnixListener::bind(platform_bundle.join("state.sock").as_std_path()).unwrap();
+
+        let report = inventory(&request).unwrap();
+        let bad_canonical_accepted = report.entries.iter().any(|entry| {
+            entry.kind == AssetKind::Hook
+                && entry.name == "bad-bundle"
+                && entry.classification == InventoryClassification::CanonicalSource
+        });
+        let bad_platform_accepted = report.entries.iter().any(|entry| {
+            entry.kind == AssetKind::Hook
+                && entry.path == platform_bundle
+                && entry.provenance == InventoryProvenance::PlatformCurrent
+        });
+        let issue_reasons = report
+            .issues
+            .iter()
+            .filter(|issue| issue.kind == AssetKind::Hook && issue.blocking)
+            .map(|issue| issue.reason_code.as_str())
+            .collect::<BTreeSet<_>>();
+        let canonical_bundle_blocked = report.issues.iter().any(|issue| {
+            issue.kind == AssetKind::Hook
+                && issue.blocking
+                && issue.path == asset_root.join("hooks/bad-bundle")
+        });
+        let platform_bundle_blocked = report.issues.iter().any(|issue| {
+            issue.kind == AssetKind::Hook && issue.blocking && issue.path == platform_bundle
+        });
+
+        assert!(
+            !bad_canonical_accepted
+                && !bad_platform_accepted
+                && canonical_bundle_blocked
+                && platform_bundle_blocked,
+            "Hook bundles must reject sockets/FIFOs/Other nodes: \
+             bad_canonical_accepted={bad_canonical_accepted} \
+             bad_platform_accepted={bad_platform_accepted} \
+             issue_reasons={issue_reasons:?}"
+        );
+    }
+}
+
+fn canonical_hook_units(
+    hooks: &Utf8Path,
+    scope: InventoryScope,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<BTreeMap<String, Utf8PathBuf>, CoreError> {
+    let metadata = match fs::symlink_metadata(hooks.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                hooks,
+                scope,
+                "unreadable_canonical_hook_directory",
+            );
+            return Ok(BTreeMap::new());
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            hooks,
+            scope,
+            "unsafe_canonical_hook_directory",
+        );
+        return Ok(BTreeMap::new());
+    }
+    let mut units = BTreeMap::new();
+    for entry in direct_lstat_entries(hooks)? {
+        if is_excluded_agent_entry(&entry.name) || !is_safe_asset_name(&entry.name) {
+            continue;
+        }
+        match entry.shape {
+            EntryShape::RegularFile => {
+                if fs::read_to_string(entry.path.as_std_path()).is_err() {
+                    push_inventory_issue(
+                        issues,
+                        AssetKind::Hook,
+                        &entry.path,
+                        scope,
+                        "unreadable_canonical_hook_unit",
+                    );
+                    continue;
+                }
+                units.insert(entry.name, entry.path);
+            }
+            EntryShape::Directory => {
+                if hook_tree_contains_link(&entry.path)? {
+                    push_inventory_issue(
+                        issues,
+                        AssetKind::Hook,
+                        &entry.path,
+                        scope,
+                        "unsafe_canonical_hook_bundle_symlink",
+                    );
+                    continue;
+                }
+                units.insert(entry.name, entry.path);
+            }
+            EntryShape::Symlink => push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                &entry.path,
+                scope,
+                "unsafe_canonical_hook_unit_symlink",
+            ),
+            EntryShape::Other => push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                &entry.path,
+                scope,
+                "unsafe_canonical_hook_unit_non_regular",
+            ),
+        }
+    }
+    Ok(units)
+}
+
+fn hook_tree_contains_link(root: &Utf8Path) -> Result<bool, CoreError> {
+    for entry in direct_lstat_entries(root)? {
+        match entry.shape {
+            EntryShape::Symlink | EntryShape::Other => return Ok(true),
+            EntryShape::Directory if hook_tree_contains_link(&entry.path)? => return Ok(true),
+            EntryShape::Directory | EntryShape::RegularFile => {}
+        }
+    }
+    Ok(false)
 }
 
 fn scan_canonical_agents(
@@ -889,18 +2086,28 @@ fn canonical_asset(
         kind,
         secret_keys: Vec::new(),
         targets: None,
+        hook_binding_digest: None,
     })
 }
 
 fn canonical_entry(asset: &CanonicalAsset, scope: InventoryScope) -> MigrationInventoryEntry {
-    MigrationInventoryEntry {
+    let content_digest = if asset.kind == AssetKind::Hook {
+        asset
+            .hook_binding_digest
+            .as_ref()
+            .map(|binding| hook_compound_digest(&asset.digest, binding))
+            .unwrap_or_else(|| asset.digest.clone())
+    } else {
+        asset.digest.clone()
+    };
+    let mut entry = MigrationInventoryEntry {
         name: asset.name.clone(),
         path: asset.path.clone(),
         kind: asset.kind,
         classification: InventoryClassification::CanonicalSource,
         provenance: InventoryProvenance::Canonical,
         reason_code: "canonical_source".to_owned(),
-        content_digest: Some(asset.digest.clone()),
+        content_digest: Some(content_digest),
         currently_consumed: false,
         blocking: false,
         ownership_state: InventoryOwnershipState::CanonicalSource,
@@ -915,7 +2122,21 @@ fn canonical_entry(asset: &CanonicalAsset, scope: InventoryScope) -> MigrationIn
         format: None,
         secret_keys: asset.secret_keys.clone(),
         trust_requirement: TrustRequirement::None,
+    };
+    if asset.kind == AssetKind::Hook {
+        entry.entry_key = Some(format!("hooks.{}", asset.name));
+        entry.format = Some(hook_unit_format(&asset.path).to_owned());
     }
+    entry
+}
+
+fn hook_compound_digest(script_digest: &str, binding_digest: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"hook\0");
+    hasher.update(script_digest.as_bytes());
+    hasher.update([0]);
+    hasher.update(binding_digest.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1788,6 +3009,810 @@ fn scan_legacy_codex_prompts(
     Ok(())
 }
 
+fn scan_hook_targets(
+    request: &InventoryRequest,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    unsupported: &mut Vec<MigrationInventoryUnsupported>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    scan_hook_platform(
+        request,
+        PlatformId::Cursor,
+        &request.deploy_base.join(".cursor/hooks.json"),
+        &request.deploy_base.join(".cursor/hooks"),
+        "json",
+        inspect_cursor_hook_bindings,
+        canonical,
+        entries,
+        issues,
+    )?;
+    scan_hook_platform(
+        request,
+        PlatformId::Codex,
+        &request.deploy_base.join(".codex/hooks.json"),
+        &request.deploy_base.join(".codex/hooks"),
+        "json",
+        inspect_codex_hook_bindings,
+        canonical,
+        entries,
+        issues,
+    )?;
+    scan_hook_platform(
+        request,
+        PlatformId::Claude,
+        &request.deploy_base.join(".claude/settings.json"),
+        &request.deploy_base.join(".claude/hooks"),
+        "json",
+        inspect_claude_hook_bindings,
+        canonical,
+        entries,
+        issues,
+    )?;
+    if request.scope == InventoryScope::Global {
+        scan_hook_platform(
+            request,
+            PlatformId::Hermes,
+            &request.deploy_base.join(".hermes/config.yaml"),
+            &request.deploy_base.join(".hermes/hooks"),
+            "yaml",
+            inspect_hermes_hook_bindings,
+            canonical,
+            entries,
+            issues,
+        )?;
+    } else {
+        let reason_code = match request.scope {
+            InventoryScope::Workspace => "hermes_workspace_hook_unsupported",
+            InventoryScope::Project => "hermes_project_hook_unsupported",
+            InventoryScope::Global => unreachable!("global Hermes Hooks were scanned above"),
+        };
+        for asset in canonical
+            .values()
+            .filter(|asset| asset.kind == AssetKind::Hook)
+        {
+            unsupported.push(MigrationInventoryUnsupported {
+                kind: AssetKind::Hook,
+                platform: PlatformId::Hermes,
+                name: asset.name.clone(),
+                source_layer: Some(asset.layer),
+                canonical_path: Some(asset.path.clone()),
+                scope: request.scope,
+                reason_code: reason_code.to_owned(),
+            });
+        }
+    }
+    scan_legacy_hook_container(
+        request,
+        &request.deploy_base.join(".codex/config.toml"),
+        canonical,
+        entries,
+        issues,
+    )?;
+    Ok(())
+}
+
+struct HookBindingInspection {
+    bindings: BTreeMap<String, String>,
+    name_mismatch: bool,
+    shared_cursor_names: BTreeSet<String>,
+}
+
+struct HookBindingScan {
+    names: BTreeSet<String>,
+    shared_cursor_names: BTreeSet<String>,
+}
+
+type HookBindingInspector = fn(&str, &Utf8Path) -> Result<HookBindingInspection, ()>;
+
+#[allow(clippy::too_many_arguments)]
+fn scan_hook_platform(
+    request: &InventoryRequest,
+    platform: PlatformId,
+    container: &Utf8Path,
+    scripts: &Utf8Path,
+    format: &str,
+    inspect: HookBindingInspector,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    let trust = hook_trust_requirement(platform, request.scope);
+    let binding_scan = scan_hook_binding_container(
+        &request.deploy_base,
+        container,
+        format,
+        inspect,
+        platform,
+        InventoryProvenance::PlatformCurrent,
+        "platform_hook_binding_unowned",
+        true,
+        true,
+        trust,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    let script_names = scan_hook_script_root(
+        &request.deploy_base,
+        scripts,
+        platform,
+        trust,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    let mut shared_script_names = BTreeSet::new();
+    if platform == PlatformId::Claude {
+        for name in &binding_scan.shared_cursor_names {
+            let shared_path = request.deploy_base.join(".cursor/hooks").join(name);
+            let shared_entry = entries.iter_mut().find(|entry| {
+                entry.kind == AssetKind::Hook
+                    && entry.provenance == InventoryProvenance::PlatformCurrent
+                    && entry.path == shared_path
+                    && entry.consumers.contains(&PlatformId::Cursor)
+            });
+            if let Some(entry) = shared_entry {
+                if !entry.consumers.contains(&PlatformId::Claude) {
+                    entry.consumers.push(PlatformId::Claude);
+                }
+                entry.blocking = matches!(
+                    entry.classification,
+                    InventoryClassification::Foreign
+                        | InventoryClassification::UnsafeLink
+                        | InventoryClassification::BrokenLink
+                        | InventoryClassification::CaseCollision
+                );
+                shared_script_names.insert(name.clone());
+                issues.retain(|issue| {
+                    !(issue.kind == AssetKind::Hook
+                        && issue.path == shared_path
+                        && issue.scope == request.scope
+                        && issue.reason_code == "hook_half_projection")
+                });
+            }
+        }
+    }
+    let component_names = binding_scan
+        .names
+        .iter()
+        .chain(&script_names)
+        .chain(&shared_script_names)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for name in component_names {
+        let has_binding = binding_scan.names.contains(&name);
+        let has_script = script_names.contains(&name) || shared_script_names.contains(&name);
+        if has_binding ^ has_script {
+            let missing_component = if binding_scan.shared_cursor_names.contains(&name) {
+                request.deploy_base.join(".cursor/hooks").join(&name)
+            } else {
+                scripts.join(&name)
+            };
+            for entry in entries.iter_mut().filter(|entry| {
+                entry.kind == AssetKind::Hook
+                    && entry.name == name
+                    && entry.provenance == InventoryProvenance::PlatformCurrent
+                    && entry.consumers == vec![platform]
+                    && (entry.path == container || entry.path == missing_component)
+            }) {
+                entry.blocking = true;
+            }
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                if has_binding {
+                    container
+                } else {
+                    &missing_component
+                },
+                request.scope,
+                "hook_half_projection",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn hook_trust_requirement(platform: PlatformId, scope: InventoryScope) -> TrustRequirement {
+    if platform == PlatformId::Codex && scope != InventoryScope::Global {
+        TrustRequirement::TrustedProjectWithIndependentReview
+    } else {
+        TrustRequirement::None
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_hook_binding_container(
+    approved_root: &Utf8Path,
+    container: &Utf8Path,
+    format: &str,
+    inspect: HookBindingInspector,
+    platform: PlatformId,
+    provenance: InventoryProvenance,
+    reason_code: &str,
+    currently_consumed: bool,
+    block_with_source: bool,
+    trust: TrustRequirement,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<HookBindingScan, CoreError> {
+    if mcp_parent_issue(approved_root, container).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            container,
+            scope,
+            "unsafe_hook_container_parent",
+        );
+        return Ok(HookBindingScan {
+            names: BTreeSet::new(),
+            shared_cursor_names: BTreeSet::new(),
+        });
+    }
+    let metadata = match fs::symlink_metadata(container.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(HookBindingScan {
+                names: BTreeSet::new(),
+                shared_cursor_names: BTreeSet::new(),
+            })
+        }
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                container,
+                scope,
+                "unreadable_hook_container",
+            );
+            return Ok(HookBindingScan {
+                names: BTreeSet::new(),
+                shared_cursor_names: BTreeSet::new(),
+            });
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            container,
+            scope,
+            "unsafe_hook_container",
+        );
+        return Ok(HookBindingScan {
+            names: BTreeSet::new(),
+            shared_cursor_names: BTreeSet::new(),
+        });
+    }
+    let raw = match fs::read_to_string(container.as_std_path()) {
+        Ok(raw) => raw,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                container,
+                scope,
+                "unreadable_hook_container",
+            );
+            return Ok(HookBindingScan {
+                names: BTreeSet::new(),
+                shared_cursor_names: BTreeSet::new(),
+            });
+        }
+    };
+    let inspection = match inspect(&raw, approved_root) {
+        Ok(inspection) => inspection,
+        Err(()) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                container,
+                scope,
+                "invalid_hook_container",
+            );
+            return Ok(HookBindingScan {
+                names: BTreeSet::new(),
+                shared_cursor_names: BTreeSet::new(),
+            });
+        }
+    };
+    if inspection.name_mismatch {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            container,
+            scope,
+            "hook_binding_script_name_mismatch",
+        );
+    }
+    let shared_cursor_names = inspection.shared_cursor_names;
+    let bindings = inspection.bindings;
+    let names = bindings.keys().cloned().collect::<BTreeSet<_>>();
+    for (name, digest) in bindings {
+        let source = canonical.get(&(asset_kind_order(AssetKind::Hook), name.clone()));
+        let mut entry = target_entry(
+            name.clone(),
+            container.to_path_buf(),
+            AssetKind::Hook,
+            InventoryClassification::Foreign,
+            provenance.clone(),
+            reason_code.to_owned(),
+            Some(digest),
+            currently_consumed,
+            block_with_source && source.is_some(),
+            false,
+            source,
+            vec![platform],
+            scope,
+        );
+        entry.entry_key = Some(format!("hooks.{name}"));
+        entry.format = Some(format.to_owned());
+        entry.trust_requirement = trust;
+        entries.push(entry);
+    }
+    Ok(HookBindingScan {
+        names,
+        shared_cursor_names,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_hook_script_root(
+    approved_root: &Utf8Path,
+    scripts: &Utf8Path,
+    platform: PlatformId,
+    trust: TrustRequirement,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<BTreeSet<String>, CoreError> {
+    if mcp_parent_issue(approved_root, &scripts.join(".inventory-probe")).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            scripts,
+            scope,
+            "unsafe_hook_script_parent",
+        );
+        return Ok(BTreeSet::new());
+    }
+    let metadata = match fs::symlink_metadata(scripts.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Hook,
+                scripts,
+                scope,
+                "unreadable_hook_script_directory",
+            );
+            return Ok(BTreeSet::new());
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Hook,
+            scripts,
+            scope,
+            "unsafe_hook_script_directory",
+        );
+        return Ok(BTreeSet::new());
+    }
+    let mut names = BTreeSet::new();
+    for direct in direct_lstat_entries(scripts)? {
+        if is_excluded_agent_entry(&direct.name) || !is_safe_asset_name(&direct.name) {
+            continue;
+        }
+        let source = canonical.get(&(asset_kind_order(AssetKind::Hook), direct.name.clone()));
+        let (classification, reason_code, content_digest, blocking, followed, unit_format) =
+            match direct.shape {
+                EntryShape::Symlink => match classify_link(&direct.path, source, &[]) {
+                    Ok(result) if result.0 == InventoryClassification::ManagedLink => (
+                        result.0,
+                        result.1,
+                        result.2,
+                        result.3,
+                        result.4,
+                        source.map_or("unknown", |asset| hook_unit_format(&asset.path)),
+                    ),
+                    Ok(_) | Err(_) => {
+                        push_inventory_issue(
+                            issues,
+                            AssetKind::Hook,
+                            &direct.path,
+                            scope,
+                            "unsafe_hook_script_symlink",
+                        );
+                        continue;
+                    }
+                },
+                EntryShape::RegularFile => {
+                    if fs::read_to_string(direct.path.as_std_path()).is_err() {
+                        push_inventory_issue(
+                            issues,
+                            AssetKind::Hook,
+                            &direct.path,
+                            scope,
+                            "unreadable_hook_script",
+                        );
+                        continue;
+                    }
+                    let result =
+                        classify_regular_asset(&direct.path, source, false, "no_canonical_hook")?;
+                    (result.0, result.1, result.2, result.3, result.4, "file")
+                }
+                EntryShape::Directory => {
+                    if hook_tree_contains_link(&direct.path)? {
+                        push_inventory_issue(
+                            issues,
+                            AssetKind::Hook,
+                            &direct.path,
+                            scope,
+                            "unsafe_hook_script_bundle_symlink",
+                        );
+                        continue;
+                    }
+                    let result =
+                        classify_regular_asset(&direct.path, source, false, "no_canonical_hook")?;
+                    (
+                        result.0,
+                        result.1,
+                        result.2,
+                        result.3,
+                        result.4,
+                        "directory",
+                    )
+                }
+                EntryShape::Other => {
+                    push_inventory_issue(
+                        issues,
+                        AssetKind::Hook,
+                        &direct.path,
+                        scope,
+                        "unsafe_hook_script_non_regular",
+                    );
+                    continue;
+                }
+            };
+        names.insert(direct.name.clone());
+        let mut entry = target_entry(
+            direct.name,
+            direct.path,
+            AssetKind::Hook,
+            classification,
+            InventoryProvenance::PlatformCurrent,
+            reason_code,
+            content_digest,
+            true,
+            blocking,
+            followed,
+            source,
+            vec![platform],
+            scope,
+        );
+        entry.format = Some(unit_format.to_owned());
+        entry.trust_requirement = trust;
+        entries.push(entry);
+    }
+    Ok(names)
+}
+
+fn scan_legacy_hook_container(
+    request: &InventoryRequest,
+    container: &Utf8Path,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    scan_hook_binding_container(
+        &request.deploy_base,
+        container,
+        "toml",
+        inspect_grouped_toml_hook_bindings,
+        PlatformId::Codex,
+        InventoryProvenance::PlatformLegacy,
+        "legacy_codex_inline_hook",
+        true,
+        false,
+        hook_trust_requirement(PlatformId::Codex, request.scope),
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    Ok(())
+}
+
+fn inspect_cursor_hook_bindings(
+    raw: &str,
+    deploy_base: &Utf8Path,
+) -> Result<HookBindingInspection, ()> {
+    let document = serde_json::from_str::<serde_json::Value>(raw).map_err(|_| ())?;
+    inspect_direct_hook_document(&document, PlatformId::Cursor, deploy_base)
+}
+
+fn inspect_codex_hook_bindings(
+    raw: &str,
+    deploy_base: &Utf8Path,
+) -> Result<HookBindingInspection, ()> {
+    let document = serde_json::from_str::<serde_json::Value>(raw).map_err(|_| ())?;
+    inspect_grouped_hook_document(&document, PlatformId::Codex, deploy_base)
+}
+
+fn inspect_claude_hook_bindings(
+    raw: &str,
+    deploy_base: &Utf8Path,
+) -> Result<HookBindingInspection, ()> {
+    let document = serde_json::from_str::<serde_json::Value>(raw).map_err(|_| ())?;
+    inspect_grouped_hook_document(&document, PlatformId::Claude, deploy_base)
+}
+
+fn inspect_hermes_hook_bindings(
+    raw: &str,
+    deploy_base: &Utf8Path,
+) -> Result<HookBindingInspection, ()> {
+    let document = serde_yaml::from_str::<serde_yaml::Value>(raw).map_err(|_| ())?;
+    let document = serde_json::to_value(document).map_err(|_| ())?;
+    inspect_direct_hook_document(&document, PlatformId::Hermes, deploy_base)
+}
+
+fn inspect_grouped_toml_hook_bindings(
+    raw: &str,
+    deploy_base: &Utf8Path,
+) -> Result<HookBindingInspection, ()> {
+    let document = toml::from_str::<toml::Value>(raw).map_err(|_| ())?;
+    let document = serde_json::to_value(document).map_err(|_| ())?;
+    inspect_grouped_hook_document(&document, PlatformId::Codex, deploy_base)
+}
+
+fn empty_hook_binding_inspection() -> HookBindingInspection {
+    HookBindingInspection {
+        bindings: BTreeMap::new(),
+        name_mismatch: false,
+        shared_cursor_names: BTreeSet::new(),
+    }
+}
+
+fn hook_event_map(
+    document: &serde_json::Value,
+) -> Result<Option<&serde_json::Map<String, serde_json::Value>>, ()> {
+    let root = document.as_object().ok_or(())?;
+    match root.get("hooks") {
+        None => Ok(None),
+        Some(serde_json::Value::Object(hooks)) => Ok(Some(hooks)),
+        Some(_) => Err(()),
+    }
+}
+
+fn inspect_direct_hook_document(
+    document: &serde_json::Value,
+    platform: PlatformId,
+    deploy_base: &Utf8Path,
+) -> Result<HookBindingInspection, ()> {
+    let Some(hooks) = hook_event_map(document)? else {
+        return Ok(empty_hook_binding_inspection());
+    };
+    let mut values = BTreeMap::<String, Vec<Vec<u8>>>::new();
+    let mut name_mismatch = false;
+    let mut shared_cursor_names = BTreeSet::new();
+    for (lifecycle, entries) in hooks {
+        let Some(entries) = entries.as_array() else {
+            // Unknown extension keys are preserved by generated renderers and are
+            // outside the native lifecycle grammar. They cannot create bindings.
+            continue;
+        };
+        for entry in entries {
+            let Some(binding) = entry.as_object() else {
+                continue;
+            };
+            let semantic_value = serde_json::json!({
+                "lifecycle": lifecycle,
+                "binding": entry,
+            });
+            record_native_hook_binding(
+                platform,
+                deploy_base,
+                binding,
+                &semantic_value,
+                &mut values,
+                &mut name_mismatch,
+                &mut shared_cursor_names,
+            );
+        }
+    }
+    Ok(finish_hook_binding_inspection(
+        values,
+        name_mismatch,
+        shared_cursor_names,
+    ))
+}
+
+fn inspect_grouped_hook_document(
+    document: &serde_json::Value,
+    platform: PlatformId,
+    deploy_base: &Utf8Path,
+) -> Result<HookBindingInspection, ()> {
+    let Some(hooks) = hook_event_map(document)? else {
+        return Ok(empty_hook_binding_inspection());
+    };
+    let mut values = BTreeMap::<String, Vec<Vec<u8>>>::new();
+    let mut name_mismatch = false;
+    let mut shared_cursor_names = BTreeSet::new();
+    for (lifecycle, groups) in hooks {
+        let Some(groups) = groups.as_array() else {
+            continue;
+        };
+        for group in groups {
+            let Some(group_object) = group.as_object() else {
+                continue;
+            };
+            let Some(bindings) = group_object
+                .get("hooks")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for binding in bindings {
+                let Some(binding_object) = binding.as_object() else {
+                    continue;
+                };
+                let mut isolated_group = group_object.clone();
+                isolated_group.insert(
+                    "hooks".to_owned(),
+                    serde_json::Value::Array(vec![binding.clone()]),
+                );
+                let semantic_value = serde_json::json!({
+                    "lifecycle": lifecycle,
+                    "group": isolated_group,
+                });
+                record_native_hook_binding(
+                    platform,
+                    deploy_base,
+                    binding_object,
+                    &semantic_value,
+                    &mut values,
+                    &mut name_mismatch,
+                    &mut shared_cursor_names,
+                );
+            }
+        }
+    }
+    Ok(finish_hook_binding_inspection(
+        values,
+        name_mismatch,
+        shared_cursor_names,
+    ))
+}
+
+fn record_native_hook_binding(
+    platform: PlatformId,
+    deploy_base: &Utf8Path,
+    binding: &serde_json::Map<String, serde_json::Value>,
+    semantic_value: &serde_json::Value,
+    values: &mut BTreeMap<String, Vec<Vec<u8>>>,
+    name_mismatch: &mut bool,
+    shared_cursor_names: &mut BTreeSet<String>,
+) {
+    let Some(command) = binding.get("command").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let marker_present = binding.contains_key("hook");
+    let marker = binding
+        .get("hook")
+        .and_then(serde_json::Value::as_str)
+        .filter(|name| is_safe_asset_name(name))
+        .map(str::to_owned);
+    let command_name = hook_name_from_platform_command(command, platform, deploy_base);
+    let name = match (marker_present, marker, command_name) {
+        (true, Some(marker), Some(command_name)) if marker == command_name => Some(marker),
+        (true, _, _) => {
+            *name_mismatch = true;
+            None
+        }
+        (false, _, command_name) => command_name,
+    };
+    if let Some(name) = name {
+        if platform == PlatformId::Claude && claude_command_uses_shared_cursor_root(command, &name)
+        {
+            shared_cursor_names.insert(name.clone());
+        }
+        if let Ok(encoded) = serde_json::to_vec(semantic_value) {
+            values.entry(name).or_default().push(encoded);
+        }
+    }
+}
+
+fn finish_hook_binding_inspection(
+    values: BTreeMap<String, Vec<Vec<u8>>>,
+    name_mismatch: bool,
+    shared_cursor_names: BTreeSet<String>,
+) -> HookBindingInspection {
+    let bindings = values
+        .into_iter()
+        .map(|(name, mut encoded_values)| {
+            encoded_values.sort();
+            let mut hasher = Sha256::new();
+            hasher.update(b"hook-container-entry\0");
+            hasher.update(name.as_bytes());
+            hasher.update([0]);
+            for encoded in encoded_values {
+                hasher.update(encoded);
+                hasher.update([0]);
+            }
+            (name, hex::encode(hasher.finalize()))
+        })
+        .collect();
+    HookBindingInspection {
+        bindings,
+        name_mismatch,
+        shared_cursor_names,
+    }
+}
+
+fn claude_command_uses_shared_cursor_root(command: &str, name: &str) -> bool {
+    let Some(executable) = command.split_whitespace().next() else {
+        return false;
+    };
+    Utf8Path::new(executable)
+        .components()
+        .map(|component| component.as_str())
+        .eq([".cursor", "hooks", name])
+}
+
+fn hook_name_from_platform_command(
+    command: &str,
+    platform: PlatformId,
+    deploy_base: &Utf8Path,
+) -> Option<String> {
+    let executable = command.split_whitespace().next()?;
+    let path = Utf8Path::new(executable);
+    if path.is_absolute() {
+        let relative_root = match platform {
+            PlatformId::Cursor => ".cursor/hooks",
+            PlatformId::Codex => ".codex/hooks",
+            PlatformId::Claude => ".claude/hooks",
+            PlatformId::Hermes => ".hermes/hooks",
+            PlatformId::AiConfig => return None,
+        };
+        let name = path.file_name().filter(|name| is_safe_asset_name(name))?;
+        return (path == deploy_base.join(relative_root).join(name)).then(|| name.to_owned());
+    }
+    let components = path
+        .components()
+        .map(|component| component.as_str())
+        .collect::<Vec<_>>();
+    let name = match platform {
+        PlatformId::Cursor => match components.as_slice() {
+            [".", "hooks", name] | ["hooks", name] | [".cursor", "hooks", name] => Some(*name),
+            _ => None,
+        },
+        PlatformId::Codex => match components.as_slice() {
+            [".codex", "hooks", name] => Some(*name),
+            _ => None,
+        },
+        PlatformId::Claude => match components.as_slice() {
+            [".claude", "hooks", name]
+            | [".cursor", "hooks", name]
+            | ["${CLAUDE_PROJECT_DIR}", ".claude", "hooks", name] => Some(*name),
+            _ => None,
+        },
+        PlatformId::Hermes => match components.as_slice() {
+            [".hermes", "hooks", name] => Some(*name),
+            _ => None,
+        },
+        PlatformId::AiConfig => None,
+    }?;
+    is_safe_asset_name(name).then(|| name.to_owned())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scan_mcp_container(
     approved_root: &Utf8Path,
@@ -2316,7 +4341,8 @@ fn mark_case_collisions(entries: &mut [MigrationInventoryEntry]) {
 fn is_legacy_only(entry: &MigrationInventoryEntry) -> bool {
     entry.provenance == InventoryProvenance::CanonicalLegacy
         || (entry.provenance == InventoryProvenance::PlatformLegacy
-            && (!entry.currently_consumed || entry.kind == AssetKind::Command))
+            && (!entry.currently_consumed
+                || matches!(entry.kind, AssetKind::Command | AssetKind::Hook)))
 }
 
 fn asset_kind_order(kind: AssetKind) -> u8 {
@@ -2777,5 +4803,365 @@ mod tests {
         assert!(!serialized.contains("workspace-legacy"));
         assert!(!serialized.contains(".codex/commands"));
         assert!(!serialized.contains(".hermes/commands"));
+    }
+
+    #[test]
+    fn hook_halves_split_across_layers_are_both_cross_layer_conflicts() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let global = root.join("home/.ai-config");
+        let workspace = root.join("workspace/.ai-config");
+        let request = InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Workspace,
+                    asset_root: workspace.clone(),
+                },
+            ],
+            deploy_base: root.join("workspace"),
+            scope: InventoryScope::Workspace,
+        };
+        write(
+            &global.join("hooks.json"),
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/split.sh"}]}}"#,
+        );
+        write(&workspace.join("hooks/split.sh"), "#!/bin/sh\nexit 0\n");
+
+        let report = inventory(&request).unwrap();
+        let findings = report
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == AssetKind::Hook
+                    && entry.name == "split.sh"
+                    && entry.provenance == InventoryProvenance::Canonical
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            findings.len(),
+            2,
+            "both layer-local halves must remain visible"
+        );
+        assert_eq!(
+            findings
+                .iter()
+                .filter_map(|entry| entry.source_layer)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([SourceLayer::Global, SourceLayer::Workspace])
+        );
+        assert!(
+            findings.iter().all(|entry| {
+                entry.reason_code == "cross_layer_hook_pair"
+                    && entry.blocking
+                    && entry.classification == InventoryClassification::Foreign
+                    && entry.ownership_state == InventoryOwnershipState::Foreign
+                    && !entry.owned
+                    && !entry.selectable
+            }),
+            "split Hook halves must both be cross-layer conflicts: {findings:?}"
+        );
+        assert!(!report.entries.iter().any(|entry| {
+            entry.kind == AssetKind::Hook
+                && entry.name == "split.sh"
+                && entry.classification == InventoryClassification::CanonicalSource
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_hook_inventory_uses_complete_same_layer_pairs_and_local_platform_targets() {
+        const HOOK_BODY_SENTINEL: &str = "workspace-hook-body-must-not-serialize";
+        const HOME_PLATFORM_SENTINEL: &str = "workspace-hook-home-platform-must-not-be-read";
+        const AGENT_HOOKS_SENTINEL: &str = "legacy-agent-hooks-must-not-be-read";
+        const RENDERER_SENTINEL: &str = "hook-renderer-must-not-run-during-inventory";
+
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let home = root.join("home");
+        let workspace = root.join("workspace");
+        let global = home.join(".ai-config");
+        let workspace_assets = workspace.join(".ai-config");
+        let request = InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Workspace,
+                    asset_root: workspace_assets.clone(),
+                },
+            ],
+            deploy_base: workspace.clone(),
+            scope: InventoryScope::Workspace,
+        };
+
+        write(
+            &global.join("hooks.json"),
+            &format!(
+                r#"{{
+  "version": 1,
+  "hooks": {{
+    "sessionStart": [
+      {{
+        "command": "./hooks/shared.py {RENDERER_SENTINEL}",
+        "matcher": "{HOOK_BODY_SENTINEL}"
+      }},
+      {{
+        "command": "./hooks/global-only.py {RENDERER_SENTINEL}",
+        "matcher": "{HOOK_BODY_SENTINEL}"
+      }}
+    ]
+  }}
+}}"#
+            ),
+        );
+        write(
+            &global.join("hooks/shared.py"),
+            &format!("# global shared\n# {HOOK_BODY_SENTINEL}\n"),
+        );
+        write(
+            &global.join("hooks/global-only.py"),
+            &format!("# global only\n# {HOOK_BODY_SENTINEL}\n"),
+        );
+        write(
+            &workspace_assets.join("hooks.json"),
+            &format!(
+                r#"{{
+  "version": 1,
+  "hooks": {{
+    "beforeShellExecution": [
+      {{
+        "command": "./hooks/shared.py {RENDERER_SENTINEL}",
+        "matcher": "{HOOK_BODY_SENTINEL}"
+      }},
+      {{
+        "command": "./hooks/workspace-only.py {RENDERER_SENTINEL}",
+        "matcher": "{HOOK_BODY_SENTINEL}"
+      }}
+    ]
+  }}
+}}"#
+            ),
+        );
+        write(
+            &workspace_assets.join("hooks/shared.py"),
+            &format!("# workspace shared\n# {HOOK_BODY_SENTINEL}\n"),
+        );
+        write(
+            &workspace_assets.join("hooks/workspace-only.py"),
+            &format!("# workspace only\n# {HOOK_BODY_SENTINEL}\n"),
+        );
+
+        let effective_sources = [
+            ("shared.py", workspace_assets.join("hooks/shared.py")),
+            ("global-only.py", global.join("hooks/global-only.py")),
+            (
+                "workspace-only.py",
+                workspace_assets.join("hooks/workspace-only.py"),
+            ),
+        ];
+        for (directory, config) in [
+            (".cursor/hooks", workspace.join(".cursor/hooks.json")),
+            (".codex/hooks", workspace.join(".codex/hooks.json")),
+            (".claude/hooks", workspace.join(".claude/settings.json")),
+        ] {
+            let hooks = effective_sources
+                .iter()
+                .map(|(name, _)| {
+                    serde_json::json!({
+                        "command": format!("{directory}/{name}"),
+                        "managedBy": "untrusted-inventory-marker",
+                        "hook": name,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let hooks = if directory == ".cursor/hooks" {
+                serde_json::json!({
+                    "afterShellExecution": hooks,
+                })
+            } else {
+                let groups = hooks
+                    .into_iter()
+                    .map(|hook| serde_json::json!({ "hooks": [hook] }))
+                    .collect::<Vec<_>>();
+                serde_json::json!({
+                    "PostToolUse": groups,
+                })
+            };
+            let document = serde_json::json!({
+                "hooks": hooks,
+                "rendererSentinel": RENDERER_SENTINEL,
+                "permissions": {
+                    "private": HOOK_BODY_SENTINEL,
+                },
+            });
+            write(&config, &serde_json::to_string_pretty(&document).unwrap());
+            for (name, source) in &effective_sources {
+                let target = workspace.join(directory).join(name);
+                fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+                std::os::unix::fs::symlink(source.as_std_path(), target.as_std_path()).unwrap();
+            }
+        }
+
+        for path in [
+            home.join(".cursor/hooks.json"),
+            home.join(".codex/hooks.json"),
+            home.join(".codex/config.toml"),
+            home.join(".claude/settings.json"),
+            home.join(".hermes/config.yaml"),
+        ] {
+            write(&path, HOME_PLATFORM_SENTINEL);
+        }
+        write(
+            &home.join(".hermes/agent-hooks/home-only.sh"),
+            AGENT_HOOKS_SENTINEL,
+        );
+        write(
+            &workspace.join(".hermes/agent-hooks/workspace-only.sh"),
+            AGENT_HOOKS_SENTINEL,
+        );
+
+        let home_before = path_content_digest(&home).unwrap();
+        let workspace_before = path_content_digest(&workspace).unwrap();
+        let first = inventory(&request).unwrap();
+        let second = inventory(&request).unwrap();
+        assert_eq!(first.plan_digest, second.plan_digest);
+        assert_eq!(first.entries, second.entries);
+        assert_eq!(first.unsupported, second.unsupported);
+        assert_eq!(first.issues, second.issues);
+        assert_eq!(path_content_digest(&home).unwrap(), home_before);
+        assert_eq!(path_content_digest(&workspace).unwrap(), workspace_before);
+
+        let raw_shared = first
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == AssetKind::Hook
+                    && entry.name == "shared.py"
+                    && entry.provenance == InventoryProvenance::Canonical
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            raw_shared.len(),
+            2,
+            "both complete same-layer Hook pairs remain visible as raw canonical rows"
+        );
+        assert_eq!(
+            raw_shared
+                .iter()
+                .map(|entry| entry.source_layer.unwrap())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([SourceLayer::Global, SourceLayer::Workspace])
+        );
+
+        let component = |path: &Utf8Path, entry_key: Option<&str>| {
+            first
+                .entries
+                .iter()
+                .find(|entry| {
+                    entry.kind == AssetKind::Hook
+                        && entry.path == path
+                        && entry.entry_key.as_deref() == entry_key
+                })
+                .unwrap_or_else(|| {
+                    panic!("missing workspace Hook component: {path}#{:?}", entry_key)
+                })
+        };
+        for (name, source) in &effective_sources {
+            let expected_layer = if *name == "global-only.py" {
+                SourceLayer::Global
+            } else {
+                SourceLayer::Workspace
+            };
+            for (platform, config, directory, format, trust) in [
+                (
+                    PlatformId::Cursor,
+                    workspace.join(".cursor/hooks.json"),
+                    ".cursor/hooks",
+                    "json",
+                    TrustRequirement::None,
+                ),
+                (
+                    PlatformId::Codex,
+                    workspace.join(".codex/hooks.json"),
+                    ".codex/hooks",
+                    "json",
+                    TrustRequirement::TrustedProjectWithIndependentReview,
+                ),
+                (
+                    PlatformId::Claude,
+                    workspace.join(".claude/settings.json"),
+                    ".claude/hooks",
+                    "json",
+                    TrustRequirement::None,
+                ),
+            ] {
+                let binding = component(&config, Some(&format!("hooks.{name}")));
+                assert_eq!(binding.name, *name);
+                assert_eq!(binding.provenance, InventoryProvenance::PlatformCurrent);
+                assert_eq!(binding.source_layer, Some(expected_layer));
+                assert_eq!(binding.canonical_path, Some(source.clone()));
+                assert_eq!(binding.consumers, vec![platform]);
+                assert_eq!(binding.scope, InventoryScope::Workspace);
+                assert_eq!(binding.format.as_deref(), Some(format));
+                assert_eq!(binding.trust_requirement, trust);
+                assert!(binding.currently_consumed);
+                assert_eq!(binding.ownership_state, InventoryOwnershipState::Foreign);
+                assert!(!binding.owned && !binding.selectable && !binding.followed);
+
+                let script = component(&workspace.join(directory).join(name), None);
+                assert_eq!(script.name, *name);
+                assert_eq!(script.classification, InventoryClassification::ManagedLink);
+                assert_eq!(script.source_layer, Some(expected_layer));
+                assert_eq!(script.canonical_path, Some(source.clone()));
+                assert_eq!(script.consumers, vec![platform]);
+                assert_eq!(script.scope, InventoryScope::Workspace);
+                assert_eq!(script.format.as_deref(), Some("file"));
+                assert_eq!(script.trust_requirement, trust);
+                assert!(script.currently_consumed);
+                assert!(script.owned && !script.selectable && !script.followed);
+            }
+
+            let unsupported = first
+                .unsupported
+                .iter()
+                .find(|entry| {
+                    entry.kind == AssetKind::Hook
+                        && entry.platform == PlatformId::Hermes
+                        && entry.name == *name
+                        && entry.scope == InventoryScope::Workspace
+                })
+                .unwrap_or_else(|| panic!("missing Hermes workspace Hook unsupported row: {name}"));
+            assert_eq!(unsupported.reason_code, "hermes_workspace_hook_unsupported");
+            assert_eq!(unsupported.source_layer, Some(expected_layer));
+            assert_eq!(unsupported.canonical_path, Some(source.clone()));
+        }
+
+        let serialized = serde_json::to_string(&first).unwrap();
+        assert!(!serialized.contains(HOOK_BODY_SENTINEL));
+        assert!(!serialized.contains(HOME_PLATFORM_SENTINEL));
+        assert!(!serialized.contains(AGENT_HOOKS_SENTINEL));
+        assert!(!serialized.contains(RENDERER_SENTINEL));
+        assert!(!serialized.contains("agent-hooks"));
+        assert!(!serialized.contains("home-only"));
+        assert!(first.entries.iter().all(|entry| {
+            !entry.path.starts_with(home.join(".cursor"))
+                && !entry.path.starts_with(home.join(".codex"))
+                && !entry.path.starts_with(home.join(".claude"))
+                && !entry.path.starts_with(home.join(".hermes"))
+                && !entry.path.starts_with(workspace.join(".hermes"))
+        }));
+        assert!(first.issues.iter().all(|issue| {
+            !issue.path.starts_with(home.join(".cursor"))
+                && !issue.path.starts_with(home.join(".codex"))
+                && !issue.path.starts_with(home.join(".claude"))
+                && !issue.path.starts_with(home.join(".hermes"))
+                && !issue.path.starts_with(workspace.join(".hermes"))
+        }));
     }
 }

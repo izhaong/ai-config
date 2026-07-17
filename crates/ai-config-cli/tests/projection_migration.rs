@@ -2756,3 +2756,528 @@ fn command_inventory_is_fail_closed_for_links_wrong_shapes_and_kind_scoped_colli
                 )
         }));
 }
+
+const HOOK_BODY_SENTINEL: &str = "t010-hook-body-must-never-serialize";
+const HOOK_SECRET_SENTINEL: &str = "t010-hook-secret-must-never-serialize";
+const HOOK_EXTERNAL_SENTINEL: &str = "t010-hook-external-must-never-be-read";
+
+fn write_hook_unit(asset_root: &Path, name: &str, label: &str) -> PathBuf {
+    let path = asset_root.join("hooks").join(name);
+    write(
+        &path,
+        &format!("#!/bin/sh\n# {HOOK_BODY_SENTINEL}-{label}\nexit 0\n"),
+    );
+    path
+}
+
+fn write_hook_manifest(asset_root: &Path, commands: &[&str]) {
+    let bindings = commands
+        .iter()
+        .map(|command| {
+            serde_json::json!({
+                "command": format!("{command} {HOOK_SECRET_SENTINEL}"),
+                "matcher": "ai-config"
+            })
+        })
+        .collect::<Vec<_>>();
+    write(
+        &asset_root.join("hooks.json"),
+        &serde_json::to_string(&serde_json::json!({
+            "version": 1,
+            "hooks": { "afterShellExecution": bindings }
+        }))
+        .expect("serialize canonical Hook manifest"),
+    );
+}
+
+fn hook_entry_at<'a>(report: &'a Value, name: &str, path: &Path) -> &'a Value {
+    report["entries"]
+        .as_array()
+        .expect("Hook entries")
+        .iter()
+        .find(|entry| {
+            entry["kind"] == "hook"
+                && entry["name"] == name
+                && entry["path"] == path.to_string_lossy().as_ref()
+        })
+        .unwrap_or_else(|| panic!("missing Hook entry name={name:?} path={path:?}: {report:?}"))
+}
+
+fn assert_hook_report_redacted(stdout: &str, stderr: &str) {
+    for sentinel in [
+        HOOK_BODY_SENTINEL,
+        HOOK_SECRET_SENTINEL,
+        HOOK_EXTERNAL_SENTINEL,
+    ] {
+        assert!(
+            !stdout.contains(sentinel) && !stderr.contains(sentinel),
+            "Hook inventory leaked {sentinel}"
+        );
+    }
+}
+
+#[test]
+fn global_hook_inventory_reports_four_current_pairs_and_codex_legacy_without_rendering() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    let source = write_hook_unit(&asset_root, "run.sh", "global");
+    write_hook_manifest(&asset_root, &["./hooks/run.sh"]);
+
+    for path in [
+        home.path().join(".cursor/hooks/run.sh"),
+        home.path().join(".codex/hooks/run.sh"),
+        home.path().join(".claude/hooks/run.sh"),
+        home.path().join(".hermes/hooks/run.sh"),
+    ] {
+        fs::create_dir_all(path.parent().expect("Hook target parent"))
+            .expect("create Hook target parent");
+        symlink(&source, &path).expect("link canonical Hook unit");
+    }
+    write(
+        &home.path().join(".cursor/hooks.json"),
+        &format!(
+            r#"{{"version":1,"hooks":{{"afterShellExecution":[{{"command":".cursor/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"run.sh"}}]}}}}"#
+        ),
+    );
+    write(
+        &home.path().join(".codex/hooks.json"),
+        &format!(
+            r#"{{"version":1,"hooks":{{"PostToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":".codex/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"run.sh"}}]}}]}}}}"#
+        ),
+    );
+    write(
+        &home.path().join(".claude/settings.json"),
+        &format!(
+            r#"{{"permissions":{{"allow":[]}},"hooks":{{"PostToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":".claude/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"run.sh"}}]}}]}}}}"#
+        ),
+    );
+    write(
+        &home.path().join(".hermes/config.yaml"),
+        &format!(
+            "model: foreign-setting\nhooks:\n  post_tool_call:\n    - command: .hermes/hooks/run.sh {HOOK_SECRET_SENTINEL}\n      managedBy: ai-config\n      hook: run.sh\n"
+        ),
+    );
+    write(
+        &home.path().join(".codex/config.toml"),
+        &format!(
+            "[hooks]\nPostToolUse = [{{ matcher = \"Bash\", hooks = [{{ type = \"command\", command = \".codex/hooks/run.sh {HOOK_SECRET_SENTINEL}\", managedBy = \"ai-config\", hook = \"run.sh\" }}] }}]\n"
+        ),
+    );
+
+    let before = tree_snapshot(home.path());
+    let output = rules_inventory_output(home.path(), &asset_root);
+    assert!(
+        output.status.success(),
+        "global Hook inventory failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 global Hook inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 global Hook stderr");
+    assert_hook_report_redacted(&stdout, &stderr);
+    assert_eq!(
+        tree_snapshot(home.path()),
+        before,
+        "Hook inventory must be strictly read-only"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("global Hook inventory JSON");
+
+    let canonical = hook_entry_at(&report, "run.sh", &source);
+    assert_eq!(canonical["classification"], "canonical_source");
+    assert_eq!(canonical["ownership_state"], "canonical_source");
+    assert_eq!(canonical["provenance"], "canonical");
+    assert_eq!(canonical["reason_code"], "canonical_source");
+    assert_eq!(canonical["entry_key"], "hooks.run.sh");
+    assert_eq!(canonical["format"], "file");
+    assert_eq!(canonical["source_layer"], "global");
+    assert_eq!(canonical["scope"], "global");
+
+    for (platform, container, format) in [
+        ("cursor", home.path().join(".cursor/hooks.json"), "json"),
+        ("codex", home.path().join(".codex/hooks.json"), "json"),
+        ("claude", home.path().join(".claude/settings.json"), "json"),
+        ("hermes", home.path().join(".hermes/config.yaml"), "yaml"),
+    ] {
+        let binding = hook_entry_at(&report, "run.sh", &container);
+        assert_eq!(binding["classification"], "foreign", "binding={binding:?}");
+        assert_eq!(binding["ownership_state"], "foreign", "binding={binding:?}");
+        assert_eq!(binding["provenance"], "platform_current");
+        assert_eq!(binding["reason_code"], "platform_hook_binding_unowned");
+        assert_eq!(binding["entry_key"], "hooks.run.sh");
+        assert_eq!(binding["format"], format);
+        assert_eq!(binding["consumers"], serde_json::json!([platform]));
+        assert_eq!(binding["currently_consumed"], true);
+        assert_eq!(binding["blocking"], true);
+        assert_eq!(binding["owned"], false);
+        assert_eq!(binding["selectable"], false);
+
+        let script = hook_entry_at(
+            &report,
+            "run.sh",
+            &home.path().join(format!(".{platform}/hooks/run.sh")),
+        );
+        assert_eq!(script["classification"], "managed_link");
+        assert_eq!(script["ownership_state"], "managed_link");
+        assert_eq!(script["provenance"], "platform_current");
+        assert_eq!(script["reason_code"], "canonical_symlink");
+        assert_eq!(script["format"], "file");
+        assert_eq!(script["consumers"], serde_json::json!([platform]));
+        assert_eq!(script["currently_consumed"], true);
+        assert_eq!(script["owned"], true);
+        assert_eq!(script["followed"], false);
+        assert_eq!(script["canonical_path"], source.to_string_lossy().as_ref());
+    }
+
+    let legacy = hook_entry_at(&report, "run.sh", &home.path().join(".codex/config.toml"));
+    assert_eq!(legacy["classification"], "foreign");
+    assert_eq!(legacy["ownership_state"], "foreign");
+    assert_eq!(legacy["provenance"], "platform_legacy");
+    assert_eq!(legacy["reason_code"], "legacy_codex_inline_hook");
+    assert_eq!(legacy["entry_key"], "hooks.run.sh");
+    assert_eq!(legacy["format"], "toml");
+    assert_eq!(legacy["currently_consumed"], true);
+    assert_eq!(legacy["blocking"], false);
+    assert_eq!(legacy["owned"], false);
+    assert_eq!(legacy["selectable"], false);
+}
+
+#[test]
+fn project_hook_inventory_blocks_half_cross_layer_and_unsafe_paths_without_scanning_home() {
+    let home = TempDir::new().expect("temporary HOME");
+    let repo = TempDir::new().expect("temporary project");
+    let canonical_outside = TempDir::new().expect("outside canonical Hook bundle");
+    let global_root = home.path().join(".ai-config");
+    let project_root = repo.path().join(".ai-config");
+
+    write_hook_unit(&global_root, "cross.sh", "global-cross");
+    write_hook_manifest(&global_root, &["./hooks/cross.sh"]);
+    let project_source = write_hook_unit(&project_root, "shared.sh", "project-shared");
+    write_hook_unit(&project_root, "unsafe-child.sh", "project-child");
+    write(
+        &project_root.join("hooks/orphan-bundle/hook.yaml"),
+        &format!("entry: scripts/run.sh\nmarker: {HOOK_BODY_SENTINEL}\n"),
+    );
+    write(
+        &project_root.join("hooks/orphan-bundle/scripts/run.sh"),
+        &format!("#!/bin/sh\n# {HOOK_BODY_SENTINEL}\n"),
+    );
+    write(
+        &canonical_outside.path().join("run.sh"),
+        HOOK_EXTERNAL_SENTINEL,
+    );
+    write(
+        &project_root.join("hooks/canonical-link-bundle/hook.yaml"),
+        "entry: scripts/run.sh\n",
+    );
+    fs::create_dir_all(project_root.join("hooks/canonical-link-bundle/scripts"))
+        .expect("create canonical Hook bundle scripts");
+    symlink(
+        canonical_outside.path().join("run.sh"),
+        project_root.join("hooks/canonical-link-bundle/scripts/run.sh"),
+    )
+    .expect("link canonical Hook bundle descendant");
+    write(
+        &project_root.join("hooks/platform-bundle/hook.yaml"),
+        "entry: scripts/run.sh\n",
+    );
+    write(
+        &project_root.join("hooks/platform-bundle/scripts/run.sh"),
+        &format!("#!/bin/sh\n# {HOOK_BODY_SENTINEL}-platform-bundle\n"),
+    );
+    write_hook_manifest(
+        &project_root,
+        &[
+            "./hooks/shared.sh",
+            "./hooks/unsafe-child.sh",
+            "./hooks/cross.sh",
+            "./hooks/canonical-link-bundle/scripts/run.sh",
+            "./hooks/platform-bundle/scripts/run.sh",
+            "/tmp/absolute-hook.sh",
+            "../parent-hook.sh",
+        ],
+    );
+
+    write(
+        &repo.path().join(".codex/hooks.json"),
+        &format!(
+            r#"{{"version":1,"hooks":{{"PostToolUse":[{{"hooks":[{{"type":"command","command":".codex/hooks/shared.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"shared.sh"}},{{"type":"command","command":".codex/hooks/unsafe-child.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"unsafe-child.sh"}}]}}]}}}}"#
+        ),
+    );
+    fs::create_dir_all(repo.path().join(".codex/hooks")).expect("create Codex Hook root");
+    symlink(&project_source, repo.path().join(".codex/hooks/shared.sh"))
+        .expect("link project Hook");
+
+    let outside = TempDir::new().expect("outside Hook owner");
+    write(&outside.path().join("child.sh"), HOOK_EXTERNAL_SENTINEL);
+    write(
+        &outside.path().join("bundle/hook.yaml"),
+        HOOK_EXTERNAL_SENTINEL,
+    );
+    symlink(
+        outside.path().join("child.sh"),
+        repo.path().join(".codex/hooks/unsafe-child.sh"),
+    )
+    .expect("link unsafe Hook child");
+    symlink(outside.path(), repo.path().join(".cursor")).expect("link unsafe Hook parent");
+    fs::create_dir_all(repo.path().join(".claude/hooks")).expect("create Claude Hook root");
+    symlink(
+        outside.path().join("bundle"),
+        repo.path().join(".claude/hooks/orphan-bundle"),
+    )
+    .expect("link unsafe Hook bundle");
+    write(
+        &repo.path().join(".claude/hooks/platform-bundle/hook.yaml"),
+        "entry: scripts/run.sh\n",
+    );
+    fs::create_dir_all(repo.path().join(".claude/hooks/platform-bundle/scripts"))
+        .expect("create platform Hook bundle scripts");
+    symlink(
+        outside.path().join("child.sh"),
+        repo.path()
+            .join(".claude/hooks/platform-bundle/scripts/run.sh"),
+    )
+    .expect("link platform Hook bundle descendant");
+
+    for path in [
+        home.path().join(".cursor/hooks/home-only.sh"),
+        home.path().join(".codex/hooks/home-only.sh"),
+        home.path().join(".claude/hooks/home-only.sh"),
+        home.path().join(".hermes/hooks/home-only.sh"),
+        repo.path().join(".hermes/hooks/project-forbidden.sh"),
+    ] {
+        write(&path, HOOK_EXTERNAL_SENTINEL);
+    }
+    write(
+        &repo.path().join(".hermes/config.yaml"),
+        &format!(
+            "hooks:\n  post_tool_call:\n    - command: .hermes/hooks/project-forbidden.sh {HOOK_SECRET_SENTINEL}\n"
+        ),
+    );
+
+    let home_before = tree_snapshot(home.path());
+    let repo_before = tree_snapshot(repo.path());
+    let outside_before = tree_snapshot(outside.path());
+    let canonical_outside_before = tree_snapshot(canonical_outside.path());
+    let output = rules_inventory_output(home.path(), repo.path());
+    assert!(
+        output.status.success(),
+        "project Hook inventory failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 project Hook inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 project Hook stderr");
+    assert_hook_report_redacted(&stdout, &stderr);
+    assert_eq!(tree_snapshot(home.path()), home_before, "HOME changed");
+    assert_eq!(tree_snapshot(repo.path()), repo_before, "project changed");
+    assert_eq!(
+        tree_snapshot(outside.path()),
+        outside_before,
+        "outside Hook owner changed"
+    );
+    assert_eq!(
+        tree_snapshot(canonical_outside.path()),
+        canonical_outside_before,
+        "outside canonical Hook owner changed"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("project Hook inventory JSON");
+    assert_eq!(report["scope"], "project");
+
+    let shared = hook_entry_at(&report, "shared.sh", &project_source);
+    assert_eq!(shared["classification"], "canonical_source");
+    assert_eq!(shared["source_layer"], "project");
+    assert_eq!(shared["entry_key"], "hooks.shared.sh");
+
+    for (name, reason) in [
+        ("cross.sh", "cross_layer_hook_pair"),
+        ("absolute-hook.sh", "canonical_hook_command_absolute"),
+        ("parent-hook.sh", "canonical_hook_command_parent_escape"),
+    ] {
+        let entry = hook_entry_at(&report, name, &project_root.join("hooks.json"));
+        assert_eq!(entry["classification"], "foreign", "entry={entry:?}");
+        assert_eq!(entry["ownership_state"], "foreign", "entry={entry:?}");
+        assert_eq!(entry["provenance"], "canonical", "entry={entry:?}");
+        assert_eq!(entry["reason_code"], reason, "entry={entry:?}");
+        assert_eq!(entry["blocking"], true, "entry={entry:?}");
+        assert_eq!(entry["owned"], false, "entry={entry:?}");
+        assert_eq!(entry["selectable"], false, "entry={entry:?}");
+    }
+    let orphan = hook_entry_at(
+        &report,
+        "orphan-bundle",
+        &project_root.join("hooks/orphan-bundle"),
+    );
+    assert_eq!(
+        orphan["reason_code"],
+        "canonical_hook_script_without_binding"
+    );
+    assert_eq!(orphan["format"], "directory");
+    assert_eq!(orphan["blocking"], true);
+
+    let codex_binding = hook_entry_at(&report, "shared.sh", &repo.path().join(".codex/hooks.json"));
+    assert_eq!(codex_binding["classification"], "foreign");
+    assert_eq!(
+        codex_binding["reason_code"],
+        "platform_hook_binding_unowned"
+    );
+    assert_eq!(codex_binding["blocking"], true);
+    assert_eq!(
+        codex_binding["trust_requirement"],
+        "trusted_project_with_independent_review"
+    );
+    let codex_script = hook_entry_at(
+        &report,
+        "shared.sh",
+        &repo.path().join(".codex/hooks/shared.sh"),
+    );
+    assert_eq!(codex_script["classification"], "managed_link");
+    assert_eq!(
+        codex_script["trust_requirement"],
+        "trusted_project_with_independent_review"
+    );
+
+    let assert_issue = |fragment: &str, reason: &str| {
+        let issue = report["issues"]
+            .as_array()
+            .expect("Hook issues")
+            .iter()
+            .find(|issue| {
+                issue["kind"] == "hook"
+                    && issue["reason_code"] == reason
+                    && issue["path"]
+                        .as_str()
+                        .is_some_and(|path| path.contains(fragment))
+            })
+            .unwrap_or_else(|| panic!("missing Hook issue {reason}: {report:?}"));
+        assert_eq!(issue["reason_code"], reason);
+        assert_eq!(issue["blocking"], true);
+    };
+    assert_issue("/.cursor/hooks.json", "unsafe_hook_container_parent");
+    assert_issue(
+        "/.codex/hooks/unsafe-child.sh",
+        "unsafe_hook_script_symlink",
+    );
+    assert_issue("/.codex/hooks.json", "hook_half_projection");
+    assert_issue("/.claude/hooks/orphan-bundle", "unsafe_hook_script_symlink");
+    assert_issue(
+        "/.ai-config/hooks/canonical-link-bundle",
+        "unsafe_canonical_hook_bundle_symlink",
+    );
+    assert_issue(
+        "/.claude/hooks/platform-bundle",
+        "unsafe_hook_script_bundle_symlink",
+    );
+
+    let unsupported = report["unsupported"]
+        .as_array()
+        .expect("Hook unsupported rows")
+        .iter()
+        .find(|entry| {
+            entry["kind"] == "hook" && entry["platform"] == "hermes" && entry["name"] == "shared.sh"
+        })
+        .expect("Hermes project Hook unsupported row");
+    assert_eq!(
+        unsupported["reason_code"],
+        "hermes_project_hook_unsupported"
+    );
+    assert_eq!(unsupported["source_layer"], "project");
+    assert_eq!(
+        unsupported["canonical_path"],
+        project_source.to_string_lossy().as_ref()
+    );
+
+    let serialized = serde_json::to_string(&report).expect("serialize project Hook report");
+    assert!(!serialized.contains("home-only"));
+    assert!(!serialized.contains("project-forbidden"));
+    assert!(!serialized.contains(outside.path().to_string_lossy().as_ref()));
+    assert!(!serialized.contains(canonical_outside.path().to_string_lossy().as_ref()));
+}
+
+#[test]
+fn foreign_hook_inventory_halves_and_marker_command_mismatches_are_blocking() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    fs::create_dir_all(&asset_root).expect("create empty canonical root");
+    write(
+        &home.path().join(".cursor/hooks.json"),
+        &format!(
+            r#"{{"version":1,"hooks":{{"afterShellExecution":[{{"command":".cursor/hooks/binding-only.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"binding-only.sh"}},{{"command":".cursor/hooks/actual.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"claimed.sh"}}]}}}}"#
+        ),
+    );
+    write(
+        &home.path().join(".cursor/hooks/script-only.sh"),
+        &format!("#!/bin/sh\n# {HOOK_BODY_SENTINEL}-script-only\n"),
+    );
+    write(
+        &home.path().join(".cursor/hooks/claimed.sh"),
+        &format!("#!/bin/sh\n# {HOOK_BODY_SENTINEL}-claimed\n"),
+    );
+
+    let before = tree_snapshot(home.path());
+    let output = rules_inventory_output(home.path(), &asset_root);
+    assert!(
+        output.status.success(),
+        "foreign Hook safety inventory failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 foreign Hook inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 foreign Hook stderr");
+    assert_hook_report_redacted(&stdout, &stderr);
+    assert_eq!(
+        tree_snapshot(home.path()),
+        before,
+        "foreign Hook inventory wrote"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("foreign Hook inventory JSON");
+
+    let binding_only = hook_entry_at(
+        &report,
+        "binding-only.sh",
+        &home.path().join(".cursor/hooks.json"),
+    );
+    assert_eq!(binding_only["classification"], "foreign");
+    assert_eq!(binding_only["ownership_state"], "foreign");
+    assert_eq!(binding_only["provenance"], "platform_current");
+    assert_eq!(binding_only["blocking"], true);
+    assert_eq!(binding_only["owned"], false);
+    assert_eq!(binding_only["selectable"], false);
+
+    let script_only = hook_entry_at(
+        &report,
+        "script-only.sh",
+        &home.path().join(".cursor/hooks/script-only.sh"),
+    );
+    assert_eq!(script_only["classification"], "foreign");
+    assert_eq!(script_only["ownership_state"], "foreign");
+    assert_eq!(script_only["provenance"], "platform_current");
+    assert_eq!(script_only["blocking"], true);
+    assert_eq!(script_only["owned"], false);
+    assert_eq!(script_only["selectable"], false);
+
+    let assert_blocking_issue = |path: &Path, reason: &str| {
+        let issue = report["issues"]
+            .as_array()
+            .expect("foreign Hook issues")
+            .iter()
+            .find(|issue| {
+                issue["kind"] == "hook"
+                    && issue["path"] == path.to_string_lossy().as_ref()
+                    && issue["reason_code"] == reason
+            })
+            .unwrap_or_else(|| panic!("missing foreign Hook issue {reason}: {report:?}"));
+        assert_eq!(issue["blocking"], true);
+    };
+    assert_blocking_issue(
+        &home.path().join(".cursor/hooks.json"),
+        "hook_half_projection",
+    );
+    assert_blocking_issue(
+        &home.path().join(".cursor/hooks/script-only.sh"),
+        "hook_half_projection",
+    );
+    assert_blocking_issue(
+        &home.path().join(".cursor/hooks.json"),
+        "hook_binding_script_name_mismatch",
+    );
+}

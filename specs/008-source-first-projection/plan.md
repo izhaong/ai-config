@@ -986,6 +986,28 @@ CLI global/project/security RED 3/3、Workspace core RED 1/1 均实际运行；�
 完整 migration E2E 18 passed、core migration 6 passed、strict clippy 通过。T010.4 仍未完成：Hooks
 inventory 必须继续 RED→GREEN；Workspace 的 Skills/Rules/MCP/Agents 统一补证仍是未完成边界。
 
+**执行状态（2026-07-17，Hooks inventory checkpoint）**：补齐 global/workspace/project Hook
+复合盘点。canonical Hook 只能由同一 source layer 的 `hooks.json#hooks.<name>` binding 与
+`hooks/<name>` 单文件或 bundle 共同组成，按整项执行 `global → workspace → project` overlay；
+binding-only、script-only 和跨 layer 拼接都 blocking，不能生成半投影。current target 固定为
+Cursor `.cursor/hooks.json` + `.cursor/hooks/`、Codex `.codex/hooks.json` + `.codex/hooks/`、
+Claude `.claude/settings.json` + `.claude/hooks/`，Hermes 仅 global 使用 `.hermes/config.yaml` +
+`.hermes/hooks/`，workspace/project 明确 `unsupported`；Codex inline `config.toml#hooks` 只作
+legacy inventory，永不授予 ownership/selectable。canonical lifecycle、matcher、argument 与平台
+外层 matcher 都进入 opaque digest/plan digest；unknown lifecycle、缺失 bundle leaf、file-as-dir、
+binding marker/command name mismatch、foreign half、父路径/后代 symlink 及 socket/FIFO/Other 节点
+均 fail-closed。盘点只在 approved deploy root 内 lstat/read，报告不包含脚本正文、binding 原文或
+secret value。CLI 首轮 2/2、Workspace core 1/1、安全复审 1/3 与 P1 复审 1/3 均取得真实 RED；
+后续 catalog/native-shape/digest-isolation 复审 4/4、split cross-layer 复审 1/1 也取得真实 RED。
+malformed document root 与跨平台脚本根复审 2/2 同样实际失败后修复。最终 Hooks CLI 3 passed、完整
+migration E2E 21 passed；现有 adapter 合法 command 路径复审 1/1 真实失败后修复，最终 core
+Claude-only shared Cursor root 复审 1/1 也先 RED 后 GREEN。最终 core Hooks/migration 19 passed、
+strict clippy 与 core+CLI 全量测试通过；
+生命周期直接引用唯一 Cursor catalog，平台 binding 按 Cursor/Hermes
+direct、Codex/Claude grouped、legacy TOML 独立解析，具名 digest 不受 sibling/foreign 字段污染。
+T010.4 仍未完成：Workspace 的 Skills/Rules/MCP/Agents 统一补证、CLI scope 接线与 lifecycle overlay
+必须单独 RED→GREEN 后，才能进入 import/adopt/rollback。
+
 - [x] **T010.1 Write failing inventory tests**：legacy marker copy、unmarked equal copy、different copy、correct/wrong/broken symlink、`.cc-switch` external_owned、plugin/builtin、case-only collision、dotfiles in digest、unknown-root link 不跟随；另补未知不可读 target lstat-only、external platform link 不获 ownership、builtin 不重复盘点。
 - [ ] **T010.2 Write failing migration/import/adopt E2E**：inventory no-write；plan deterministic；stale digest/action reject；未选择项零写入；不存在平台级/来源级 bulk takeover；Equivalent 逐 action-id 备份后 adopt；不同内容 foreign 直接 adopt 拒绝、必须先 import；`.cc-switch` 逐项选择；canonical-first then projection；transaction failure rollback；repeat plan noop；rollback refuses drifted post-state；import preview 显示 normalized diff、明确 destination source layer/absolute path、secret preflight 结果；foreign `AGENTS.md` 只有显式 import 后才进入 Prompt source 且平台原件不删除。
 - [x] **T010.3 Verify RED**：首轮 4 tests 编译并实际运行，均因顶层 `migrate` 不存在而失败；安全复审扩为 6 tests 后由最小 Skills inventory 实现转 GREEN。
