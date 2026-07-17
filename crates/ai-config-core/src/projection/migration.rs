@@ -61,6 +61,7 @@ pub enum InventoryProvenance {
 pub enum InventoryClassification {
     CanonicalSource,
     LegacyMcpCandidate,
+    LegacyAgentCandidate,
     ManagedLink,
     LegacyMarkerCandidate,
     Equivalent,
@@ -101,9 +102,9 @@ pub struct MigrationInventoryEntry {
     /// Platforms which can consume this exact target.  Empty means a source or external row.
     pub consumers: Vec<PlatformId>,
     pub scope: InventoryScope,
-    /// Named entry within a generated MCP container; absent for direct assets and sources.
+    /// Named entry within a generated container; absent for direct assets and sources.
     pub entry_key: Option<String>,
-    /// Container syntax for named MCP entries.  It never contains rendered configuration bytes.
+    /// Source or target syntax/shape.  It never contains rendered configuration bytes or bodies.
     pub format: Option<String>,
     /// Canonical MCP references only.  Literal platform values are deliberately never exposed.
     pub secret_keys: Vec<String>,
@@ -168,6 +169,12 @@ enum EntryShape {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanonicalAgentSchemaError {
+    Invalid,
+    NameMismatch,
+}
+
 struct DirectEntry {
     name: String,
     path: Utf8PathBuf,
@@ -179,8 +186,14 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
     let mut raw_canonical = Vec::new();
     let mut effective = BTreeMap::new();
     let mut issues = Vec::new();
+    let mut legacy_canonical_agents = Vec::new();
     for root in layers {
-        for asset in canonical_assets(root, request.scope, &mut issues)? {
+        for asset in canonical_assets(
+            root,
+            request.scope,
+            &mut issues,
+            &mut legacy_canonical_agents,
+        )? {
             effective.insert(
                 (asset_kind_order(asset.kind), asset.name.clone()),
                 asset.clone(),
@@ -212,6 +225,7 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         .iter()
         .map(|asset| canonical_entry(asset, request.scope))
         .collect::<Vec<_>>();
+    entries.extend(legacy_canonical_agents);
     let mut unsupported = Vec::new();
 
     scan_skill_root(
@@ -256,6 +270,13 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
     )?;
     scan_rules(request, &effective, &mut entries)?;
     scan_mcp_targets(
+        request,
+        &effective,
+        &mut entries,
+        &mut unsupported,
+        &mut issues,
+    )?;
+    scan_agent_targets(
         request,
         &effective,
         &mut entries,
@@ -359,6 +380,7 @@ fn canonical_assets(
     root: &CanonicalLayerRoot,
     scope: InventoryScope,
     issues: &mut Vec<MigrationInventoryIssue>,
+    legacy_agents: &mut Vec<MigrationInventoryEntry>,
 ) -> Result<Vec<CanonicalAsset>, CoreError> {
     let mut assets = Vec::new();
     for entry in direct_lstat_entries(&root.asset_root.join("skills"))? {
@@ -369,7 +391,7 @@ fn canonical_assets(
             root.layer,
             AssetKind::Skill,
             entry.name,
-            entry.path,
+            entry.path.clone(),
         )?);
     }
     for entry in direct_lstat_entries(&root.asset_root.join("rules"))? {
@@ -389,6 +411,7 @@ fn canonical_assets(
             entry.path,
         )?);
     }
+    scan_canonical_agents(root, scope, issues, legacy_agents, &mut assets)?;
     let mcp_servers = root.asset_root.join("mcp/servers");
     if let Some(parent_issue) = mcp_parent_issue(&root.asset_root, &mcp_servers) {
         let reason_code = match parent_issue {
@@ -449,6 +472,256 @@ fn canonical_assets(
         assets.push(asset);
     }
     Ok(assets)
+}
+
+fn scan_canonical_agents(
+    root: &CanonicalLayerRoot,
+    scope: InventoryScope,
+    issues: &mut Vec<MigrationInventoryIssue>,
+    legacy_agents: &mut Vec<MigrationInventoryEntry>,
+    assets: &mut Vec<CanonicalAsset>,
+) -> Result<(), CoreError> {
+    let asset_root_metadata = match fs::symlink_metadata(root.asset_root.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &root.asset_root,
+                scope,
+                "unreadable_canonical_agent_root",
+            );
+            return Ok(());
+        }
+    };
+    if asset_root_metadata.file_type().is_symlink() || !asset_root_metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Agent,
+            &root.asset_root,
+            scope,
+            "unsafe_canonical_agent_root",
+        );
+        return Ok(());
+    }
+    let agents = root.asset_root.join("agents");
+    let metadata = match fs::symlink_metadata(agents.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &agents,
+                scope,
+                "unreadable_canonical_agent_directory",
+            );
+            return Ok(());
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Agent,
+            &agents,
+            scope,
+            "unsafe_canonical_agent_directory",
+        );
+        return Ok(());
+    }
+    let entries = match direct_lstat_entries(&agents) {
+        Ok(entries) => entries,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &agents,
+                scope,
+                "unreadable_canonical_agent_directory",
+            );
+            return Ok(());
+        }
+    };
+    for entry in entries {
+        if is_excluded_agent_entry(&entry.name) {
+            continue;
+        }
+        if entry.shape == EntryShape::Symlink {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &entry.path,
+                scope,
+                "unsafe_canonical_agent_symlink",
+            );
+            continue;
+        }
+        if entry.shape == EntryShape::Directory
+            || (entry.shape == EntryShape::RegularFile
+                && matches!(entry.path.extension(), Some("yaml" | "yml" | "json")))
+        {
+            append_legacy_canonical_agent(root, scope, legacy_agents, &entry);
+            continue;
+        }
+        if entry.shape != EntryShape::RegularFile || entry.path.extension() != Some("md") {
+            continue;
+        }
+        let Some(name) = entry
+            .path
+            .file_stem()
+            .filter(|name| is_safe_asset_name(name))
+        else {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &entry.path,
+                scope,
+                "invalid_canonical_agent_name",
+            );
+            continue;
+        };
+        let document = match fs::read_to_string(entry.path.as_std_path()) {
+            Ok(document) => document,
+            Err(_) => {
+                push_inventory_issue(
+                    issues,
+                    AssetKind::Agent,
+                    &entry.path,
+                    scope,
+                    "unreadable_canonical_agent",
+                );
+                continue;
+            }
+        };
+        match validate_canonical_agent_markdown(&document, name) {
+            Ok(()) => {}
+            Err(CanonicalAgentSchemaError::NameMismatch) => {
+                push_inventory_issue(
+                    issues,
+                    AssetKind::Agent,
+                    &entry.path,
+                    scope,
+                    "canonical_agent_name_mismatch",
+                );
+                continue;
+            }
+            Err(CanonicalAgentSchemaError::Invalid) => {
+                push_inventory_issue(
+                    issues,
+                    AssetKind::Agent,
+                    &entry.path,
+                    scope,
+                    "invalid_canonical_agent_schema",
+                );
+                continue;
+            }
+        }
+        match canonical_asset(
+            root.layer,
+            AssetKind::Agent,
+            name.to_owned(),
+            entry.path.clone(),
+        ) {
+            Ok(asset) => assets.push(asset),
+            Err(_) => push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &entry.path,
+                scope,
+                "unreadable_canonical_agent",
+            ),
+        }
+    }
+    Ok(())
+}
+
+fn validate_canonical_agent_markdown(
+    document: &str,
+    expected_name: &str,
+) -> Result<(), CanonicalAgentSchemaError> {
+    let mut lines = document.lines();
+    if lines.next() != Some("---") {
+        return Err(CanonicalAgentSchemaError::Invalid);
+    }
+    let mut frontmatter = Vec::new();
+    let mut closed = false;
+    for line in lines.by_ref() {
+        if line == "---" {
+            closed = true;
+            break;
+        }
+        frontmatter.push(line);
+    }
+    if !closed {
+        return Err(CanonicalAgentSchemaError::Invalid);
+    }
+    let body = lines.collect::<Vec<_>>().join("\n");
+    if body.trim().is_empty() {
+        return Err(CanonicalAgentSchemaError::Invalid);
+    }
+    let frontmatter = frontmatter.join("\n");
+    let value = serde_yaml::from_str::<serde_yaml::Value>(&frontmatter)
+        .map_err(|_| CanonicalAgentSchemaError::Invalid)?;
+    let mapping = value
+        .as_mapping()
+        .ok_or(CanonicalAgentSchemaError::Invalid)?;
+    let field = |key: &str| {
+        mapping
+            .get(serde_yaml::Value::String(key.to_owned()))
+            .and_then(serde_yaml::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+    };
+    let name = field("name").ok_or(CanonicalAgentSchemaError::Invalid)?;
+    let _description = field("description").ok_or(CanonicalAgentSchemaError::Invalid)?;
+    if name != expected_name {
+        return Err(CanonicalAgentSchemaError::NameMismatch);
+    }
+    Ok(())
+}
+
+fn append_legacy_canonical_agent(
+    root: &CanonicalLayerRoot,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    entry: &DirectEntry,
+) {
+    let name = if entry.shape == EntryShape::Directory {
+        entry.name.clone()
+    } else {
+        entry.path.file_stem().unwrap_or(&entry.name).to_owned()
+    };
+    if !is_safe_asset_name(&name) {
+        return;
+    }
+    let content_digest = if entry.shape == EntryShape::RegularFile {
+        path_content_digest(&entry.path).ok()
+    } else {
+        None
+    };
+    entries.push(MigrationInventoryEntry {
+        name,
+        path: entry.path.clone(),
+        kind: AssetKind::Agent,
+        classification: InventoryClassification::LegacyAgentCandidate,
+        provenance: InventoryProvenance::CanonicalLegacy,
+        reason_code: "legacy_canonical_agent_shape".to_owned(),
+        content_digest,
+        currently_consumed: false,
+        blocking: false,
+        ownership_state: InventoryOwnershipState::Foreign,
+        owned: false,
+        selectable: false,
+        followed: false,
+        source_layer: Some(root.layer),
+        canonical_path: Some(entry.path.clone()),
+        consumers: Vec::new(),
+        scope,
+        entry_key: None,
+        format: Some(agent_entry_format(entry)),
+        secret_keys: Vec::new(),
+        trust_requirement: TrustRequirement::None,
+    });
 }
 
 fn canonical_asset(
@@ -827,6 +1100,259 @@ fn scan_mcp_targets(
     )
 }
 
+fn scan_agent_targets(
+    request: &InventoryRequest,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    unsupported: &mut Vec<MigrationInventoryUnsupported>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    scan_agent_directory(
+        &request.deploy_base,
+        &request.deploy_base.join(".cursor/agents"),
+        false,
+        "md",
+        "markdown",
+        PlatformId::Cursor,
+        InventoryProvenance::PlatformCurrent,
+        true,
+        "platform_agent_file_unowned",
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    scan_agent_directory(
+        &request.deploy_base,
+        &request.deploy_base.join(".codex/agents"),
+        false,
+        "toml",
+        "toml",
+        PlatformId::Codex,
+        InventoryProvenance::PlatformCurrent,
+        true,
+        "platform_agent_file_unowned",
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    scan_agent_directory(
+        &request.deploy_base,
+        &request.deploy_base.join(".claude/agents"),
+        false,
+        "md",
+        "markdown",
+        PlatformId::Claude,
+        InventoryProvenance::PlatformCurrent,
+        true,
+        "platform_agent_file_unowned",
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    scan_agent_directory(
+        &request.deploy_base,
+        &request.deploy_base.join(".codex/subagents"),
+        true,
+        "",
+        "",
+        PlatformId::Codex,
+        InventoryProvenance::PlatformLegacy,
+        false,
+        "legacy_codex_subagent",
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    scan_agent_directory(
+        &request.deploy_base,
+        &request.deploy_base.join(".claude/subagents"),
+        true,
+        "",
+        "",
+        PlatformId::Claude,
+        InventoryProvenance::PlatformLegacy,
+        false,
+        "legacy_claude_subagent",
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    for asset in canonical
+        .values()
+        .filter(|asset| asset.kind == AssetKind::Agent)
+    {
+        unsupported.push(MigrationInventoryUnsupported {
+            kind: AssetKind::Agent,
+            platform: PlatformId::Hermes,
+            name: asset.name.clone(),
+            source_layer: Some(asset.layer),
+            canonical_path: Some(asset.path.clone()),
+            scope: request.scope,
+            reason_code: "hermes_static_agent_unsupported".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_agent_directory(
+    approved_root: &Utf8Path,
+    directory: &Utf8Path,
+    legacy_all_shapes: bool,
+    extension: &str,
+    format: &str,
+    platform: PlatformId,
+    provenance: InventoryProvenance,
+    currently_consumed: bool,
+    reason_code: &str,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    if mcp_parent_issue(approved_root, &directory.join(".inventory-probe")).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Agent,
+            directory,
+            scope,
+            "unsafe_agent_directory_parent",
+        );
+        return Ok(());
+    }
+    let metadata = match fs::symlink_metadata(directory.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                directory,
+                scope,
+                "unreadable_agent_directory",
+            );
+            return Ok(());
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Agent,
+            directory,
+            scope,
+            "unsafe_agent_directory",
+        );
+        return Ok(());
+    }
+    let paths = match direct_lstat_entries(directory) {
+        Ok(paths) => paths,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                directory,
+                scope,
+                "unreadable_agent_directory",
+            );
+            return Ok(());
+        }
+    };
+    for entry in paths {
+        if is_excluded_agent_entry(&entry.name) {
+            continue;
+        }
+        if entry.shape == EntryShape::Symlink {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &entry.path,
+                scope,
+                "unsafe_agent_file_symlink",
+            );
+            continue;
+        }
+        if !legacy_all_shapes
+            && entry.path.extension() == Some(extension)
+            && entry.shape != EntryShape::RegularFile
+        {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &entry.path,
+                scope,
+                "unsafe_agent_file_non_regular",
+            );
+            continue;
+        }
+        if legacy_all_shapes {
+            if !matches!(entry.shape, EntryShape::RegularFile | EntryShape::Directory) {
+                continue;
+            }
+        } else if entry.shape != EntryShape::RegularFile
+            || entry.path.extension() != Some(extension)
+        {
+            continue;
+        }
+        let name = if entry.shape == EntryShape::Directory {
+            entry.name.clone()
+        } else {
+            entry.path.file_stem().unwrap_or(&entry.name).to_owned()
+        };
+        if !is_safe_asset_name(&name) {
+            push_inventory_issue(
+                issues,
+                AssetKind::Agent,
+                &entry.path,
+                scope,
+                "invalid_agent_file_name",
+            );
+            continue;
+        }
+        let digest = match entry.shape {
+            EntryShape::Directory => None,
+            EntryShape::RegularFile => match path_content_digest(&entry.path) {
+                Ok(digest) => Some(digest),
+                Err(_) => {
+                    push_inventory_issue(
+                        issues,
+                        AssetKind::Agent,
+                        &entry.path,
+                        scope,
+                        "unreadable_agent_file",
+                    );
+                    continue;
+                }
+            },
+            EntryShape::Symlink | EntryShape::Other => unreachable!("shape was filtered above"),
+        };
+        let source = canonical.get(&(asset_kind_order(AssetKind::Agent), name.clone()));
+        let detected_format = legacy_all_shapes.then(|| agent_entry_format(&entry));
+        let mut entry = target_entry(
+            name,
+            entry.path.clone(),
+            AssetKind::Agent,
+            InventoryClassification::Foreign,
+            provenance.clone(),
+            reason_code.to_owned(),
+            digest,
+            currently_consumed,
+            currently_consumed && source.is_some(),
+            false,
+            source,
+            vec![platform],
+            scope,
+        );
+        entry.format = Some(detected_format.unwrap_or_else(|| format.to_owned()));
+        entries.push(entry);
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scan_mcp_container(
     approved_root: &Utf8Path,
@@ -923,13 +1449,58 @@ fn push_mcp_container_issue(
     scope: InventoryScope,
     reason_code: &str,
 ) {
+    push_inventory_issue(issues, AssetKind::Mcp, path, scope, reason_code);
+}
+
+fn push_inventory_issue(
+    issues: &mut Vec<MigrationInventoryIssue>,
+    kind: AssetKind,
+    path: &Utf8Path,
+    scope: InventoryScope,
+    reason_code: &str,
+) {
     issues.push(MigrationInventoryIssue {
-        kind: AssetKind::Mcp,
+        kind,
         path: path.to_path_buf(),
         scope,
         reason_code: reason_code.to_owned(),
         blocking: true,
     });
+}
+
+fn is_safe_asset_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
+}
+
+fn is_excluded_agent_entry(name: &str) -> bool {
+    let lowercase = name.to_ascii_lowercase();
+    name.starts_with('.')
+        || lowercase == "readme"
+        || lowercase.starts_with("readme.")
+        || matches!(
+            lowercase.as_str(),
+            "thumbs.db" | "desktop.ini" | "node_modules" | "target" | "dist" | "build"
+        )
+        || lowercase.ends_with(".bak")
+        || lowercase.ends_with(".orig")
+        || lowercase.ends_with(".swp")
+        || lowercase.ends_with('~')
+        || lowercase.ends_with(".tmp")
+        || lowercase.ends_with(".ai-config-deploy.json")
+}
+
+fn agent_entry_format(entry: &DirectEntry) -> String {
+    match entry.shape {
+        EntryShape::Directory => "directory".to_owned(),
+        EntryShape::RegularFile => match entry.path.extension() {
+            Some("md") => "markdown".to_owned(),
+            Some("yaml" | "yml") => "yaml".to_owned(),
+            Some("json") => "json".to_owned(),
+            Some(extension) => extension.to_owned(),
+            None => "file".to_owned(),
+        },
+        EntryShape::Symlink | EntryShape::Other => "unknown".to_owned(),
+    }
 }
 
 fn mcp_parent_issue(approved_root: &Utf8Path, path: &Utf8Path) -> Option<&'static str> {
@@ -1272,6 +1843,9 @@ fn utf8_path(path: std::path::PathBuf) -> Result<Utf8PathBuf, CoreError> {
 fn mark_case_collisions(entries: &mut [MigrationInventoryEntry]) {
     let mut variants = BTreeMap::<(u8, InventoryScope, String), BTreeSet<String>>::new();
     for entry in entries.iter() {
+        if is_legacy_only(entry) {
+            continue;
+        }
         variants
             .entry((
                 asset_kind_order(entry.kind),
@@ -1282,6 +1856,9 @@ fn mark_case_collisions(entries: &mut [MigrationInventoryEntry]) {
             .insert(entry.name.clone());
     }
     for entry in entries {
+        if is_legacy_only(entry) {
+            continue;
+        }
         if variants
             .get(&(
                 asset_kind_order(entry.kind),
@@ -1299,6 +1876,11 @@ fn mark_case_collisions(entries: &mut [MigrationInventoryEntry]) {
             entry.followed = false;
         }
     }
+}
+
+fn is_legacy_only(entry: &MigrationInventoryEntry) -> bool {
+    entry.provenance == InventoryProvenance::CanonicalLegacy
+        || (entry.provenance == InventoryProvenance::PlatformLegacy && !entry.currently_consumed)
 }
 
 fn asset_kind_order(kind: AssetKind) -> u8 {
@@ -1334,6 +1916,7 @@ fn ownership_fields(
         }
         InventoryClassification::LegacyMarkerCandidate
         | InventoryClassification::LegacyMcpCandidate
+        | InventoryClassification::LegacyAgentCandidate
         | InventoryClassification::Foreign
         | InventoryClassification::UnsafeLink
         | InventoryClassification::BrokenLink

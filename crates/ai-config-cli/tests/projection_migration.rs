@@ -1529,3 +1529,763 @@ fn canonical_mcp_parent_links_mismatches_and_legacy_errors_are_reported_without_
         "a mismatched canonical server must not become effective"
     );
 }
+
+const AGENT_BODY_SENTINEL: &str = "t010-agent-body-must-never-serialize";
+const AGENT_FRONTMATTER_SENTINEL: &str = "t010-agent-frontmatter-must-never-serialize";
+const AGENT_EXTERNAL_SENTINEL: &str = "t010-agent-external-link-must-never-be-read";
+
+fn write_canonical_agent(asset_root: &Path, name: &str, layer_label: &str) -> PathBuf {
+    let path = asset_root.join("agents").join(format!("{name}.md"));
+    write(
+        &path,
+        &format!(
+            r#"---
+name: {name}
+description: {AGENT_FRONTMATTER_SENTINEL}-{layer_label}
+tools:
+  - {AGENT_FRONTMATTER_SENTINEL}-tool
+model: {AGENT_FRONTMATTER_SENTINEL}-model
+---
+{AGENT_BODY_SENTINEL}-{layer_label}
+"#
+        ),
+    );
+    path
+}
+
+fn write_cursor_or_claude_agent(path: &Path, name: &str, platform: &str) {
+    write(
+        path,
+        &format!(
+            r#"---
+name: {name}
+description: {AGENT_FRONTMATTER_SENTINEL}-{platform}
+tools:
+  - {AGENT_FRONTMATTER_SENTINEL}-{platform}-tool
+model: {AGENT_FRONTMATTER_SENTINEL}-{platform}-model
+---
+{AGENT_BODY_SENTINEL}-{platform}
+"#
+        ),
+    );
+}
+
+fn write_codex_agent(path: &Path, name: &str, label: &str) {
+    write(
+        path,
+        &format!(
+            r#"name = "{name}"
+description = "{AGENT_FRONTMATTER_SENTINEL}-{label}"
+developer_instructions = "{AGENT_BODY_SENTINEL}-{label}"
+model = "{AGENT_FRONTMATTER_SENTINEL}-{label}-model"
+tools = ["{AGENT_FRONTMATTER_SENTINEL}-{label}-tool"]
+"#
+        ),
+    );
+}
+
+fn assert_agent_source(entry: &Value, source_layer: &str, canonical_path: &Path, scope: &str) {
+    assert_eq!(entry["kind"], "agent", "entry={entry:?}");
+    assert_eq!(entry["source_layer"], source_layer, "entry={entry:?}");
+    assert_eq!(
+        entry["canonical_path"],
+        canonical_path.to_string_lossy().as_ref(),
+        "entry={entry:?}"
+    );
+    assert_eq!(entry["scope"], scope, "entry={entry:?}");
+}
+
+fn assert_generated_agent_entry(
+    report: &Value,
+    name: &str,
+    path_fragment: &str,
+    format: &str,
+    consumer: &str,
+) -> Value {
+    let entry = entry_named(report, name, path_fragment).clone();
+    assert_eq!(entry["kind"], "agent", "entry={entry:?}");
+    assert_eq!(entry["format"], format, "entry={entry:?}");
+    assert_eq!(entry["entry_key"], Value::Null, "entry={entry:?}");
+    assert_eq!(entry["consumers"], serde_json::json!([consumer]));
+    assert_eq!(entry["provenance"], "platform_current", "entry={entry:?}");
+    assert_eq!(entry["reason_code"], "platform_agent_file_unowned");
+    assert_eq!(entry["currently_consumed"], true, "entry={entry:?}");
+    assert_eq!(entry["classification"], "foreign", "entry={entry:?}");
+    assert_eq!(entry["ownership_state"], "foreign", "entry={entry:?}");
+    assert_eq!(entry["owned"], false, "entry={entry:?}");
+    assert_eq!(entry["selectable"], false, "entry={entry:?}");
+    assert_eq!(
+        entry["blocking"], true,
+        "same-name generated file without ledger ownership must block takeover: {entry:?}"
+    );
+    assert!(
+        entry["content_digest"]
+            .as_str()
+            .is_some_and(|digest| !digest.is_empty()),
+        "generated agent file must have an opaque content fingerprint: {entry:?}"
+    );
+    for raw_field in [
+        "body",
+        "content",
+        "frontmatter",
+        "tools",
+        "model",
+        "developer_instructions",
+        "rendered_config",
+    ] {
+        assert!(
+            entry[raw_field].is_null(),
+            "agent inventory must never serialize `{raw_field}` source/platform content: {entry:?}"
+        );
+    }
+    entry
+}
+
+fn assert_hermes_agent_unsupported(
+    report: &Value,
+    name: &str,
+    source_layer: &str,
+    canonical_path: &Path,
+    scope: &str,
+) {
+    let unsupported = report["unsupported"]
+        .as_array()
+        .expect("inventory unsupported contracts");
+    let entry = unsupported
+        .iter()
+        .find(|entry| {
+            entry["kind"] == "agent"
+                && entry["platform"] == "hermes"
+                && entry["name"] == name
+                && entry["scope"] == scope
+        })
+        .unwrap_or_else(|| {
+            panic!("missing Hermes Agent unsupported row name={name:?}: {report:?}")
+        });
+    assert_eq!(entry["reason_code"], "hermes_static_agent_unsupported");
+    assert_eq!(entry["source_layer"], source_layer);
+    assert_eq!(
+        entry["canonical_path"],
+        canonical_path.to_string_lossy().as_ref()
+    );
+}
+
+fn assert_agent_report_redacted(stdout: &str, stderr: &str) {
+    for sentinel in [
+        AGENT_BODY_SENTINEL,
+        AGENT_FRONTMATTER_SENTINEL,
+        AGENT_EXTERNAL_SENTINEL,
+    ] {
+        assert!(
+            !stdout.contains(sentinel) && !stderr.contains(sentinel),
+            "Agent inventory must not emit source, generated, or linked body content: {sentinel}"
+        );
+    }
+}
+
+#[test]
+fn global_agent_inventory_reports_native_generated_files_legacy_and_hermes_without_bodies() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    let reviewer_source = write_canonical_agent(&asset_root, "reviewer", "global");
+    let case_source = write_canonical_agent(&asset_root, "CaseAgent", "global-case");
+    write(
+        &asset_root.join("skills/caseagent/SKILL.md"),
+        "same spelling in another kind must not affect Agent collision\n",
+    );
+
+    write_cursor_or_claude_agent(
+        &home.path().join(".cursor/agents/reviewer.md"),
+        "reviewer",
+        "cursor-global",
+    );
+    write_codex_agent(
+        &home.path().join(".codex/agents/reviewer.toml"),
+        "reviewer",
+        "codex-global",
+    );
+    write_cursor_or_claude_agent(
+        &home.path().join(".claude/agents/reviewer.md"),
+        "reviewer",
+        "claude-global",
+    );
+    write_cursor_or_claude_agent(
+        &home.path().join(".cursor/agents/caseagent.md"),
+        "caseagent",
+        "cursor-case",
+    );
+    write(
+        &home.path().join(".codex/subagents/reviewer.md"),
+        &format!("{AGENT_BODY_SENTINEL}-legacy-codex-subagent\n"),
+    );
+    write(
+        &home.path().join(".hermes/agents/must-not-scan.md"),
+        &format!("{AGENT_BODY_SENTINEL}-hermes-static-directory-is-unsupported\n"),
+    );
+
+    let before = tree_snapshot(home.path());
+    let output = rules_inventory_output(home.path(), &asset_root);
+    assert!(
+        output.status.success(),
+        "global Agent inventory must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 global Agent inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 global Agent stderr");
+    assert_agent_report_redacted(&stdout, &stderr);
+    assert_eq!(
+        tree_snapshot(home.path()),
+        before,
+        "Agent inventory must be strictly read-only"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("global Agent inventory JSON");
+
+    let cursor = assert_generated_agent_entry(
+        &report,
+        "reviewer",
+        ".cursor/agents/reviewer.md",
+        "markdown",
+        "cursor",
+    );
+    assert_agent_source(&cursor, "global", &reviewer_source, "global");
+    let codex = assert_generated_agent_entry(
+        &report,
+        "reviewer",
+        ".codex/agents/reviewer.toml",
+        "toml",
+        "codex",
+    );
+    assert_agent_source(&codex, "global", &reviewer_source, "global");
+    let claude = assert_generated_agent_entry(
+        &report,
+        "reviewer",
+        ".claude/agents/reviewer.md",
+        "markdown",
+        "claude",
+    );
+    assert_agent_source(&claude, "global", &reviewer_source, "global");
+
+    for path_fragment in [".cursor/agents/reviewer.md", ".claude/agents/reviewer.md"] {
+        let matching = report["entries"]
+            .as_array()
+            .expect("Agent entries")
+            .iter()
+            .filter(|entry| {
+                entry["kind"] == "agent"
+                    && entry["path"]
+                        .as_str()
+                        .is_some_and(|path| path.contains(path_fragment))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "native Cursor/Claude agent path is current, not a duplicated legacy row: {matching:?}"
+        );
+        assert_eq!(matching[0]["provenance"], "platform_current");
+    }
+
+    let legacy = entry_named(&report, "reviewer", ".codex/subagents/reviewer.md");
+    assert_eq!(legacy["kind"], "agent");
+    assert_eq!(legacy["provenance"], "platform_legacy");
+    assert_eq!(legacy["reason_code"], "legacy_codex_subagent");
+    assert_eq!(legacy["currently_consumed"], false);
+    assert_eq!(legacy["classification"], "foreign");
+    assert_eq!(legacy["ownership_state"], "foreign");
+    assert_eq!(legacy["blocking"], false);
+    assert_eq!(legacy["owned"], false);
+    assert_eq!(legacy["selectable"], false);
+
+    assert_hermes_agent_unsupported(&report, "reviewer", "global", &reviewer_source, "global");
+    let serialized = serde_json::to_string(&report).expect("serialize Agent inventory");
+    assert!(
+        !serialized.contains(".hermes/agents") && !serialized.contains("must-not-scan"),
+        "Hermes has no static global Agent target and its guessed directory must not be scanned"
+    );
+
+    let collisions = report["entries"]
+        .as_array()
+        .expect("Agent entries")
+        .iter()
+        .filter(|entry| {
+            entry["kind"] == "agent"
+                && matches!(entry["name"].as_str(), Some("CaseAgent" | "caseagent"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(collisions.len(), 2, "Agent collision rows: {collisions:?}");
+    assert!(collisions.iter().all(|entry| {
+        entry["classification"] == "case_collision"
+            && entry["reason_code"] == "case_only_name_collision"
+            && entry["blocking"] == true
+    }));
+    let cross_kind_skill = entry_named(&report, "caseagent", "/skills/");
+    assert_ne!(cross_kind_skill["classification"], "case_collision");
+    assert_eq!(
+        entry_named(&report, "CaseAgent", "/agents/")["canonical_path"],
+        case_source.to_string_lossy().as_ref()
+    );
+}
+
+#[test]
+fn project_agent_inventory_uses_overlay_and_never_reads_home_parent_links_or_hermes() {
+    let home = TempDir::new().expect("temporary HOME");
+    let repo = TempDir::new().expect("temporary project");
+    let global_root = home.path().join(".ai-config");
+    let project_root = repo.path().join(".ai-config");
+    let global_shared = write_canonical_agent(&global_root, "shared", "global-shared");
+    let global_only = write_canonical_agent(&global_root, "global-only", "global-only");
+    let project_shared = write_canonical_agent(&project_root, "shared", "project-shared");
+
+    write_cursor_or_claude_agent(
+        &repo.path().join(".cursor/agents/shared.md"),
+        "shared",
+        "cursor-project",
+    );
+    write_cursor_or_claude_agent(
+        &repo.path().join(".cursor/agents/global-only.md"),
+        "global-only",
+        "cursor-project-inherited",
+    );
+    write_codex_agent(
+        &repo.path().join(".codex/agents/shared.toml"),
+        "shared",
+        "codex-project",
+    );
+    write_cursor_or_claude_agent(
+        &repo.path().join(".claude/agents/shared.md"),
+        "shared",
+        "claude-project",
+    );
+    write(
+        &repo.path().join(".codex/subagents/project-legacy.md"),
+        &format!("{AGENT_BODY_SENTINEL}-project-legacy\n"),
+    );
+    write(
+        &repo.path().join(".hermes/agents/project-ghost.md"),
+        &format!("{AGENT_BODY_SENTINEL}-project-hermes-must-not-scan\n"),
+    );
+
+    let outside = TempDir::new().expect("outside HOME Agent owner");
+    write(
+        &outside.path().join("home-linked.md"),
+        AGENT_EXTERNAL_SENTINEL,
+    );
+    fs::create_dir_all(home.path().join(".cursor")).expect("create HOME Cursor parent");
+    symlink(outside.path(), home.path().join(".cursor/agents"))
+        .expect("create escaped HOME Cursor Agent root");
+    write_cursor_or_claude_agent(
+        &home.path().join(".claude/agents/home-only.md"),
+        "home-only",
+        "home-must-not-scan",
+    );
+    write_codex_agent(
+        &home.path().join(".codex/agents/home-only.toml"),
+        "home-only",
+        "home-must-not-scan",
+    );
+    write(
+        &home.path().join(".codex/subagents/home-only.md"),
+        AGENT_EXTERNAL_SENTINEL,
+    );
+    write(
+        &home.path().join(".hermes/agents/home-only.md"),
+        AGENT_EXTERNAL_SENTINEL,
+    );
+
+    let home_before = tree_snapshot(home.path());
+    let repo_before = tree_snapshot(repo.path());
+    let outside_before = tree_snapshot(outside.path());
+    let output = rules_inventory_output(home.path(), repo.path());
+    assert!(
+        output.status.success(),
+        "project Agent inventory must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 project Agent inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 project Agent stderr");
+    assert_agent_report_redacted(&stdout, &stderr);
+    assert_eq!(tree_snapshot(home.path()), home_before, "HOME changed");
+    assert_eq!(tree_snapshot(repo.path()), repo_before, "project changed");
+    assert_eq!(
+        tree_snapshot(outside.path()),
+        outside_before,
+        "outside HOME Agent owner changed"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("project Agent inventory JSON");
+    assert_eq!(report["scope"], "project");
+
+    let cursor = assert_generated_agent_entry(
+        &report,
+        "shared",
+        ".cursor/agents/shared.md",
+        "markdown",
+        "cursor",
+    );
+    assert_agent_source(&cursor, "project", &project_shared, "project");
+    assert_ne!(
+        cursor["canonical_path"],
+        global_shared.to_string_lossy().as_ref(),
+        "project whole-agent definition must override global"
+    );
+    let inherited = assert_generated_agent_entry(
+        &report,
+        "global-only",
+        ".cursor/agents/global-only.md",
+        "markdown",
+        "cursor",
+    );
+    assert_agent_source(&inherited, "global", &global_only, "project");
+    let codex = assert_generated_agent_entry(
+        &report,
+        "shared",
+        ".codex/agents/shared.toml",
+        "toml",
+        "codex",
+    );
+    assert_agent_source(&codex, "project", &project_shared, "project");
+    let claude = assert_generated_agent_entry(
+        &report,
+        "shared",
+        ".claude/agents/shared.md",
+        "markdown",
+        "claude",
+    );
+    assert_agent_source(&claude, "project", &project_shared, "project");
+
+    let legacy = entry_named(
+        &report,
+        "project-legacy",
+        ".codex/subagents/project-legacy.md",
+    );
+    assert_eq!(legacy["kind"], "agent");
+    assert_eq!(legacy["provenance"], "platform_legacy");
+    assert_eq!(legacy["reason_code"], "legacy_codex_subagent");
+    assert_eq!(legacy["currently_consumed"], false);
+    assert_eq!(legacy["classification"], "foreign");
+    assert_eq!(legacy["ownership_state"], "foreign");
+    assert_eq!(legacy["blocking"], false);
+    assert_eq!(legacy["owned"], false);
+    assert_eq!(legacy["selectable"], false);
+
+    let raw_shared = report["entries"]
+        .as_array()
+        .expect("Agent entries")
+        .iter()
+        .filter(|entry| {
+            entry["kind"] == "agent"
+                && entry["name"] == "shared"
+                && entry["provenance"] == "canonical"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        raw_shared.len(),
+        2,
+        "raw inventory must retain global and project Agent provenance: {report:?}"
+    );
+    let layers = raw_shared
+        .iter()
+        .map(|entry| entry["source_layer"].as_str().unwrap_or_default())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        layers,
+        std::collections::BTreeSet::from(["global", "project"])
+    );
+
+    assert_hermes_agent_unsupported(&report, "shared", "project", &project_shared, "project");
+    assert_hermes_agent_unsupported(&report, "global-only", "global", &global_only, "project");
+    let serialized = serde_json::to_string(&report).expect("serialize project Agent inventory");
+    assert!(
+        !serialized.contains("home-only")
+            && !serialized.contains("home-linked")
+            && !serialized.contains(outside.path().to_string_lossy().as_ref()),
+        "project Agent inventory must not read HOME current/legacy paths or follow HOME parent links"
+    );
+    assert!(
+        !serialized.contains(".hermes/agents") && !serialized.contains("project-ghost"),
+        "Hermes global/project static Agent directories are unsupported and must not be scanned"
+    );
+    for issue in report["issues"].as_array().expect("inventory issues") {
+        let Some(path) = issue["path"].as_str() else {
+            continue;
+        };
+        if issue["kind"] == "agent" {
+            assert!(
+                Path::new(path).starts_with(repo.path()),
+                "project Agent issue must never originate from HOME or outside: {issue:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn agent_inventory_reports_symlink_boundaries_and_invalid_canonical_schema_without_leaking() {
+    let assert_issue = |report: &Value, path_fragment: &str, reason: &str| {
+        let issue = report["issues"]
+            .as_array()
+            .expect("Agent issues")
+            .iter()
+            .find(|issue| {
+                issue["kind"] == "agent"
+                    && issue["path"]
+                        .as_str()
+                        .is_some_and(|path| path.contains(path_fragment))
+            })
+            .unwrap_or_else(|| panic!("missing Agent issue {reason}: {report:?}"));
+        assert_eq!(issue["reason_code"], reason);
+        assert_eq!(issue["blocking"], true);
+    };
+
+    let home = TempDir::new().expect("temporary HOME");
+    let repo = TempDir::new().expect("temporary project");
+    let global_root = home.path().join(".ai-config");
+    let project_root = repo.path().join(".ai-config");
+    let safe_source = write_canonical_agent(&global_root, "safe", "global-safe");
+    fs::create_dir_all(&project_root).expect("create project canonical root");
+    let outside_canonical = TempDir::new().expect("outside canonical Agent root");
+    write(
+        &outside_canonical.path().join("escaped.md"),
+        AGENT_EXTERNAL_SENTINEL,
+    );
+    symlink(outside_canonical.path(), project_root.join("agents"))
+        .expect("escape project canonical agents");
+
+    let outside_cursor = TempDir::new().expect("outside Cursor parent");
+    write(
+        &outside_cursor.path().join("agents/escaped.md"),
+        AGENT_EXTERNAL_SENTINEL,
+    );
+    symlink(outside_cursor.path(), repo.path().join(".cursor")).expect("escape Cursor parent");
+    write_codex_agent(
+        &repo.path().join(".codex/agents/safe.toml"),
+        "safe",
+        "valid-codex",
+    );
+    write(
+        &repo
+            .path()
+            .join(".codex/agents/directory.toml/must-not-recurse.toml"),
+        AGENT_EXTERNAL_SENTINEL,
+    );
+    let outside_file = outside_cursor.path().join("linked.md");
+    write(&outside_file, AGENT_EXTERNAL_SENTINEL);
+    fs::create_dir_all(repo.path().join(".codex/subagents"))
+        .expect("create legacy Codex Agent root");
+    symlink(
+        &outside_file,
+        repo.path().join(".codex/subagents/legacy-linked.md"),
+    )
+    .expect("link legacy Codex Agent child");
+    fs::create_dir_all(repo.path().join(".claude/agents")).expect("create Claude agents");
+    symlink(&outside_file, repo.path().join(".claude/agents/linked.md"))
+        .expect("link final Claude Agent file");
+    write(
+        &repo.path().join(".claude/subagents/legacy.md"),
+        AGENT_BODY_SENTINEL,
+    );
+
+    let output = rules_inventory_output(home.path(), repo.path());
+    assert!(output.status.success(), "stdout={:?}", output.stdout);
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 Agent security inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 Agent security stderr");
+    assert_agent_report_redacted(&stdout, &stderr);
+    let report: Value = serde_json::from_str(&stdout).expect("Agent security inventory JSON");
+    assert_issue(
+        &report,
+        "/.codex/agents/directory.toml",
+        "unsafe_agent_file_non_regular",
+    );
+    assert_issue(
+        &report,
+        "/.codex/subagents/legacy-linked.md",
+        "unsafe_agent_file_symlink",
+    );
+    assert_issue(
+        &report,
+        "/.ai-config/agents",
+        "unsafe_canonical_agent_directory",
+    );
+    assert_issue(&report, "/.cursor/agents", "unsafe_agent_directory_parent");
+    assert_issue(
+        &report,
+        "/.claude/agents/linked.md",
+        "unsafe_agent_file_symlink",
+    );
+    let codex =
+        assert_generated_agent_entry(&report, "safe", ".codex/agents/safe.toml", "toml", "codex");
+    assert_agent_source(&codex, "global", &safe_source, "project");
+    let legacy = entry_named(&report, "legacy", ".claude/subagents/legacy.md");
+    assert_eq!(legacy["provenance"], "platform_legacy");
+    assert_eq!(legacy["reason_code"], "legacy_claude_subagent");
+    assert_eq!(legacy["currently_consumed"], false);
+    assert_eq!(legacy["blocking"], false);
+    let serialized = serde_json::to_string(&report).expect("serialize Agent security report");
+    assert!(!report["entries"]
+        .as_array()
+        .expect("Agent security entries")
+        .iter()
+        .any(|entry| {
+            matches!(
+                entry["name"].as_str(),
+                Some("escaped" | "linked" | "directory" | "legacy-linked")
+            )
+        }));
+    assert!(!serialized.contains("must-not-recurse"));
+    assert!(
+        !serialized.contains(outside_canonical.path().to_string_lossy().as_ref())
+            && !serialized.contains(outside_cursor.path().to_string_lossy().as_ref())
+    );
+
+    let invalid_home = TempDir::new().expect("invalid Agent HOME");
+    let invalid_root = invalid_home.path().join(".ai-config");
+    write(
+        &invalid_root.join("agents/wrong.md"),
+        &format!("---\nname: different\ndescription: valid\n---\n{AGENT_BODY_SENTINEL}-mismatch\n"),
+    );
+    write(
+        &invalid_root.join("agents/invalid.md"),
+        &format!("---\nname: invalid\n---\n{AGENT_BODY_SENTINEL}-missing-description"),
+    );
+    write_codex_agent(
+        &invalid_home.path().join(".codex/agents/wrong.toml"),
+        "wrong",
+        "valid-foreign",
+    );
+    let reviewer_source = write_canonical_agent(&invalid_root, "Reviewer", "valid-reviewer");
+    write_codex_agent(
+        &invalid_home.path().join(".codex/agents/Reviewer.toml"),
+        "Reviewer",
+        "current-reviewer",
+    );
+    write(
+        &invalid_home.path().join(".codex/subagents/Reviewer.yaml"),
+        &format!("name: Reviewer\ninstructions: {AGENT_BODY_SENTINEL}-legacy-yaml\n"),
+    );
+    write(
+        &invalid_home.path().join(".codex/subagents/reviewer.json"),
+        &format!(r#"{{"name":"reviewer","instructions":"{AGENT_BODY_SENTINEL}-legacy-json"}}"#),
+    );
+    write(
+        &invalid_home.path().join(".codex/subagents/extensionless"),
+        AGENT_BODY_SENTINEL,
+    );
+    write(
+        &invalid_home
+            .path()
+            .join(".claude/subagents/bundle/AGENT.md"),
+        AGENT_BODY_SENTINEL,
+    );
+    write(
+        &invalid_root.join("agents/legacy.yaml"),
+        &format!("name: legacy\ndescription: old\ninstructions: {AGENT_BODY_SENTINEL}\n"),
+    );
+    write(
+        &invalid_root.join("agents/legacy-dir/AGENT.md"),
+        AGENT_BODY_SENTINEL,
+    );
+    write_cursor_or_claude_agent(
+        &invalid_home.path().join(".cursor/agents/legacy.md"),
+        "legacy",
+        "current-must-not-use-canonical-legacy",
+    );
+    for path in [
+        invalid_root.join("agents/.hidden.md"),
+        invalid_root.join("agents/README.md"),
+    ] {
+        write(
+            &path,
+            &format!(
+                "---\nname: ignored\ndescription: ignored\n---\n{AGENT_BODY_SENTINEL}-ignored"
+            ),
+        );
+    }
+    let invalid_output = rules_inventory_output(invalid_home.path(), &invalid_root);
+    assert!(invalid_output.status.success());
+    let invalid_stdout =
+        String::from_utf8(invalid_output.stdout).expect("UTF-8 invalid Agent inventory");
+    let invalid_stderr =
+        String::from_utf8(invalid_output.stderr).expect("UTF-8 invalid Agent stderr");
+    assert_agent_report_redacted(&invalid_stdout, &invalid_stderr);
+    let invalid_report: Value =
+        serde_json::from_str(&invalid_stdout).expect("invalid Agent inventory JSON");
+    assert_issue(
+        &invalid_report,
+        "/agents/wrong.md",
+        "canonical_agent_name_mismatch",
+    );
+    assert_issue(
+        &invalid_report,
+        "/agents/invalid.md",
+        "invalid_canonical_agent_schema",
+    );
+    let foreign = entry_named(&invalid_report, "wrong", ".codex/agents/wrong.toml");
+    assert_eq!(foreign["classification"], "foreign");
+    assert_eq!(foreign["source_layer"], Value::Null);
+    assert_eq!(foreign["canonical_path"], Value::Null);
+    assert_eq!(foreign["blocking"], false);
+    assert!(!invalid_report["entries"]
+        .as_array()
+        .expect("invalid Agent entries")
+        .iter()
+        .any(|entry| {
+            entry["kind"] == "agent"
+                && entry["provenance"] == "canonical"
+                && matches!(entry["name"].as_str(), Some("wrong" | "invalid"))
+        }));
+
+    let current_reviewer = entry_named(&invalid_report, "Reviewer", ".codex/agents/Reviewer.toml");
+    assert_agent_source(current_reviewer, "global", &reviewer_source, "global");
+    assert_ne!(current_reviewer["classification"], "case_collision");
+    assert_ne!(
+        entry_named(&invalid_report, "Reviewer", "/agents/Reviewer.md")["classification"],
+        "case_collision"
+    );
+    let assert_legacy = |name: &str, fragment: &str, format: &str| {
+        let entry = entry_named(&invalid_report, name, fragment);
+        assert_eq!(entry["kind"], "agent");
+        assert_eq!(entry["provenance"], "platform_legacy");
+        assert_eq!(entry["classification"], "foreign");
+        assert_eq!(entry["ownership_state"], "foreign");
+        assert_eq!(entry["currently_consumed"], false);
+        assert_eq!(entry["blocking"], false);
+        assert_eq!(entry["owned"], false);
+        assert_eq!(entry["selectable"], false);
+        assert_eq!(entry["format"], format);
+        entry
+    };
+    let legacy_reviewer = assert_legacy("Reviewer", ".codex/subagents/Reviewer.yaml", "yaml");
+    assert_agent_source(legacy_reviewer, "global", &reviewer_source, "global");
+    let lowercase = assert_legacy("reviewer", ".codex/subagents/reviewer.json", "json");
+    assert_eq!(lowercase["source_layer"], Value::Null);
+    assert_eq!(lowercase["canonical_path"], Value::Null);
+    assert_legacy("extensionless", ".codex/subagents/extensionless", "file");
+    assert_legacy("bundle", ".claude/subagents/bundle", "directory");
+
+    for (name, fragment, format) in [
+        ("legacy", "/agents/legacy.yaml", "yaml"),
+        ("legacy-dir", "/agents/legacy-dir", "directory"),
+    ] {
+        let entry = entry_named(&invalid_report, name, fragment);
+        assert_eq!(entry["provenance"], "canonical_legacy");
+        assert_eq!(entry["classification"], "legacy_agent_candidate");
+        assert_eq!(entry["source_layer"], "global");
+        assert_eq!(entry["canonical_path"], entry["path"]);
+        assert_eq!(entry["format"], format);
+        assert_eq!(entry["currently_consumed"], false);
+        assert_eq!(entry["owned"], false);
+        assert_eq!(entry["selectable"], false);
+    }
+    let current_legacy = entry_named(&invalid_report, "legacy", ".cursor/agents/legacy.md");
+    assert_eq!(current_legacy["source_layer"], Value::Null);
+    assert_eq!(current_legacy["canonical_path"], Value::Null);
+    assert_eq!(current_legacy["blocking"], false);
+    assert!(!invalid_report["unsupported"]
+        .as_array()
+        .expect("unsupported Agents")
+        .iter()
+        .any(|entry| matches!(entry["name"].as_str(), Some("legacy" | "legacy-dir"))));
+    let serialized = serde_json::to_string(&invalid_report).expect("serialize legacy Agents");
+    assert!(!serialized.contains("/agents/.hidden.md"));
+    assert!(!serialized.contains("/agents/README.md"));
+}

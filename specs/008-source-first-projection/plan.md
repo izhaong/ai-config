@@ -957,6 +957,21 @@ RED 2/2、安全 ownership RED 2/2、invalid/unsafe container RED 1/1、父目�
 RED 1/1 均实际运行；最终 CLI E2E 12 passed、core unit 5 passed、strict clippy 通过。T010.4
 仍未完成：workspace scope 与 Agents → Commands → Hooks 必须继续逐类 RED→GREEN。
 
+**执行状态（2026-07-17，Agents inventory checkpoint）**：补齐 global/project Agent 分层盘点。
+canonical 当前格式只接受 direct regular `agents/<name>.md`，并验证 UTF-8、YAML frontmatter
+`name`/`description`、文件名与 name 一致及非空正文；无效 schema、软链接和不安全父路径只产生
+不含正文的结构化 blocking issue。current native target 为 Cursor `.cursor/agents/*.md`、Codex
+`.codex/agents/*.toml` 与 Claude `.claude/agents/*.md`；无 ledger 的生成文件保持 foreign/unowned/
+unselectable，同名 canonical 存在时 blocking。旧 canonical 目录及 YAML/YML/JSON、Codex/Claude
+`.codex|.claude/subagents` 的 direct regular/extensionless/directory 仅作 nonblocking legacy
+inventory，保留 effective source 关联但不参与 case collision；隐藏项、README、系统/构建目录与
+备份文件排除。Hermes static Agent 明确 `unsupported`，不猜测或扫描 `.hermes/agents`；project
+scope 不读取 HOME 平台目录。报告只含 opaque digest/format/provenance/reason，不序列化 frontmatter、
+body、tools、model 或外链内容。首轮 native RED 2/2、schema/symlink RED 1/1、legacy/name-parity
+RED 1/1、current wrong-shape RED 1/1 均实际运行；同扩展目录/特殊文件现在 fail-closed，legacy
+child symlink 只 lstat、不跟随。最终 CLI E2E 15 passed、core unit 5 passed、strict clippy 通过。
+T010.4 仍未完成：workspace scope 与 Commands → Hooks 必须继续逐类 RED→GREEN。
+
 - [x] **T010.1 Write failing inventory tests**：legacy marker copy、unmarked equal copy、different copy、correct/wrong/broken symlink、`.cc-switch` external_owned、plugin/builtin、case-only collision、dotfiles in digest、unknown-root link 不跟随；另补未知不可读 target lstat-only、external platform link 不获 ownership、builtin 不重复盘点。
 - [ ] **T010.2 Write failing migration/import/adopt E2E**：inventory no-write；plan deterministic；stale digest/action reject；未选择项零写入；不存在平台级/来源级 bulk takeover；Equivalent 逐 action-id 备份后 adopt；不同内容 foreign 直接 adopt 拒绝、必须先 import；`.cc-switch` 逐项选择；canonical-first then projection；transaction failure rollback；repeat plan noop；rollback refuses drifted post-state；import preview 显示 normalized diff、明确 destination source layer/absolute path、secret preflight 结果；foreign `AGENTS.md` 只有显式 import 后才进入 Prompt source 且平台原件不删除。
 - [x] **T010.3 Verify RED**：首轮 4 tests 编译并实际运行，均因顶层 `migrate` 不存在而失败；安全复审扩为 6 tests 后由最小 Skills inventory 实现转 GREEN。
