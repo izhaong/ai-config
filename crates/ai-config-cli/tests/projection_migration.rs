@@ -774,3 +774,758 @@ fn project_rules_inventory_uses_project_overlay_and_never_scans_home_platform_pa
         std::collections::BTreeSet::from(["global", "project"])
     );
 }
+
+const MCP_SECRET_SENTINEL: &str = "t010-mcp-inventory-secret-must-never-serialize";
+
+fn write_canonical_mcp(
+    asset_root: &Path,
+    file_name: &str,
+    server_name: &str,
+    command: &str,
+) -> PathBuf {
+    let path = asset_root
+        .join("mcp/servers")
+        .join(format!("{file_name}.json"));
+    write(
+        &path,
+        &format!(
+            r#"{{
+  "name": "{server_name}",
+  "enabled": true,
+  "targets": ["cursor", "codex", "claude", "hermes"],
+  "transport": "stdio",
+  "config": {{
+    "command": "{command}",
+    "args": [],
+    "env": {{ "CATALOG_TOKEN": "${{CATALOG_TOKEN}}" }}
+  }}
+}}"#
+        ),
+    );
+    path
+}
+
+fn assert_mcp_source(entry: &Value, source_layer: &str, canonical_path: &Path, scope: &str) {
+    assert_eq!(entry["kind"], "mcp", "entry={entry:?}");
+    assert_eq!(entry["source_layer"], source_layer, "entry={entry:?}");
+    assert_eq!(
+        entry["canonical_path"],
+        canonical_path.to_string_lossy().as_ref(),
+        "entry={entry:?}"
+    );
+    assert_eq!(entry["scope"], scope, "entry={entry:?}");
+    assert_eq!(
+        entry["secret_keys"],
+        serde_json::json!(["CATALOG_TOKEN"]),
+        "inventory may expose referenced key names, never values: {entry:?}"
+    );
+}
+
+fn assert_named_mcp_container_entry(
+    report: &Value,
+    name: &str,
+    path_fragment: &str,
+    entry_key: &str,
+    format: &str,
+    consumer: &str,
+) -> Value {
+    let entry = entry_named(report, name, path_fragment).clone();
+    assert_eq!(entry["entry_key"], entry_key, "entry={entry:?}");
+    assert_eq!(entry["format"], format, "entry={entry:?}");
+    assert_eq!(entry["consumers"], serde_json::json!([consumer]));
+    assert_eq!(entry["classification"], "foreign", "entry={entry:?}");
+    assert_eq!(entry["ownership_state"], "foreign", "entry={entry:?}");
+    assert_eq!(entry["owned"], false, "entry={entry:?}");
+    assert_eq!(entry["selectable"], false, "entry={entry:?}");
+    assert_eq!(
+        entry["blocking"], true,
+        "an unowned generated entry that shadows canonical source must block takeover: {entry:?}"
+    );
+    assert!(
+        entry["rendered_config"].is_null() && entry["config"].is_null(),
+        "inventory must not serialize platform MCP bodies: {entry:?}"
+    );
+    entry
+}
+
+fn assert_mcp_issue<'a>(report: &'a Value, path_fragment: &str, reason_code: &str) -> &'a Value {
+    let issue = report["issues"]
+        .as_array()
+        .expect("inventory issues")
+        .iter()
+        .find(|issue| {
+            issue["path"]
+                .as_str()
+                .is_some_and(|path| path.contains(path_fragment))
+                && issue["reason_code"] == reason_code
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "missing MCP issue path_fragment={path_fragment:?} reason={reason_code:?}: {report:?}"
+            )
+        });
+    assert_eq!(issue["kind"], "mcp");
+    assert_eq!(issue["blocking"], true);
+    assert!(
+        issue["message"].is_null() && issue["config"].is_null() && issue["content"].is_null(),
+        "issues must never retain parser or config payloads: {issue:?}"
+    );
+    issue
+}
+
+#[test]
+fn global_mcp_inventory_is_per_server_lossless_across_current_and_legacy_containers() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    let catalog_source = write_canonical_mcp(&asset_root, "catalog", "catalog", "catalog-global");
+
+    write(
+        &home.path().join(".cursor/mcp.json"),
+        &format!(
+            r#"{{
+  "foreignTopLevel": {{ "preserve": true }},
+  "mcpServers": {{
+    "catalog": {{
+      "command": "catalog-global",
+      "env": {{ "CATALOG_TOKEN": "{MCP_SECRET_SENTINEL}" }}
+    }},
+    "foreign-cursor": {{ "command": "foreign-cursor", "unknown": 1 }}
+  }}
+}}"#
+        ),
+    );
+    write(
+        &home.path().join(".codex/config.toml"),
+        &format!(
+            r#"model = "gpt-test"
+
+[mcp_servers.catalog]
+command = "catalog-global"
+
+[mcp_servers.catalog.env]
+CATALOG_TOKEN = "{MCP_SECRET_SENTINEL}"
+
+[mcp_servers.foreign_codex]
+command = "foreign-codex"
+unknown = "keep"
+"#
+        ),
+    );
+    write(
+        &home.path().join(".claude.json"),
+        &format!(
+            r#"{{
+  "theme": "dark",
+  "projects": {{
+    "/private/project": {{
+      "mcpServers": {{
+        "claude-local-only": {{ "command": "{MCP_SECRET_SENTINEL}" }}
+      }}
+    }}
+  }},
+  "mcpServers": {{
+    "catalog": {{
+      "command": "catalog-global",
+      "env": {{ "CATALOG_TOKEN": "{MCP_SECRET_SENTINEL}" }}
+    }},
+    "foreign-claude": {{ "command": "foreign-claude", "futureField": true }}
+  }}
+}}"#
+        ),
+    );
+    write(
+        &home.path().join(".hermes/config.yaml"),
+        &format!(
+            r#"theme: dark
+mcp_servers:
+  catalog:
+    command: catalog-global
+    env:
+      CATALOG_TOKEN: "{MCP_SECRET_SENTINEL}"
+  foreign-hermes:
+    command: foreign-hermes
+    future_field: keep
+"#
+        ),
+    );
+
+    write(
+        &home.path().join(".codex/mcp.json"),
+        &format!(
+            r#"{{
+  "mcpServers": {{
+    "catalog": {{ "command": "legacy-catalog" }},
+    "legacy-only": {{
+      "command": "legacy-only",
+      "env": {{ "LEGACY_TOKEN": "{MCP_SECRET_SENTINEL}" }}
+    }}
+  }}
+}}"#
+        ),
+    );
+    write(
+        &home.path().join(".claude/mcp.json"),
+        r#"{
+  "mcpServers": {
+    "legacy-claude-only": { "command": "legacy-claude-only" }
+  }
+}"#,
+    );
+    write(
+        &home.path().join(".hermes/mcp.json"),
+        r#"{
+  "mcpServers": {
+    "legacy-hermes-only": { "command": "legacy-hermes-only" }
+  }
+}"#,
+    );
+    write(
+        &asset_root.join("mcp.json"),
+        r#"{
+  "mcpServers": {
+    "catalog": { "command": "old-source-catalog" },
+    "source-legacy-only": { "command": "source-legacy-only" }
+  }
+}"#,
+    );
+
+    let before = tree_snapshot(home.path());
+    let output = rules_inventory_output(home.path(), &asset_root);
+    assert!(
+        output.status.success(),
+        "global MCP inventory must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 MCP inventory JSON");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 MCP inventory stderr");
+    assert!(
+        !stdout.contains(MCP_SECRET_SENTINEL) && !stderr.contains(MCP_SECRET_SENTINEL),
+        "MCP inventory must never serialize literal platform secret values"
+    );
+    assert_eq!(
+        tree_snapshot(home.path()),
+        before,
+        "MCP inventory must be strictly read-only"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("global MCP inventory JSON");
+
+    let cursor = assert_named_mcp_container_entry(
+        &report,
+        "catalog",
+        ".cursor/mcp.json",
+        "mcpServers.catalog",
+        "json",
+        "cursor",
+    );
+    assert_eq!(cursor["provenance"], "platform_current");
+    assert_eq!(cursor["currently_consumed"], true);
+    assert_mcp_source(&cursor, "global", &catalog_source, "global");
+
+    let codex = assert_named_mcp_container_entry(
+        &report,
+        "catalog",
+        ".codex/config.toml",
+        "mcp_servers.catalog",
+        "toml",
+        "codex",
+    );
+    assert_eq!(codex["provenance"], "platform_current");
+    assert_eq!(codex["currently_consumed"], true);
+    assert_eq!(codex["trust_requirement"], "none");
+    assert_mcp_source(&codex, "global", &catalog_source, "global");
+
+    let claude = assert_named_mcp_container_entry(
+        &report,
+        "catalog",
+        ".claude.json",
+        "mcpServers.catalog",
+        "json",
+        "claude",
+    );
+    assert_eq!(claude["provenance"], "platform_current");
+    assert_eq!(claude["currently_consumed"], true);
+    assert_mcp_source(&claude, "global", &catalog_source, "global");
+
+    let hermes = assert_named_mcp_container_entry(
+        &report,
+        "catalog",
+        ".hermes/config.yaml",
+        "mcp_servers.catalog",
+        "yaml",
+        "hermes",
+    );
+    assert_eq!(hermes["provenance"], "platform_current");
+    assert_eq!(hermes["currently_consumed"], true);
+    assert_mcp_source(&hermes, "global", &catalog_source, "global");
+
+    for (name, path_fragment) in [
+        ("foreign-cursor", ".cursor/mcp.json"),
+        ("foreign_codex", ".codex/config.toml"),
+        ("foreign-claude", ".claude.json"),
+        ("foreign-hermes", ".hermes/config.yaml"),
+    ] {
+        let entry = entry_named(&report, name, path_fragment);
+        assert_eq!(entry["kind"], "mcp", "entry={entry:?}");
+        assert_eq!(entry["classification"], "foreign", "entry={entry:?}");
+        assert_eq!(entry["ownership_state"], "foreign", "entry={entry:?}");
+        assert_eq!(entry["source_layer"], Value::Null, "entry={entry:?}");
+        assert_eq!(entry["canonical_path"], Value::Null, "entry={entry:?}");
+        assert_eq!(entry["owned"], false, "entry={entry:?}");
+        assert_eq!(entry["selectable"], false, "entry={entry:?}");
+        assert_eq!(entry["currently_consumed"], true, "entry={entry:?}");
+        assert_eq!(entry["provenance"], "platform_current", "entry={entry:?}");
+    }
+    assert!(
+        !serde_json::to_string(&report)
+            .expect("serialize MCP inventory")
+            .contains("claude-local-only"),
+        "Claude local project state in ~/.claude.json is inventory-only and must not be treated as user MCP"
+    );
+
+    let legacy_codex = entry_named(&report, "legacy-only", ".codex/mcp.json");
+    assert_eq!(legacy_codex["kind"], "mcp");
+    assert_eq!(legacy_codex["provenance"], "platform_legacy");
+    assert_eq!(legacy_codex["reason_code"], "legacy_codex_mcp_json");
+    assert_eq!(legacy_codex["currently_consumed"], false);
+    assert_eq!(legacy_codex["classification"], "foreign");
+    assert_eq!(legacy_codex["ownership_state"], "foreign");
+    assert_eq!(legacy_codex["owned"], false);
+    assert_eq!(legacy_codex["selectable"], false);
+
+    for (name, fragment, reason) in [
+        (
+            "legacy-claude-only",
+            ".claude/mcp.json",
+            "legacy_claude_mcp_json",
+        ),
+        (
+            "legacy-hermes-only",
+            ".hermes/mcp.json",
+            "legacy_hermes_mcp_json",
+        ),
+    ] {
+        let legacy = entry_named(&report, name, fragment);
+        assert_eq!(legacy["kind"], "mcp");
+        assert_eq!(legacy["provenance"], "platform_legacy");
+        assert_eq!(legacy["reason_code"], reason);
+        assert_eq!(legacy["currently_consumed"], false);
+        assert_eq!(legacy["ownership_state"], "foreign");
+        assert_eq!(legacy["owned"], false);
+        assert_eq!(legacy["selectable"], false);
+    }
+
+    let legacy_source = entry_named(&report, "source-legacy-only", "/.ai-config/mcp.json");
+    assert_eq!(legacy_source["kind"], "mcp");
+    assert_eq!(legacy_source["classification"], "legacy_mcp_candidate");
+    assert_eq!(legacy_source["provenance"], "canonical_legacy");
+    assert_eq!(legacy_source["reason_code"], "legacy_monolithic_mcp");
+    assert_eq!(legacy_source["currently_consumed"], false);
+    assert_eq!(legacy_source["owned"], false);
+    assert_eq!(legacy_source["selectable"], false);
+}
+
+#[test]
+fn project_mcp_inventory_uses_effective_overlay_repo_containers_and_reports_hermes_unsupported() {
+    let home = TempDir::new().expect("temporary HOME");
+    let repo = TempDir::new().expect("temporary project");
+    let global_root = home.path().join(".ai-config");
+    let project_root = repo.path().join(".ai-config");
+    let global_catalog = write_canonical_mcp(&global_root, "catalog", "catalog", "catalog-global");
+    let global_only =
+        write_canonical_mcp(&global_root, "global-only", "global-only", "global-only");
+    let project_catalog =
+        write_canonical_mcp(&project_root, "catalog", "catalog", "catalog-project");
+    write_canonical_mcp(
+        &project_root,
+        "project-only",
+        "project-only",
+        "project-only",
+    );
+    write_canonical_mcp(&global_root, "CaseServer", "CaseServer", "case-global");
+    write_canonical_mcp(&project_root, "caseserver", "caseserver", "case-project");
+    write(
+        &project_root.join("skills/CASESERver/SKILL.md"),
+        "cross-kind spelling must not create an MCP collision\n",
+    );
+
+    write(
+        &repo.path().join(".cursor/mcp.json"),
+        r#"{
+  "projectUnknown": true,
+  "mcpServers": {
+    "catalog": { "command": "catalog-project" },
+    "global-only": { "command": "global-only" },
+    "project-only": { "command": "project-only" },
+    "foreign-project": { "command": "foreign-project", "future": true }
+  }
+}"#,
+    );
+    write(
+        &repo.path().join(".codex/config.toml"),
+        r#"project_setting = "preserve"
+
+[mcp_servers.catalog]
+command = "catalog-project"
+
+[mcp_servers.global-only]
+command = "global-only"
+"#,
+    );
+    write(
+        &repo.path().join(".mcp.json"),
+        r#"{
+  "mcpServers": {
+    "catalog": { "command": "catalog-project" },
+    "project-only": { "command": "project-only" }
+  }
+}"#,
+    );
+    write(
+        &repo.path().join(".hermes/config.yaml"),
+        "mcp_servers:\n  repo-guess:\n    command: must-not-scan\n",
+    );
+
+    write(
+        &home.path().join(".cursor/mcp.json"),
+        &format!("invalid-json {MCP_SECRET_SENTINEL}"),
+    );
+    write(
+        &home.path().join(".codex/config.toml"),
+        &format!("[invalid-toml {MCP_SECRET_SENTINEL}"),
+    );
+    write(
+        &home.path().join(".claude.json"),
+        &format!("invalid-json {MCP_SECRET_SENTINEL}"),
+    );
+    write(
+        &home.path().join(".hermes/config.yaml"),
+        &format!("mcp_servers: [ {MCP_SECRET_SENTINEL}"),
+    );
+
+    let home_before = tree_snapshot(home.path());
+    let repo_before = tree_snapshot(repo.path());
+    let output = rules_inventory_output(home.path(), repo.path());
+    assert!(
+        output.status.success(),
+        "project MCP inventory must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 project MCP inventory JSON");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 project MCP inventory stderr");
+    assert!(
+        !stdout.contains(MCP_SECRET_SENTINEL) && !stderr.contains(MCP_SECRET_SENTINEL),
+        "project inventory must not read or serialize HOME platform MCP values"
+    );
+    assert_eq!(
+        tree_snapshot(home.path()),
+        home_before,
+        "HOME must remain unchanged"
+    );
+    assert_eq!(
+        tree_snapshot(repo.path()),
+        repo_before,
+        "project must remain unchanged"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("project MCP inventory JSON");
+    assert_eq!(report["scope"], "project");
+    for issue in report["issues"]
+        .as_array()
+        .expect("project inventory issues")
+    {
+        assert!(
+            issue["path"]
+                .as_str()
+                .is_some_and(|path| Path::new(path).starts_with(repo.path())),
+            "project inventory issues must never disclose that HOME platform paths were scanned: {issue:?}"
+        );
+    }
+
+    let cursor_catalog = assert_named_mcp_container_entry(
+        &report,
+        "catalog",
+        ".cursor/mcp.json",
+        "mcpServers.catalog",
+        "json",
+        "cursor",
+    );
+    assert_mcp_source(&cursor_catalog, "project", &project_catalog, "project");
+    assert_ne!(
+        cursor_catalog["canonical_path"],
+        global_catalog.to_string_lossy().as_ref(),
+        "project same-name MCP must override global"
+    );
+
+    let inherited = assert_named_mcp_container_entry(
+        &report,
+        "global-only",
+        ".cursor/mcp.json",
+        "mcpServers.global-only",
+        "json",
+        "cursor",
+    );
+    assert_mcp_source(&inherited, "global", &global_only, "project");
+
+    let codex_catalog = assert_named_mcp_container_entry(
+        &report,
+        "catalog",
+        ".codex/config.toml",
+        "mcp_servers.catalog",
+        "toml",
+        "codex",
+    );
+    assert_mcp_source(&codex_catalog, "project", &project_catalog, "project");
+    assert_eq!(codex_catalog["trust_requirement"], "trusted_project");
+
+    let claude_catalog = assert_named_mcp_container_entry(
+        &report,
+        "catalog",
+        "/.mcp.json",
+        "mcpServers.catalog",
+        "json",
+        "claude",
+    );
+    assert_mcp_source(&claude_catalog, "project", &project_catalog, "project");
+
+    let foreign = entry_named(&report, "foreign-project", ".cursor/mcp.json");
+    assert_eq!(foreign["classification"], "foreign");
+    assert_eq!(foreign["source_layer"], Value::Null);
+    assert_eq!(foreign["canonical_path"], Value::Null);
+    assert_eq!(foreign["owned"], false);
+
+    for entry in report["entries"].as_array().expect("project MCP entries") {
+        let Some(path) = entry["path"].as_str() else {
+            continue;
+        };
+        if entry["kind"] == "mcp"
+            && (path.contains("/.cursor/mcp.json")
+                || path.contains("/.codex/config.toml")
+                || path.ends_with("/.mcp.json")
+                || path.contains("/.claude.json")
+                || path.contains("/.hermes/"))
+        {
+            assert!(
+                Path::new(path).starts_with(repo.path()),
+                "project inventory must never fall back to HOME MCP paths: {entry:?}"
+            );
+        }
+        assert!(
+            !path.contains("/.hermes/"),
+            "Hermes project has no MCP inventory target: {entry:?}"
+        );
+    }
+
+    let unsupported = report["unsupported"]
+        .as_array()
+        .expect("project inventory must disclose unsupported platform contracts");
+    assert!(unsupported.iter().any(|entry| {
+        entry["kind"] == "mcp"
+            && entry["platform"] == "hermes"
+            && entry["scope"] == "project"
+            && entry["reason_code"] == "hermes_project_mcp_unsupported"
+    }));
+
+    let mcp_case_collisions = report["entries"]
+        .as_array()
+        .expect("project MCP entries")
+        .iter()
+        .filter(|entry| {
+            entry["kind"] == "mcp"
+                && matches!(entry["name"].as_str(), Some("CaseServer" | "caseserver"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(mcp_case_collisions.len(), 2);
+    assert!(mcp_case_collisions.iter().all(|entry| {
+        entry["classification"] == "case_collision"
+            && entry["reason_code"] == "case_only_name_collision"
+            && entry["blocking"] == true
+    }));
+    let cross_kind_skill = entry_named(&report, "CASESERver", "/skills/");
+    assert_ne!(cross_kind_skill["classification"], "case_collision");
+}
+
+#[test]
+fn mcp_inventory_reports_invalid_and_unsafe_containers_without_leaking_or_aborting_other_roots() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    write_canonical_mcp(&asset_root, "catalog", "catalog", "catalog-global");
+    write(
+        &home.path().join(".cursor/mcp.json"),
+        &format!("invalid-json {MCP_SECRET_SENTINEL}"),
+    );
+    write(
+        &home.path().join(".codex/config.toml"),
+        "[mcp_servers.catalog]\ncommand = \"catalog-global\"\n",
+    );
+
+    let outside = TempDir::new().expect("external platform container owner");
+    let outside_claude = outside.path().join("claude.json");
+    write(
+        &outside_claude,
+        &format!(r#"{{"mcpServers":{{"outside":{{"command":"{MCP_SECRET_SENTINEL}"}}}}}}"#),
+    );
+    fs::create_dir_all(home.path()).expect("temporary HOME exists");
+    symlink(&outside_claude, home.path().join(".claude.json"))
+        .expect("create unknown-root Claude container link");
+    let outside_hermes = outside.path().join("hermes");
+    write(
+        &outside_hermes.join("config.yaml"),
+        &format!("mcp_servers:\n  outside-parent:\n    command: {MCP_SECRET_SENTINEL}\n"),
+    );
+    symlink(&outside_hermes, home.path().join(".hermes"))
+        .expect("create unknown-root Hermes parent directory link");
+
+    let output = rules_inventory_output(home.path(), &asset_root);
+    assert!(
+        output.status.success(),
+        "one invalid/unsafe platform container must not hide other inventory roots: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 inventory JSON");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 inventory stderr");
+    assert!(
+        !stdout.contains(MCP_SECRET_SENTINEL) && !stderr.contains(MCP_SECRET_SENTINEL),
+        "invalid or linked container contents must never leak"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("inventory JSON with issues");
+    let codex = entry_named(&report, "catalog", ".codex/config.toml");
+    assert_eq!(codex["kind"], "mcp");
+
+    let issues = report["issues"]
+        .as_array()
+        .expect("inventory must expose structured fail-closed issues");
+    for (fragment, reason) in [
+        (".cursor/mcp.json", "invalid_mcp_container"),
+        (".claude.json", "unsafe_mcp_container_symlink"),
+        (".hermes/config.yaml", "unsafe_mcp_container_parent_symlink"),
+    ] {
+        let issue = issues
+            .iter()
+            .find(|issue| {
+                issue["path"]
+                    .as_str()
+                    .is_some_and(|path| path.contains(fragment))
+            })
+            .unwrap_or_else(|| panic!("missing MCP issue for {fragment}: {report:?}"));
+        assert_eq!(issue["kind"], "mcp");
+        assert_eq!(issue["scope"], "global");
+        assert_eq!(issue["reason_code"], reason);
+        assert_eq!(issue["blocking"], true);
+        assert!(
+            issue["message"].is_null() && issue["config"].is_null() && issue["content"].is_null(),
+            "issues must be code/path only and never retain parser or config payloads: {issue:?}"
+        );
+    }
+    assert!(
+        !serde_json::to_string(&report)
+            .expect("serialize fail-closed inventory")
+            .contains("outside-parent"),
+        "a parent directory symlink must never be followed"
+    );
+}
+
+#[test]
+fn canonical_mcp_parent_links_mismatches_and_legacy_errors_are_reported_without_following() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    fs::create_dir_all(&asset_root).expect("create canonical root");
+    let outside = TempDir::new().expect("external canonical owner");
+    write_canonical_mcp(outside.path(), "escaped", "escaped", MCP_SECRET_SENTINEL);
+    symlink(outside.path().join("mcp"), asset_root.join("mcp"))
+        .expect("create canonical MCP parent link");
+    write(
+        &asset_root.join("mcp.json"),
+        &format!("invalid legacy json {MCP_SECRET_SENTINEL}"),
+    );
+    write(
+        &home.path().join(".codex/config.toml"),
+        "[mcp_servers.valid-codex]\ncommand = \"valid-codex\"\n",
+    );
+
+    let output = rules_inventory_output(home.path(), &asset_root);
+    assert!(
+        output.status.success(),
+        "unsafe canonical paths must be reported while valid platform roots continue: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 canonical issue inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 canonical issue stderr");
+    assert!(!stdout.contains(MCP_SECRET_SENTINEL) && !stderr.contains(MCP_SECRET_SENTINEL));
+    let report: Value = serde_json::from_str(&stdout).expect("canonical issue inventory JSON");
+    assert_eq!(
+        entry_named(&report, "valid-codex", ".codex/config.toml")["kind"],
+        "mcp"
+    );
+    assert_mcp_issue(
+        &report,
+        "/.ai-config/mcp/servers",
+        "unsafe_canonical_mcp_parent_symlink",
+    );
+    assert_mcp_issue(
+        &report,
+        "/.ai-config/mcp.json",
+        "invalid_legacy_canonical_mcp",
+    );
+    assert!(
+        !serde_json::to_string(&report)
+            .expect("serialize canonical issues")
+            .contains("escaped"),
+        "canonical MCP parent symlink contents must not be inspected"
+    );
+
+    let mismatch_home = TempDir::new().expect("mismatch HOME");
+    let mismatch_root = mismatch_home.path().join(".ai-config");
+    write_canonical_mcp(
+        &mismatch_root,
+        "filename",
+        "different-name",
+        "must-not-be-effective",
+    );
+    let outside_legacy = outside.path().join("legacy-mcp.json");
+    write(
+        &outside_legacy,
+        &format!(r#"{{"mcpServers":{{"legacy-outside":{{"command":"{MCP_SECRET_SENTINEL}"}}}}}}"#),
+    );
+    symlink(&outside_legacy, mismatch_root.join("mcp.json"))
+        .expect("create legacy canonical MCP link");
+    write(
+        &mismatch_home.path().join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"valid-cursor":{"command":"valid-cursor"}}}"#,
+    );
+
+    let mismatch_output = rules_inventory_output(mismatch_home.path(), &mismatch_root);
+    assert!(
+        mismatch_output.status.success(),
+        "filename mismatch and linked legacy source must be structured issues: stdout={} stderr={}",
+        String::from_utf8_lossy(&mismatch_output.stdout),
+        String::from_utf8_lossy(&mismatch_output.stderr),
+    );
+    let mismatch_stdout =
+        String::from_utf8(mismatch_output.stdout).expect("UTF-8 mismatch inventory");
+    assert!(!mismatch_stdout.contains(MCP_SECRET_SENTINEL));
+    let mismatch_report: Value =
+        serde_json::from_str(&mismatch_stdout).expect("mismatch inventory JSON");
+    assert_eq!(
+        entry_named(&mismatch_report, "valid-cursor", ".cursor/mcp.json")["kind"],
+        "mcp"
+    );
+    assert_mcp_issue(
+        &mismatch_report,
+        "/mcp/servers/filename.json",
+        "canonical_mcp_filename_name_mismatch",
+    );
+    assert_mcp_issue(
+        &mismatch_report,
+        "/.ai-config/mcp.json",
+        "unsafe_legacy_canonical_mcp_symlink",
+    );
+    assert!(
+        !serde_json::to_string(&mismatch_report)
+            .expect("serialize mismatch issues")
+            .contains("different-name"),
+        "a mismatched canonical server must not become effective"
+    );
+}

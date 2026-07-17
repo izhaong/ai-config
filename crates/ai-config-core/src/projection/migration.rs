@@ -13,7 +13,13 @@ use sha2::{Digest, Sha256};
 use crate::error::CoreError;
 use crate::model::{AssetKind, PlatformId};
 use crate::projection::fingerprint::path_content_digest;
+use crate::projection::mcp::entry_fingerprint::{
+    inspect_claude_mcp_entries, inspect_codex_mcp_entries, inspect_cursor_mcp_entries,
+    inspect_hermes_mcp_entries, McpEntryFingerprint,
+};
+use crate::projection::mcp::source::load_mcp_definition_at;
 use crate::projection::model::SourceLayer;
+use crate::projection::platform_adapter::TrustRequirement;
 
 pub const MIGRATION_INVENTORY_SCHEMA_VERSION: u16 = 1;
 
@@ -43,6 +49,7 @@ pub struct InventoryRequest {
 #[serde(rename_all = "snake_case")]
 pub enum InventoryProvenance {
     Canonical,
+    CanonicalLegacy,
     PlatformCurrent,
     PlatformLegacy,
     CcSwitch,
@@ -53,6 +60,7 @@ pub enum InventoryProvenance {
 #[serde(rename_all = "snake_case")]
 pub enum InventoryClassification {
     CanonicalSource,
+    LegacyMcpCandidate,
     ManagedLink,
     LegacyMarkerCandidate,
     Equivalent,
@@ -93,6 +101,34 @@ pub struct MigrationInventoryEntry {
     /// Platforms which can consume this exact target.  Empty means a source or external row.
     pub consumers: Vec<PlatformId>,
     pub scope: InventoryScope,
+    /// Named entry within a generated MCP container; absent for direct assets and sources.
+    pub entry_key: Option<String>,
+    /// Container syntax for named MCP entries.  It never contains rendered configuration bytes.
+    pub format: Option<String>,
+    /// Canonical MCP references only.  Literal platform values are deliberately never exposed.
+    pub secret_keys: Vec<String>,
+    /// Platform-specific trust prerequisite for applying a generated MCP entry.
+    pub trust_requirement: TrustRequirement,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MigrationInventoryUnsupported {
+    pub kind: AssetKind,
+    pub platform: PlatformId,
+    pub name: String,
+    pub source_layer: Option<SourceLayer>,
+    pub canonical_path: Option<Utf8PathBuf>,
+    pub scope: InventoryScope,
+    pub reason_code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MigrationInventoryIssue {
+    pub kind: AssetKind,
+    pub path: Utf8PathBuf,
+    pub scope: InventoryScope,
+    pub reason_code: String,
+    pub blocking: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -101,15 +137,20 @@ pub struct MigrationInventory {
     pub scope: InventoryScope,
     pub plan_digest: String,
     pub entries: Vec<MigrationInventoryEntry>,
+    pub unsupported: Vec<MigrationInventoryUnsupported>,
+    pub issues: Vec<MigrationInventoryIssue>,
 }
 
 #[derive(Debug, Clone)]
 struct CanonicalAsset {
+    name: String,
     path: Utf8PathBuf,
     resolved_path: Utf8PathBuf,
     digest: String,
     layer: SourceLayer,
     kind: AssetKind,
+    secret_keys: Vec<String>,
+    targets: Option<Vec<PlatformId>>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,10 +178,11 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
     let layers = sorted_layers(&request.canonical_layers)?;
     let mut raw_canonical = Vec::new();
     let mut effective = BTreeMap::new();
+    let mut issues = Vec::new();
     for root in layers {
-        for asset in canonical_assets(root)? {
+        for asset in canonical_assets(root, request.scope, &mut issues)? {
             effective.insert(
-                (asset_kind_order(asset.kind), asset_name(&asset)?),
+                (asset_kind_order(asset.kind), asset.name.clone()),
                 asset.clone(),
             );
             raw_canonical.push(asset);
@@ -170,6 +212,7 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         .iter()
         .map(|asset| canonical_entry(asset, request.scope))
         .collect::<Vec<_>>();
+    let mut unsupported = Vec::new();
 
     scan_skill_root(
         &request.deploy_base.join(".agents/skills"),
@@ -212,6 +255,19 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         &mut entries,
     )?;
     scan_rules(request, &effective, &mut entries)?;
+    scan_mcp_targets(
+        request,
+        &effective,
+        &mut entries,
+        &mut unsupported,
+        &mut issues,
+    )?;
+    scan_legacy_canonical_mcp(
+        &request.canonical_layers,
+        request.scope,
+        &mut entries,
+        &mut issues,
+    )?;
     append_external_entries(
         &cc_switch,
         InventoryProvenance::CcSwitch,
@@ -244,12 +300,43 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
                 right.path.as_str(),
             ))
     });
-    let encoded = serde_json::to_vec(&entries).map_err(CoreError::Json)?;
+    unsupported.sort_by(|left, right| {
+        (
+            asset_kind_order(left.kind),
+            platform_order(left.platform),
+            left.name.as_str(),
+            left.canonical_path.as_ref().map(|path| path.as_str()),
+        )
+            .cmp(&(
+                asset_kind_order(right.kind),
+                platform_order(right.platform),
+                right.name.as_str(),
+                right.canonical_path.as_ref().map(|path| path.as_str()),
+            ))
+    });
+    issues.sort_by(|left, right| {
+        (
+            asset_kind_order(left.kind),
+            left.path.as_str(),
+            &left.scope,
+            left.reason_code.as_str(),
+        )
+            .cmp(&(
+                asset_kind_order(right.kind),
+                right.path.as_str(),
+                &right.scope,
+                right.reason_code.as_str(),
+            ))
+    });
+    let encoded =
+        serde_json::to_vec(&(&entries, &unsupported, &issues)).map_err(CoreError::Json)?;
     Ok(MigrationInventory {
         schema_version: MIGRATION_INVENTORY_SCHEMA_VERSION,
         scope: request.scope,
         plan_digest: hex::encode(Sha256::digest(encoded)),
         entries,
+        unsupported,
+        issues,
     })
 }
 
@@ -268,19 +355,98 @@ fn sorted_layers(layers: &[CanonicalLayerRoot]) -> Result<Vec<&CanonicalLayerRoo
     Ok(layers)
 }
 
-fn canonical_assets(root: &CanonicalLayerRoot) -> Result<Vec<CanonicalAsset>, CoreError> {
+fn canonical_assets(
+    root: &CanonicalLayerRoot,
+    scope: InventoryScope,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<Vec<CanonicalAsset>, CoreError> {
     let mut assets = Vec::new();
     for entry in direct_lstat_entries(&root.asset_root.join("skills"))? {
         if entry.shape != EntryShape::Directory || !is_regular_file(&entry.path.join("SKILL.md"))? {
             continue;
         }
-        assets.push(canonical_asset(root.layer, AssetKind::Skill, entry.path)?);
+        assets.push(canonical_asset(
+            root.layer,
+            AssetKind::Skill,
+            entry.name,
+            entry.path,
+        )?);
     }
     for entry in direct_lstat_entries(&root.asset_root.join("rules"))? {
         if entry.shape != EntryShape::RegularFile || entry.path.extension() != Some("mdc") {
             continue;
         }
-        assets.push(canonical_asset(root.layer, AssetKind::Rule, entry.path)?);
+        let name = entry
+            .path
+            .file_stem()
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&entry.name)
+            .to_owned();
+        assets.push(canonical_asset(
+            root.layer,
+            AssetKind::Rule,
+            name,
+            entry.path,
+        )?);
+    }
+    let mcp_servers = root.asset_root.join("mcp/servers");
+    if let Some(parent_issue) = mcp_parent_issue(&root.asset_root, &mcp_servers) {
+        let reason_code = match parent_issue {
+            "unsafe_mcp_container_parent_symlink" => "unsafe_canonical_mcp_parent_symlink",
+            "unsafe_mcp_container_parent_non_directory" => {
+                "unsafe_canonical_mcp_parent_non_directory"
+            }
+            _ => "unreadable_canonical_mcp_parent",
+        };
+        push_mcp_container_issue(issues, &mcp_servers, scope, reason_code);
+        return Ok(assets);
+    }
+    let mcp_entries = match direct_lstat_entries(&mcp_servers) {
+        Ok(entries) => entries,
+        Err(_) => {
+            push_mcp_container_issue(issues, &mcp_servers, scope, "unreadable_canonical_mcp");
+            return Ok(assets);
+        }
+    };
+    for entry in mcp_entries {
+        if entry.shape == EntryShape::Symlink {
+            push_mcp_container_issue(issues, &entry.path, scope, "unsafe_canonical_mcp_symlink");
+            continue;
+        }
+        if entry.shape != EntryShape::RegularFile || entry.path.extension() != Some("json") {
+            continue;
+        }
+        let definition = match load_mcp_definition_at(&entry.path) {
+            Ok(definition) => definition,
+            Err(_) => {
+                push_mcp_container_issue(issues, &entry.path, scope, "invalid_canonical_mcp");
+                continue;
+            }
+        };
+        if entry.path.file_stem() != Some(definition.server.name.as_str()) {
+            push_mcp_container_issue(
+                issues,
+                &entry.path,
+                scope,
+                "canonical_mcp_filename_name_mismatch",
+            );
+            continue;
+        }
+        let mut asset = match canonical_asset(
+            root.layer,
+            AssetKind::Mcp,
+            definition.server.name,
+            entry.path.clone(),
+        ) {
+            Ok(asset) => asset,
+            Err(_) => {
+                push_mcp_container_issue(issues, &entry.path, scope, "unreadable_canonical_mcp");
+                continue;
+            }
+        };
+        asset.secret_keys = definition.server.secret_keys;
+        asset.targets = Some(definition.targets);
+        assets.push(asset);
     }
     Ok(assets)
 }
@@ -288,6 +454,7 @@ fn canonical_assets(root: &CanonicalLayerRoot) -> Result<Vec<CanonicalAsset>, Co
 fn canonical_asset(
     layer: SourceLayer,
     kind: AssetKind,
+    name: String,
     path: Utf8PathBuf,
 ) -> Result<CanonicalAsset, CoreError> {
     // The direct child was selected from an explicitly injected canonical root.  It is the only
@@ -296,38 +463,20 @@ fn canonical_asset(
         .map_err(CoreError::Io)
         .and_then(utf8_path)?;
     Ok(CanonicalAsset {
+        name,
         digest: path_content_digest(&path)?,
         path,
         resolved_path,
         layer,
         kind,
+        secret_keys: Vec::new(),
+        targets: None,
     })
-}
-
-fn asset_name(asset: &CanonicalAsset) -> Result<String, CoreError> {
-    match asset.kind {
-        AssetKind::Rule => asset
-            .path
-            .file_stem()
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-            .ok_or_else(|| {
-                CoreError::InvalidPath(format!("invalid canonical rule: {}", asset.path))
-            }),
-        _ => asset
-            .path
-            .file_name()
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned)
-            .ok_or_else(|| {
-                CoreError::InvalidPath(format!("invalid canonical asset: {}", asset.path))
-            }),
-    }
 }
 
 fn canonical_entry(asset: &CanonicalAsset, scope: InventoryScope) -> MigrationInventoryEntry {
     MigrationInventoryEntry {
-        name: asset_name(asset).expect("canonical asset was validated before inventory entry"),
+        name: asset.name.clone(),
         path: asset.path.clone(),
         kind: asset.kind,
         classification: InventoryClassification::CanonicalSource,
@@ -344,6 +493,10 @@ fn canonical_entry(asset: &CanonicalAsset, scope: InventoryScope) -> MigrationIn
         canonical_path: Some(asset.path.clone()),
         consumers: Vec::new(),
         scope,
+        entry_key: None,
+        format: None,
+        secret_keys: asset.secret_keys.clone(),
+        trust_requirement: TrustRequirement::None,
     }
 }
 
@@ -522,6 +675,356 @@ fn scan_codex_execution_policies(
     Ok(())
 }
 
+fn scan_mcp_targets(
+    request: &InventoryRequest,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    unsupported: &mut Vec<MigrationInventoryUnsupported>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    scan_mcp_container(
+        &request.deploy_base,
+        &request.deploy_base.join(".cursor/mcp.json"),
+        "json",
+        "mcpServers",
+        PlatformId::Cursor,
+        InventoryProvenance::PlatformCurrent,
+        true,
+        "platform_mcp_entry_unowned",
+        inspect_cursor_mcp_entries,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    scan_mcp_container(
+        &request.deploy_base,
+        &request.deploy_base.join(".codex/config.toml"),
+        "toml",
+        "mcp_servers",
+        PlatformId::Codex,
+        InventoryProvenance::PlatformCurrent,
+        true,
+        "platform_mcp_entry_unowned",
+        inspect_codex_mcp_entries,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    if request.scope == InventoryScope::Global {
+        scan_mcp_container(
+            &request.deploy_base,
+            &request.deploy_base.join(".claude.json"),
+            "json",
+            "mcpServers",
+            PlatformId::Claude,
+            InventoryProvenance::PlatformCurrent,
+            true,
+            "platform_mcp_entry_unowned",
+            inspect_claude_mcp_entries,
+            canonical,
+            request.scope,
+            entries,
+            issues,
+        )?;
+        scan_mcp_container(
+            &request.deploy_base,
+            &request.deploy_base.join(".hermes/config.yaml"),
+            "yaml",
+            "mcp_servers",
+            PlatformId::Hermes,
+            InventoryProvenance::PlatformCurrent,
+            true,
+            "platform_mcp_entry_unowned",
+            inspect_hermes_mcp_entries,
+            canonical,
+            request.scope,
+            entries,
+            issues,
+        )?;
+        scan_mcp_container(
+            &request.deploy_base,
+            &request.deploy_base.join(".hermes/mcp.json"),
+            "json",
+            "mcpServers",
+            PlatformId::Hermes,
+            InventoryProvenance::PlatformLegacy,
+            false,
+            "legacy_hermes_mcp_json",
+            inspect_cursor_mcp_entries,
+            canonical,
+            request.scope,
+            entries,
+            issues,
+        )?;
+    } else {
+        scan_mcp_container(
+            &request.deploy_base,
+            &request.deploy_base.join(".mcp.json"),
+            "json",
+            "mcpServers",
+            PlatformId::Claude,
+            InventoryProvenance::PlatformCurrent,
+            true,
+            "platform_mcp_entry_unowned",
+            inspect_claude_mcp_entries,
+            canonical,
+            request.scope,
+            entries,
+            issues,
+        )?;
+        for asset in canonical
+            .values()
+            .filter(|asset| asset.kind == AssetKind::Mcp)
+        {
+            if asset
+                .targets
+                .as_ref()
+                .map_or(true, |targets| targets.contains(&PlatformId::Hermes))
+            {
+                unsupported.push(MigrationInventoryUnsupported {
+                    kind: AssetKind::Mcp,
+                    platform: PlatformId::Hermes,
+                    name: asset.name.clone(),
+                    source_layer: Some(asset.layer),
+                    canonical_path: Some(asset.path.clone()),
+                    scope: request.scope,
+                    reason_code: "hermes_project_mcp_unsupported".to_owned(),
+                });
+            }
+        }
+    }
+    scan_mcp_container(
+        &request.deploy_base,
+        &request.deploy_base.join(".codex/mcp.json"),
+        "json",
+        "mcpServers",
+        PlatformId::Codex,
+        InventoryProvenance::PlatformLegacy,
+        false,
+        "legacy_codex_mcp_json",
+        inspect_cursor_mcp_entries,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    scan_mcp_container(
+        &request.deploy_base,
+        &request.deploy_base.join(".claude/mcp.json"),
+        "json",
+        "mcpServers",
+        PlatformId::Claude,
+        InventoryProvenance::PlatformLegacy,
+        false,
+        "legacy_claude_mcp_json",
+        inspect_claude_mcp_entries,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_mcp_container(
+    approved_root: &Utf8Path,
+    path: &Utf8Path,
+    format: &str,
+    entry_prefix: &str,
+    platform: PlatformId,
+    provenance: InventoryProvenance,
+    currently_consumed: bool,
+    reason_code: &str,
+    inspect: fn(&str) -> Result<Vec<McpEntryFingerprint>, CoreError>,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    if let Some(reason_code) = mcp_parent_issue(approved_root, path) {
+        push_mcp_container_issue(issues, path, scope, reason_code);
+        return Ok(());
+    }
+    let metadata = match fs::symlink_metadata(path.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_mcp_container_issue(issues, path, scope, "unreadable_mcp_container");
+            return Ok(());
+        }
+    };
+    // A generated container is never a canonical source.  Unknown links are deliberately not
+    // opened: no server name is worth escaping the migration read boundary for.
+    if metadata.file_type().is_symlink() {
+        push_mcp_container_issue(issues, path, scope, "unsafe_mcp_container_symlink");
+        return Ok(());
+    }
+    if !metadata.is_file() {
+        push_mcp_container_issue(issues, path, scope, "unsafe_mcp_container_non_regular");
+        return Ok(());
+    }
+    let existing = match fs::read_to_string(path.as_std_path()) {
+        Ok(existing) => existing,
+        Err(_) => {
+            push_mcp_container_issue(issues, path, scope, "unreadable_mcp_container");
+            return Ok(());
+        }
+    };
+    let fingerprints = match inspect(&existing) {
+        Ok(fingerprints) => fingerprints,
+        Err(_) => {
+            push_mcp_container_issue(issues, path, scope, "invalid_mcp_container");
+            return Ok(());
+        }
+    };
+    for fingerprint in fingerprints {
+        let source = canonical
+            .get(&(asset_kind_order(AssetKind::Mcp), fingerprint.name.clone()))
+            .filter(|asset| {
+                asset
+                    .targets
+                    .as_ref()
+                    .map_or(true, |targets| targets.contains(&platform))
+            });
+        let blocking = currently_consumed && source.is_some();
+        let mut entry = target_entry(
+            fingerprint.name.clone(),
+            path.to_path_buf(),
+            AssetKind::Mcp,
+            InventoryClassification::Foreign,
+            provenance.clone(),
+            reason_code.to_owned(),
+            Some(fingerprint.digest),
+            currently_consumed,
+            blocking,
+            false,
+            source,
+            vec![platform],
+            scope,
+        );
+        entry.entry_key = Some(format!("{entry_prefix}.{}", fingerprint.name));
+        entry.format = Some(format.to_owned());
+        entry.trust_requirement =
+            if platform == PlatformId::Codex && scope != InventoryScope::Global {
+                TrustRequirement::TrustedProject
+            } else {
+                TrustRequirement::None
+            };
+        entries.push(entry);
+    }
+    Ok(())
+}
+
+fn push_mcp_container_issue(
+    issues: &mut Vec<MigrationInventoryIssue>,
+    path: &Utf8Path,
+    scope: InventoryScope,
+    reason_code: &str,
+) {
+    issues.push(MigrationInventoryIssue {
+        kind: AssetKind::Mcp,
+        path: path.to_path_buf(),
+        scope,
+        reason_code: reason_code.to_owned(),
+        blocking: true,
+    });
+}
+
+fn mcp_parent_issue(approved_root: &Utf8Path, path: &Utf8Path) -> Option<&'static str> {
+    let parent = path.parent()?;
+    let relative = parent.strip_prefix(approved_root).ok()?;
+    let mut current = approved_root.to_path_buf();
+    for component in relative.iter() {
+        current.push(component);
+        let metadata = match fs::symlink_metadata(current.as_std_path()) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(_) => return Some("unreadable_mcp_container_parent"),
+        };
+        if metadata.file_type().is_symlink() {
+            return Some("unsafe_mcp_container_parent_symlink");
+        }
+        if !metadata.is_dir() {
+            return Some("unsafe_mcp_container_parent_non_directory");
+        }
+    }
+    None
+}
+
+fn scan_legacy_canonical_mcp(
+    layers: &[CanonicalLayerRoot],
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    for root in sorted_layers(layers)? {
+        let path = root.asset_root.join("mcp.json");
+        let metadata = match fs::symlink_metadata(path.as_std_path()) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                push_mcp_container_issue(issues, &path, scope, "unreadable_legacy_canonical_mcp");
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            push_mcp_container_issue(issues, &path, scope, "unsafe_legacy_canonical_mcp_symlink");
+            continue;
+        }
+        if !metadata.is_file() {
+            push_mcp_container_issue(
+                issues,
+                &path,
+                scope,
+                "unsafe_legacy_canonical_mcp_non_regular",
+            );
+            continue;
+        }
+        let existing = match fs::read_to_string(path.as_std_path()) {
+            Ok(existing) => existing,
+            Err(_) => {
+                push_mcp_container_issue(issues, &path, scope, "unreadable_legacy_canonical_mcp");
+                continue;
+            }
+        };
+        let fingerprints = match inspect_cursor_mcp_entries(&existing) {
+            Ok(fingerprints) => fingerprints,
+            Err(_) => {
+                push_mcp_container_issue(issues, &path, scope, "invalid_legacy_canonical_mcp");
+                continue;
+            }
+        };
+        for fingerprint in fingerprints {
+            entries.push(MigrationInventoryEntry {
+                name: fingerprint.name.clone(),
+                path: path.clone(),
+                kind: AssetKind::Mcp,
+                classification: InventoryClassification::LegacyMcpCandidate,
+                provenance: InventoryProvenance::CanonicalLegacy,
+                reason_code: "legacy_monolithic_mcp".to_owned(),
+                content_digest: Some(fingerprint.digest),
+                currently_consumed: false,
+                blocking: false,
+                ownership_state: InventoryOwnershipState::Foreign,
+                owned: false,
+                selectable: false,
+                followed: false,
+                source_layer: Some(root.layer),
+                canonical_path: Some(path.clone()),
+                consumers: Vec::new(),
+                scope,
+                entry_key: Some(format!("mcpServers.{}", fingerprint.name)),
+                format: Some("json".to_owned()),
+                secret_keys: Vec::new(),
+                trust_requirement: TrustRequirement::None,
+            });
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn target_entry(
     name: String,
@@ -557,6 +1060,12 @@ fn target_entry(
         canonical_path: source.map(|asset| asset.path.clone()),
         consumers,
         scope,
+        entry_key: None,
+        format: None,
+        secret_keys: source
+            .map(|asset| asset.secret_keys.clone())
+            .unwrap_or_default(),
+        trust_requirement: TrustRequirement::None,
     }
 }
 
@@ -604,6 +1113,10 @@ fn append_external_entries(
             canonical_path: None,
             consumers: Vec::new(),
             scope,
+            entry_key: None,
+            format: None,
+            secret_keys: Vec::new(),
+            trust_requirement: TrustRequirement::None,
         });
     }
 }
@@ -800,6 +1313,16 @@ fn asset_kind_order(kind: AssetKind) -> u8 {
     }
 }
 
+fn platform_order(platform: PlatformId) -> u8 {
+    match platform {
+        PlatformId::AiConfig => 0,
+        PlatformId::Cursor => 1,
+        PlatformId::Codex => 2,
+        PlatformId::Claude => 3,
+        PlatformId::Hermes => 4,
+    }
+}
+
 fn ownership_fields(
     classification: &InventoryClassification,
 ) -> (InventoryOwnershipState, bool, bool) {
@@ -810,6 +1333,7 @@ fn ownership_fields(
             (InventoryOwnershipState::CanonicalSource, false, false)
         }
         InventoryClassification::LegacyMarkerCandidate
+        | InventoryClassification::LegacyMcpCandidate
         | InventoryClassification::Foreign
         | InventoryClassification::UnsafeLink
         | InventoryClassification::BrokenLink
