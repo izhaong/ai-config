@@ -1403,6 +1403,7 @@ fn plat_label(p: PlatformId) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection::fingerprint::path_content_digest;
     use std::fs;
     use tempfile::TempDir;
 
@@ -2078,32 +2079,30 @@ mod tests {
             "#!/bin/sh\n\"\"\"生命周期 TTS\"\"\"\n",
         );
 
-        let dest = import_hook_from_platform(
+        let canonical_before = path_content_digest(&asset_root).unwrap();
+        let platform_before = fs::read(repo.join(".cursor/hooks/lifecycle-tts.sh")).unwrap();
+        let manifest_before = fs::read(&hooks_json).unwrap();
+
+        let err = import_hook_from_platform(
             "lifecycle-tts.sh",
             PlatformId::Cursor,
             &asset_root,
             &asset_root,
             repo,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(dest, asset_root.join("hooks/lifecycle-tts.sh"));
-        assert!(dest.is_file());
-        assert!(asset_root.join("hooks.json").is_file());
-
-        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
-        let cursor_path = repo.join(".cursor/hooks/lifecycle-tts.sh");
-        let states = compute_entry_states(
-            PlatformId::Cursor,
-            AssetKind::Hook,
-            "lifecycle-tts.sh",
-            &cursor_path,
-            repo,
-            &asset_root,
-            &source_scan,
+        assert!(err.to_string().contains("legacy Hook import is disabled"));
+        assert_eq!(path_content_digest(&asset_root).unwrap(), canonical_before);
+        assert_eq!(
+            fs::read(repo.join(".cursor/hooks/lifecycle-tts.sh")).unwrap(),
+            platform_before
         );
-        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
-        assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Synced));
+        assert_eq!(fs::read(&hooks_json).unwrap(), manifest_before);
+        assert!(
+            !asset_root.join("hooks/lifecycle-tts.sh").exists(),
+            "a rejected legacy import must not create a canonical Hook source"
+        );
     }
 
     #[test]
