@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use camino::Utf8PathBuf;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use thiserror::Error;
 
 pub mod project_repo;
@@ -82,6 +82,47 @@ impl Store {
         Ok(store)
     }
 
+    /// Opens an existing ledger for planning without creating directories, running migrations,
+    /// or allowing SQLite to create sidecar files. Symlinked ledger files are deliberately
+    /// unavailable: their target is outside the caller's ownership boundary.
+    pub fn open_read_only_at(path: &Path) -> Result<Self, StoreError> {
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| StoreError::Open {
+            path: path.to_path_buf(),
+            reason: format!("读取 SQLite 元数据失败: {error}"),
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(StoreError::Open {
+                path: path.to_path_buf(),
+                reason: "refusing symbolic link ledger for read-only planning".to_owned(),
+            });
+        }
+        if !metadata.is_file() {
+            return Err(StoreError::Open {
+                path: path.to_path_buf(),
+                reason: "read-only ledger must be an existing regular file".to_owned(),
+            });
+        }
+
+        let uri = immutable_sqlite_uri(path)?;
+        let conn = Connection::open_with_flags(
+            uri,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+        )
+        .map_err(|error| StoreError::Open {
+            path: path.to_path_buf(),
+            reason: format!("以只读 immutable 模式打开 SQLite 失败: {error}"),
+        })?;
+        let path =
+            Utf8PathBuf::from_path_buf(path.to_path_buf()).map_err(|path| StoreError::Open {
+                path,
+                reason: "路径含非 UTF-8 字符,SQLite metadata 拒绝".to_owned(),
+            })?;
+        Ok(Self {
+            conn: std::sync::Mutex::new(conn),
+            path,
+        })
+    }
+
     /// 跑 [`schema::DDL`] 全部 DDL(幂等)。**会短暂持有 `conn` 锁**。
     pub fn migrate(&self) -> Result<(), StoreError> {
         let conn = self
@@ -122,6 +163,33 @@ impl Store {
     pub fn path(&self) -> &Utf8PathBuf {
         &self.path
     }
+}
+
+fn immutable_sqlite_uri(path: &Path) -> Result<String, StoreError> {
+    let absolute = path.canonicalize().map_err(|error| StoreError::Open {
+        path: path.to_path_buf(),
+        reason: format!("解析 SQLite 路径失败: {error}"),
+    })?;
+    let rendered = absolute.to_str().ok_or_else(|| StoreError::Open {
+        path: absolute.clone(),
+        reason: "路径含非 UTF-8 字符,SQLite metadata 拒绝".to_owned(),
+    })?;
+    let normalized = rendered.replace('\\', "/");
+    let path = if normalized.starts_with('/') {
+        normalized
+    } else {
+        format!("/{normalized}")
+    };
+    let encoded = path
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b':' | b'.' | b'-' | b'_' | b'~' => {
+                char::from(byte).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect::<String>();
+    Ok(format!("file:{encoded}?immutable=1"))
 }
 
 // ── 默认路径 ─────────────────────────────────────────────────────

@@ -113,6 +113,29 @@ enum Cmd {
         action: McpCmd,
     },
 
+    /// Explicitly import one platform asset into the canonical source layer.
+    Import {
+        /// Asset kind: skill, rule, mcp, agent, command, or prompt.
+        kind: String,
+        /// Stable canonical asset name (prompt currently accepts AGENTS only).
+        name: String,
+        /// Platform that currently owns the asset.
+        #[arg(long)]
+        from: String,
+        /// Canonical destination layer.
+        #[arg(long)]
+        to: String,
+        /// Replace a different existing canonical asset after review.
+        #[arg(long)]
+        replace: bool,
+        /// Reviewed JSON plan emitted by the same import command.
+        #[arg(long)]
+        plan: Option<String>,
+        /// Execute the one reviewed import. Omit for a read-only plan.
+        #[arg(long)]
+        apply: bool,
+    },
+
     /// Source-first migration tools; inventory is strictly read-only.
     Migrate {
         #[command(subcommand)]
@@ -209,6 +232,25 @@ enum McpCmd {
 enum MigrateCmd {
     /// Inventory legacy/current skill locations without changing the filesystem.
     Inventory,
+    /// Build the reviewed source-first adoption plan without changing the filesystem.
+    Plan,
+    /// Adopt explicitly selected equivalent targets from a reviewed migration plan.
+    SourceFirst {
+        /// JSON file emitted by `ai-config migrate plan --json`.
+        #[arg(long)]
+        plan: String,
+        /// Stable action ID to adopt. May be repeated; only AdoptEquivalent actions are valid.
+        #[arg(long = "select")]
+        select: Vec<String>,
+        /// Execute the selected reviewed adoptions. Omit for a read-only verification.
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Restore a completed explicit import when its canonical result has not drifted.
+    Rollback {
+        /// Transaction ID returned by `ai-config import --apply`.
+        transaction_id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -342,8 +384,43 @@ fn main() -> ExitCode {
             };
             mapped.run(mode, &default_root)
         }
+        Cmd::Import {
+            kind,
+            name,
+            from,
+            to,
+            replace,
+            plan,
+            apply,
+        } => migration::run_import(
+            mode,
+            &default_root,
+            &kind,
+            &name,
+            &from,
+            &to,
+            replace,
+            plan.as_deref(),
+            apply,
+        ),
         Cmd::Migrate { action } => match action {
             MigrateCmd::Inventory => migration::run_inventory(mode, &default_root, cli.workspace),
+            MigrateCmd::Plan => migration::run_plan(mode, &default_root, cli.workspace),
+            MigrateCmd::SourceFirst {
+                plan,
+                select,
+                apply,
+            } => migration::run_source_first(
+                mode,
+                &default_root,
+                cli.workspace,
+                &plan,
+                select,
+                apply,
+            ),
+            MigrateCmd::Rollback { transaction_id } => {
+                migration::run_rollback(mode, &default_root, &transaction_id)
+            }
         },
         Cmd::Daemon { action } => {
             // 桥接 main::DaemonCmd → daemon 模块的 DaemonCmd(传入 --json 全局标志)

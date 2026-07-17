@@ -6,6 +6,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+#[cfg(unix)]
+use std::io::Read;
+use std::io::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
@@ -2447,7 +2450,7 @@ fn allocate_backup_path(
     backup_root: &Utf8Path,
     target: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
-    fs::create_dir_all(backup_root.as_std_path())?;
+    ensure_safe_backup_root(backup_root, target)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2457,8 +2460,31 @@ fn allocate_backup_path(
     let filename = target
         .file_name()
         .ok_or_else(|| CoreError::InvalidPath("projection target has no file name".to_owned()))?;
-    let sequence = TEMP_LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    Ok(backup_root.join(format!("{sequence}-{filename}")))
+    for sequence in 0..1_024 {
+        let slot = backup_root.join(format!("{sequence}-{filename}"));
+        let manifest = slot.with_extension("manifest.json");
+        let temporary = slot.with_extension("manifest.tmp");
+        if path_exists_without_following(&manifest)? || path_exists_without_following(&temporary)? {
+            continue;
+        }
+        match fs::create_dir(slot.as_std_path()) {
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+
+                    fs::set_permissions(slot.as_std_path(), fs::Permissions::from_mode(0o700))?;
+                }
+                let nonce = backup_nonce()?;
+                return Ok(slot.join(format!("payload-{nonce:016x}")));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(CoreError::Io(error)),
+        }
+    }
+    Err(CoreError::InvalidPath(
+        "could not atomically reserve a private backup slot".to_owned(),
+    ))
 }
 
 fn write_backup_manifest(
@@ -2466,17 +2492,127 @@ fn write_backup_manifest(
     target: &Utf8Path,
     fingerprint: &super::model::PathFingerprint,
 ) -> Result<(), CoreError> {
-    let manifest = backup.with_extension("manifest.json");
-    let temporary = backup.with_extension("manifest.tmp");
+    let slot = backup.parent().ok_or_else(|| {
+        CoreError::InvalidPath("backup path has no private reservation slot".to_owned())
+    })?;
+    let metadata = fs::symlink_metadata(slot.as_std_path())?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(CoreError::InvalidPath(
+            "backup reservation slot is not a regular directory".to_owned(),
+        ));
+    }
+    let manifest = slot.with_extension("manifest.json");
+    let temporary = slot.with_extension("manifest.tmp");
+    if path_exists_without_following(&manifest)? || path_exists_without_following(&temporary)? {
+        return Err(CoreError::InvalidPath(
+            "backup manifest or its temporary path already exists".to_owned(),
+        ));
+    }
     let content = serde_json::to_vec_pretty(&BackupManifest {
         target_path: target,
         backup_path: backup,
         digest: fingerprint.digest.as_deref(),
         mode: fingerprint.mode,
     })?;
-    fs::write(temporary.as_std_path(), content)?;
-    fs::rename(temporary.as_std_path(), manifest.as_std_path())?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temporary.as_std_path())?;
+    if let Err(error) = file.write_all(&content).and_then(|()| file.sync_all()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+    if let Err(error) = set_private_file_permissions(&temporary) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(error);
+    }
+    if let Err(error) = fs::hard_link(temporary.as_std_path(), manifest.as_std_path()) {
+        let _ = fs::remove_file(temporary.as_std_path());
+        return Err(CoreError::Io(error));
+    }
+    fs::remove_file(temporary.as_std_path())?;
     Ok(())
+}
+
+/// Build the backup root one component at a time. `create_dir_all` follows links, so it cannot
+/// be used at this trust boundary: every pre-existing component below the caller's target-root
+/// anchor must prove itself via `lstat`. The anchor deliberately permits platform-provided path
+/// aliases such as macOS's `/var -> /private/var`; all caller-controlled descendants fail closed.
+fn ensure_safe_backup_root(backup_root: &Utf8Path, target: &Utf8Path) -> Result<(), CoreError> {
+    if !backup_root.is_absolute() {
+        return Err(CoreError::InvalidPath(
+            "backup root must be an absolute path".to_owned(),
+        ));
+    }
+    let anchor = target
+        .ancestors()
+        .find(|candidate| backup_root.starts_with(candidate))
+        .ok_or_else(|| {
+            CoreError::InvalidPath(
+                "backup root has no common absolute ancestor with its target".to_owned(),
+            )
+        })?;
+    let mut ancestors = backup_root
+        .ancestors()
+        .take_while(|path| path.starts_with(anchor))
+        .collect::<Vec<_>>();
+    ancestors.reverse();
+    for path in ancestors {
+        if path.as_str().is_empty() {
+            continue;
+        }
+        match fs::symlink_metadata(path.as_std_path()) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(CoreError::InvalidPath(
+                    "backup root contains a symlink and is not safe to traverse".to_owned(),
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(CoreError::InvalidPath(
+                    "backup root component is not a directory".to_owned(),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match fs::create_dir(path.as_std_path()) {
+                    Ok(()) => {}
+                    Err(create_error)
+                        if create_error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(create_error) => return Err(CoreError::Io(create_error)),
+                }
+                let metadata = fs::symlink_metadata(path.as_std_path())?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(CoreError::InvalidPath(
+                        "created backup root component is not a regular directory".to_owned(),
+                    ));
+                }
+            }
+            Err(error) => return Err(CoreError::Io(error)),
+        }
+    }
+    Ok(())
+}
+
+fn path_exists_without_following(path: &Utf8Path) -> Result<bool, CoreError> {
+    match fs::symlink_metadata(path.as_std_path()) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(CoreError::Io(error)),
+    }
+}
+
+fn backup_nonce() -> Result<u64, CoreError> {
+    #[cfg(unix)]
+    {
+        let mut bytes = [0_u8; 8];
+        fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+        Ok(u64::from_ne_bytes(bytes))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(TEMP_LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ^ Utc::now().timestamp_nanos_opt().unwrap_or_default() as u64)
+    }
 }
 
 fn direct_member_id(action: &ProjectionAction) -> Result<super::model::ProjectionId, CoreError> {

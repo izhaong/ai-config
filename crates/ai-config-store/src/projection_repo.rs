@@ -32,12 +32,10 @@ impl<'a> ProjectionRepo<'a> {
     fn get_impl(&self, id: &ProjectionId) -> Result<Option<ProjectionRecord>, StoreError> {
         let key = LedgerKey::from_id(id)?;
         self.with_conn(|conn| {
-            let mut statement = conn.prepare(
-                "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
-                 entry_key, source_fingerprint, entry_fingerprint, target_fingerprint, applied_at \
-                 FROM projection_ledger \
-                 WHERE scope_key = ?1 AND kind = ?2 AND name = ?3 AND surface_json = ?4",
-            )?;
+            let mut statement = conn.prepare(&projection_select_sql(
+                "WHERE scope_key = ?1 AND kind = ?2 AND name = ?3 AND surface_json = ?4",
+                ledger_has_entry_fingerprint(conn)?,
+            ))?;
             let row = statement
                 .query_row(
                     params![key.scope_key, key.kind, key.name, key.surface_json],
@@ -50,12 +48,10 @@ impl<'a> ProjectionRepo<'a> {
 
     fn get_many_impl(&self, ids: &[ProjectionId]) -> Result<Vec<ProjectionRecord>, StoreError> {
         self.with_conn(|conn| {
-            let mut statement = conn.prepare(
-                "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
-                 entry_key, source_fingerprint, entry_fingerprint, target_fingerprint, applied_at \
-                 FROM projection_ledger \
-                 WHERE scope_key = ?1 AND kind = ?2 AND name = ?3 AND surface_json = ?4",
-            )?;
+            let mut statement = conn.prepare(&projection_select_sql(
+                "WHERE scope_key = ?1 AND kind = ?2 AND name = ?3 AND surface_json = ?4",
+                ledger_has_entry_fingerprint(conn)?,
+            ))?;
             let mut records = Vec::new();
             for id in ids {
                 let key = LedgerKey::from_id(id)?;
@@ -75,12 +71,10 @@ impl<'a> ProjectionRepo<'a> {
 
     fn list_scope_impl(&self, scope_key: &str) -> Result<Vec<ProjectionRecord>, StoreError> {
         self.with_conn(|conn| {
-            let mut statement = conn.prepare(
-                "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
-                 entry_key, source_fingerprint, entry_fingerprint, target_fingerprint, applied_at \
-                 FROM projection_ledger WHERE scope_key = ?1 \
-                 ORDER BY kind, name, surface_json",
-            )?;
+            let mut statement = conn.prepare(&projection_select_sql(
+                "WHERE scope_key = ?1 ORDER BY kind, name, surface_json",
+                ledger_has_entry_fingerprint(conn)?,
+            ))?;
             let rows = statement.query_map(params![scope_key], |row| {
                 row_to_record(row).map_err(to_sql_conversion_error)
             })?;
@@ -112,6 +106,30 @@ impl<'a> ProjectionRepo<'a> {
         transaction.commit()?;
         Ok(())
     }
+}
+
+fn projection_select_sql(suffix: &str, has_entry_fingerprint: bool) -> String {
+    let entry_fingerprint = if has_entry_fingerprint {
+        "entry_fingerprint"
+    } else {
+        "NULL AS entry_fingerprint"
+    };
+    format!(
+        "SELECT scope_key, kind, name, surface_json, mode, source_path, target_path, \
+         entry_key, source_fingerprint, {entry_fingerprint}, target_fingerprint, applied_at \
+         FROM projection_ledger {suffix}"
+    )
+}
+
+fn ledger_has_entry_fingerprint(conn: &rusqlite::Connection) -> Result<bool, StoreError> {
+    let mut statement = conn.prepare("PRAGMA table_info(projection_ledger)")?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for column in columns {
+        if column? == "entry_fingerprint" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 impl ProjectionLedger for ProjectionRepo<'_> {

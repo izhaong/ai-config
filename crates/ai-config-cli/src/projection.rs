@@ -3,7 +3,7 @@
 //! Planning is always read-only. The first persistent ownership ledger is created only after
 //! the caller supplies --apply, so a default invocation cannot initialize a platform target.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 
 use ai_config_core::error::{exit_code, CoreError};
@@ -40,6 +40,10 @@ pub struct PublicPlan {
     /// The core action model is deliberately exposed as JSON so this public report can remain
     /// forward-compatible without giving the MCP bridge a second planner-owned schema.
     pub actions: Vec<serde_json::Value>,
+    /// An unreadable existing ledger never becomes an implicit empty ledger. The plan remains
+    /// inspectable, but review/apply must stop until ownership evidence is available again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ledger_status: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, JsonSchema)]
@@ -273,6 +277,11 @@ pub fn execute(
             exit_code: exit_code::SUCCESS,
         });
     }
+    if blocking.as_deref() == Some("ledger_unavailable") {
+        return Err(CoreError::ProjectionLedger(
+            "projection ownership ledger is unavailable".to_owned(),
+        ));
+    }
     if let Some(reason) = blocking {
         return Ok(LifecycleExecution {
             report: LifecycleReport {
@@ -324,6 +333,63 @@ pub fn execute(
     Ok(LifecycleExecution { report, exit_code })
 }
 
+/// Build the read-only source-first migration plan. It intentionally uses the ordinary sync
+/// planner so migration candidates keep the same preconditions and ownership classification as
+/// a normal projection; only the public review representation differs.
+pub(crate) fn build_migration_plan(default_root: &Utf8Path) -> Result<PublicPlan, CoreError> {
+    let roots = paths::resolve_sync_roots(default_root);
+    let ledger_path = roots
+        .deploy_base
+        .join(".ai-config/projection-ledger.sqlite");
+    let secrets = LifecycleMcpSecrets::load()?;
+    Ok(
+        build_with_existing_ledger(&roots, ProjectionOperation::Sync, &ledger_path, &secrets)?
+            .public,
+    )
+}
+
+/// Rebuild and validate a reviewed migration plan without opening a writable ledger. This is the
+/// dry-run boundary used by `migrate source-first` when `--apply` is absent.
+pub(crate) fn verify_migration_review(
+    default_root: &Utf8Path,
+    reviewed_digest: &str,
+    selected: &BTreeSet<String>,
+) -> Result<PublicPlan, CoreError> {
+    let roots = paths::resolve_sync_roots(default_root);
+    let ledger_path = roots
+        .deploy_base
+        .join(".ai-config/projection-ledger.sqlite");
+    let secrets = LifecycleMcpSecrets::load()?;
+    let bundle =
+        build_with_existing_ledger(&roots, ProjectionOperation::Sync, &ledger_path, &secrets)?;
+    validate_migration_review(&bundle, reviewed_digest, selected)?;
+    Ok(bundle.public)
+}
+
+/// The migration write path is deliberately a narrow adapter over the existing planner and
+/// transactional executor. It never creates missing targets or executes unselected actions.
+pub(crate) fn apply_reviewed_migration(
+    default_root: &Utf8Path,
+    reviewed_digest: &str,
+    selected: &BTreeSet<String>,
+) -> Result<ApplySummary, CoreError> {
+    let roots = paths::resolve_sync_roots(default_root);
+    let ledger_path = roots
+        .deploy_base
+        .join(".ai-config/projection-ledger.sqlite");
+    let secrets = LifecycleMcpSecrets::load()?;
+    let bundle =
+        build_with_existing_ledger(&roots, ProjectionOperation::Sync, &ledger_path, &secrets)?;
+    validate_migration_review(&bundle, reviewed_digest, selected)?;
+
+    // Validation above happens before opening Store, so stale, foreign, or unknown selections
+    // cannot create a SQLite file as an observable side effect.
+    let store = Store::open_at(ledger_path.as_std_path())
+        .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
+    apply_selected_adoptions(&bundle, &store.projections(), &roots, &secrets, selected)
+        .map_err(|error| error.error)
+}
+
 fn execute_workspace(
     default_root: &Utf8Path,
     apply: bool,
@@ -337,10 +403,30 @@ fn execute_workspace(
     };
     let ledger_path = workspace_root.join(".ai-config/projection-ledger.sqlite");
     let secrets = LifecycleMcpSecrets::load()?;
-    let bundles = if ledger_path.is_file() {
-        let store = Store::open_at(ledger_path.as_std_path())
-            .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
-        build_workspace_bundles(&workspace_root, operation, &store.projections(), &secrets)?
+    let bundles = if has_ledger_entry(&ledger_path) {
+        match Store::open_read_only_at(ledger_path.as_std_path()) {
+            Ok(store) => match build_workspace_bundles(
+                &workspace_root,
+                operation,
+                &store.projections(),
+                &secrets,
+            ) {
+                Ok(bundles) => bundles,
+                Err(CoreError::ProjectionLedger(_)) => {
+                    build_workspace_bundles_with_unavailable_ledger(
+                        &workspace_root,
+                        operation,
+                        &secrets,
+                    )?
+                }
+                Err(error) => return Err(error),
+            },
+            Err(_) => build_workspace_bundles_with_unavailable_ledger(
+                &workspace_root,
+                operation,
+                &secrets,
+            )?,
+        }
     } else {
         let ledger = MemoryProjectionLedger::default();
         build_workspace_bundles(&workspace_root, operation, &ledger, &secrets)?
@@ -348,6 +434,14 @@ fn execute_workspace(
 
     if !apply {
         return Ok((workspace_report(bundles, None, false), exit_code::SUCCESS));
+    }
+    if bundles
+        .iter()
+        .any(|bundle| bundle.bundle.public.ledger_status.as_deref() == Some("ledger_unavailable"))
+    {
+        return Err(CoreError::ProjectionLedger(
+            "projection ownership ledger is unavailable".to_owned(),
+        ));
     }
     if bundles
         .iter()
@@ -425,6 +519,19 @@ fn build_workspace_bundles(
             })
         })
         .collect()
+}
+
+fn build_workspace_bundles_with_unavailable_ledger(
+    workspace_root: &Utf8Path,
+    operation: ProjectionOperation,
+    secrets: &LifecycleMcpSecrets,
+) -> Result<Vec<WorkspaceBundle>, CoreError> {
+    let ledger = MemoryProjectionLedger::default();
+    let mut bundles = build_workspace_bundles(workspace_root, operation, &ledger, secrets)?;
+    for bundle in &mut bundles {
+        mark_ledger_unavailable(&mut bundle.bundle);
+    }
+    Ok(bundles)
 }
 
 fn workspace_report(
@@ -539,14 +646,32 @@ fn build_with_existing_ledger(
     ledger_path: &Utf8Path,
     secrets: &LifecycleMcpSecrets,
 ) -> Result<PlanBundle, CoreError> {
-    if ledger_path.is_file() {
-        let store = Store::open_at(ledger_path.as_std_path())
-            .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
-        build_bundle(roots, operation, &store.projections(), secrets)
+    if has_ledger_entry(ledger_path) {
+        match Store::open_read_only_at(ledger_path.as_std_path()) {
+            Ok(store) => match build_bundle(roots, operation, &store.projections(), secrets) {
+                Ok(bundle) => Ok(bundle),
+                Err(CoreError::ProjectionLedger(_)) => {
+                    build_bundle_with_unavailable_ledger(roots, operation, secrets)
+                }
+                Err(error) => Err(error),
+            },
+            Err(_) => build_bundle_with_unavailable_ledger(roots, operation, secrets),
+        }
     } else {
         let ledger = MemoryProjectionLedger::default();
         build_bundle(roots, operation, &ledger, secrets)
     }
+}
+
+fn build_bundle_with_unavailable_ledger(
+    roots: &SyncRoots,
+    operation: ProjectionOperation,
+    secrets: &LifecycleMcpSecrets,
+) -> Result<PlanBundle, CoreError> {
+    let ledger = MemoryProjectionLedger::default();
+    let mut bundle = build_bundle(roots, operation, &ledger, secrets)?;
+    mark_ledger_unavailable(&mut bundle);
+    Ok(bundle)
 }
 
 fn build_bundle(
@@ -630,18 +755,55 @@ fn build_bundle_with_overlay(
             &context,
         )?);
     }
-    let core_actions = plans
-        .iter()
-        .flat_map(|plan| plan.actions.iter().cloned())
-        .collect::<Vec<_>>();
-    let encoded = serde_json::to_vec(&core_actions).map_err(CoreError::Json)?;
-    let actions = serde_json::from_slice(&encoded).map_err(CoreError::Json)?;
+    let actions = public_actions_with_ids(&plans)?;
+    // The reviewed public digest deliberately includes stable action IDs. A selection therefore
+    // cannot be replayed against an action list whose ordering or identities have changed.
+    let encoded = serde_json::to_vec(&actions).map_err(CoreError::Json)?;
     let public = PublicPlan {
         schema_version: PROJECTION_PLAN_SCHEMA_VERSION,
         plan_digest: hex::encode(Sha256::digest(encoded)),
         actions,
+        ledger_status: None,
     };
     Ok(PlanBundle { plans, public })
+}
+
+fn public_actions_with_ids(plans: &[ProjectionPlan]) -> Result<Vec<serde_json::Value>, CoreError> {
+    let mut actions = Vec::new();
+    for plan in plans {
+        if plan.actions.len() != plan.action_ids.len() {
+            return Err(CoreError::InvalidPath(
+                "projection plan action IDs do not match its actions".to_owned(),
+            ));
+        }
+        for (action, action_id) in plan.actions.iter().zip(&plan.action_ids) {
+            let mut value = serde_json::to_value(action).map_err(CoreError::Json)?;
+            let object = value.as_object_mut().ok_or_else(|| {
+                CoreError::InvalidPath(
+                    "projection action did not serialize as an object".to_owned(),
+                )
+            })?;
+            object.insert(
+                "action_id".to_owned(),
+                serde_json::Value::String(action_id.clone()),
+            );
+            // A direct foreign target must go through the explicit import workflow. The generic
+            // planner's conflict wording is correct for normal sync, while this reviewed
+            // migration surface needs to make that next safe step explicit.
+            if action.kind == ProjectionActionKind::ReportOnly
+                && action.state.as_deref() == Some("foreign")
+                && !action.members.is_empty()
+                && action.mcp_members.is_empty()
+            {
+                object.insert(
+                    "reason_code".to_owned(),
+                    serde_json::Value::String("import_required".to_owned()),
+                );
+            }
+            actions.push(value);
+        }
+    }
+    Ok(actions)
 }
 
 fn overlay_roots(roots: &SyncRoots) -> OverlayRoots {
@@ -661,6 +823,9 @@ fn overlay_roots(roots: &SyncRoots) -> OverlayRoots {
 }
 
 fn blocking_reason(bundle: &PlanBundle) -> Option<String> {
+    if let Some(status) = &bundle.public.ledger_status {
+        return Some(status.clone());
+    }
     bundle
         .plans
         .iter()
@@ -669,6 +834,14 @@ fn blocking_reason(bundle: &PlanBundle) -> Option<String> {
             action.kind == ProjectionActionKind::ReportOnly && !is_missing_secret_skip(action)
         })
         .map(|action| action.reason_code.clone())
+}
+
+fn mark_ledger_unavailable(bundle: &mut PlanBundle) {
+    bundle.public.ledger_status = Some("ledger_unavailable".to_owned());
+}
+
+fn has_ledger_entry(path: &Utf8Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
 }
 
 fn is_missing_secret_skip(action: &ai_config_core::projection::planner::ProjectionAction) -> bool {
@@ -703,6 +876,107 @@ fn apply_bundle(
         add_apply_report(&mut summary, report);
     }
     Ok(summary)
+}
+
+fn validate_migration_review(
+    bundle: &PlanBundle,
+    reviewed_digest: &str,
+    selected: &BTreeSet<String>,
+) -> Result<(), CoreError> {
+    if bundle.public.ledger_status.as_deref() == Some("ledger_unavailable") {
+        return Err(CoreError::InvalidPath(
+            "source-first migration cannot apply while the ownership ledger is unavailable"
+                .to_owned(),
+        ));
+    }
+    if reviewed_digest != bundle.public.plan_digest {
+        return Err(CoreError::InvalidPath(
+            "reviewed migration plan digest is stale or does not match current source-first plan"
+                .to_owned(),
+        ));
+    }
+    if selected.is_empty() {
+        return Err(CoreError::InvalidPath(
+            "source-first migration requires at least one selected action ID".to_owned(),
+        ));
+    }
+    if let Some(reason) = blocking_reason(bundle) {
+        return Err(CoreError::InvalidPath(format!(
+            "source-first migration cannot apply while the reviewed plan contains a blocking action: {reason}"
+        )));
+    }
+    for selected_id in selected {
+        let candidate = bundle.plans.iter().find_map(|plan| {
+            plan.action_ids
+                .iter()
+                .position(|action_id| action_id == selected_id)
+                .map(|index| &plan.actions[index])
+        });
+        let Some(action) = candidate else {
+            return Err(CoreError::InvalidPath(
+                "selected migration action ID is not part of the current plan".to_owned(),
+            ));
+        };
+        if action.kind != ProjectionActionKind::AdoptEquivalent {
+            return Err(CoreError::InvalidPath(
+                "only an AdoptEquivalent migration action may be selected".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn apply_selected_adoptions(
+    bundle: &PlanBundle,
+    ledger: &dyn ProjectionLedger,
+    roots: &SyncRoots,
+    secrets: &LifecycleMcpSecrets,
+    selected: &BTreeSet<String>,
+) -> Result<ApplySummary, ProjectionTransactionError> {
+    let plans = bundle
+        .plans
+        .iter()
+        .filter_map(|plan| {
+            let indexes = plan
+                .action_ids
+                .iter()
+                .enumerate()
+                .filter_map(|(index, action_id)| selected.contains(action_id).then_some(index))
+                .collect::<Vec<_>>();
+            (!indexes.is_empty()).then(|| ProjectionPlan {
+                schema_version: plan.schema_version,
+                actions: indexes
+                    .iter()
+                    .map(|index| plan.actions[*index].clone())
+                    .collect(),
+                action_ids: indexes
+                    .iter()
+                    .map(|index| plan.action_ids[*index].clone())
+                    .collect(),
+                trust_requirements: indexes
+                    .iter()
+                    .map(|index| plan.trust_requirements[*index])
+                    .collect(),
+                warnings: Vec::new(),
+                // The executor's internal digest authorization only needs to bind this freshly
+                // rebuilt core slice; the public reviewed digest was verified above.
+                plan_digest: plan.plan_digest.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
+    let context = ExecutorContext::new(ledger, roots.deploy_base.clone(), backup_root)
+        .with_mcp_secret_provider(secrets);
+    let reports = apply_projection_plans_transactionally(
+        plans.iter().map(|plan| {
+            (
+                plan,
+                ApplyOptions::with_selected_action_ids(plan, plan.action_ids.clone()),
+            )
+        }),
+        &context,
+    )?;
+    Ok(summarize_apply_reports(reports))
 }
 
 fn summarize_apply_reports(reports: Vec<ApplyReport>) -> ApplySummary {

@@ -752,6 +752,208 @@ fn selected_equivalent_adoption_moves_the_old_target_to_backup_before_linking() 
 
 #[cfg(unix)]
 #[test]
+fn selected_equivalent_adoption_rejects_a_symlinked_backup_root_without_writing_outside() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    let target = request.deploy_base.join(".agents/skills/review");
+    fs::create_dir_all(target.as_std_path()).unwrap();
+    fs::write(target.join("SKILL.md").as_std_path(), "canonical skill").unwrap();
+    let outside = root.join("outside");
+    fs::create_dir_all(outside.as_std_path()).unwrap();
+    fs::write(outside.join("sentinel").as_std_path(), "outside data").unwrap();
+    let backup_root = root.join("backups");
+    std::os::unix::fs::symlink(outside.as_std_path(), backup_root.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+
+    let result = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root),
+        ApplyOptions::with_selected_action_ids(&plan, [plan.action_ids[0].clone()]),
+    );
+
+    assert_eq!(
+        fs::read_dir(outside.as_std_path())
+            .unwrap()
+            .map(Result::unwrap)
+            .map(|entry| entry.file_name())
+            .collect::<Vec<_>>(),
+        vec![std::ffi::OsString::from("sentinel")]
+    );
+    assert!(fs::symlink_metadata(target.as_std_path())
+        .unwrap()
+        .file_type()
+        .is_dir());
+    assert_eq!(
+        fs::read_to_string(target.join("SKILL.md").as_std_path()).unwrap(),
+        "canonical skill"
+    );
+    assert!(result.is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_equivalent_adoption_never_replaces_a_preexisting_backup_or_manifest() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let backup_root = root.join("backups");
+    fs::create_dir_all(backup_root.as_std_path()).unwrap();
+    let first_deploy_base = root.join("first-deploy");
+    let first_target = first_deploy_base.join(".agents/skills/review");
+    fs::create_dir_all(first_target.as_std_path()).unwrap();
+    fs::write(
+        first_target.join("SKILL.md").as_std_path(),
+        "canonical skill",
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let first_request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/first".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: first_deploy_base.clone(),
+        assets: vec![asset.clone()],
+        platforms: vec![PlatformId::Cursor],
+    };
+    let first_plan = build_projection_plan(&first_request, &PlannerContext::new(&ledger)).unwrap();
+    apply_projection_plan(
+        &first_plan,
+        &ExecutorContext::new(&ledger, first_deploy_base, backup_root.clone()),
+        ApplyOptions::with_selected_action_ids(&first_plan, [first_plan.action_ids[0].clone()]),
+    )
+    .unwrap();
+
+    let first_backup = fs::read_dir(backup_root.as_std_path())
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|entry| {
+            !entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".manifest.json")
+        })
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .into_owned();
+    let first_sequence = first_backup
+        .split_once('-')
+        .unwrap()
+        .0
+        .parse::<u64>()
+        .unwrap();
+    let mut preserved = Vec::new();
+    for sequence in first_sequence + 1..=first_sequence + 1_024 {
+        let backup = backup_root.join(format!("{sequence}-review"));
+        let manifest = backup.with_extension("manifest.json");
+        let backup_contents = format!("backup-{sequence}");
+        let manifest_contents = format!("manifest-{sequence}");
+        fs::write(backup.as_std_path(), &backup_contents).unwrap();
+        fs::write(manifest.as_std_path(), &manifest_contents).unwrap();
+        preserved.push((backup, backup_contents, manifest, manifest_contents));
+    }
+
+    let second_deploy_base = root.join("second-deploy");
+    let second_target = second_deploy_base.join(".agents/skills/review");
+    fs::create_dir_all(second_target.as_std_path()).unwrap();
+    fs::write(
+        second_target.join("SKILL.md").as_std_path(),
+        "canonical skill",
+    )
+    .unwrap();
+    let second_request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/second".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: second_deploy_base.clone(),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    let second_plan =
+        build_projection_plan(&second_request, &PlannerContext::new(&ledger)).unwrap();
+    let result = apply_projection_plan(
+        &second_plan,
+        &ExecutorContext::new(&ledger, second_deploy_base, backup_root),
+        ApplyOptions::with_selected_action_ids(&second_plan, [second_plan.action_ids[0].clone()]),
+    );
+
+    for (backup, backup_contents, manifest, manifest_contents) in preserved {
+        assert_eq!(
+            fs::read_to_string(backup.as_std_path()).unwrap(),
+            backup_contents
+        );
+        assert_eq!(
+            fs::read_to_string(manifest.as_std_path()).unwrap(),
+            manifest_contents
+        );
+    }
+    if result.is_err() {
+        assert!(fs::symlink_metadata(second_target.as_std_path())
+            .unwrap()
+            .file_type()
+            .is_dir());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_equivalent_adoption_never_follows_a_preexisting_manifest_temp_symlink() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let asset = skill(root, "review");
+    let backup_root = root.join("backups");
+    fs::create_dir_all(backup_root.as_std_path()).unwrap();
+    let outside = root.join("outside-sentinel");
+    fs::write(outside.as_std_path(), "outside data").unwrap();
+    for sequence in 0..1_024 {
+        let temporary = backup_root
+            .join(format!("{sequence}-review"))
+            .with_extension("manifest.tmp");
+        std::os::unix::fs::symlink(outside.as_std_path(), temporary.as_std_path()).unwrap();
+    }
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: root.join("deploy"),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    let target = request.deploy_base.join(".agents/skills/review");
+    fs::create_dir_all(target.as_std_path()).unwrap();
+    fs::write(target.join("SKILL.md").as_std_path(), "canonical skill").unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+
+    let result = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base, backup_root),
+        ApplyOptions::with_selected_action_ids(&plan, [plan.action_ids[0].clone()]),
+    );
+
+    assert_eq!(
+        fs::read_to_string(outside.as_std_path()).unwrap(),
+        "outside data"
+    );
+    assert!(result.is_err());
+    assert!(fs::symlink_metadata(target.as_std_path())
+        .unwrap()
+        .file_type()
+        .is_dir());
+}
+
+#[cfg(unix)]
+#[test]
 fn ledger_failure_restores_an_adopted_equivalent_target() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
