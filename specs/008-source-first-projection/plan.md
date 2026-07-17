@@ -866,6 +866,13 @@ public lifecycle 以及 Hermes cross-domain retract/uninstall；在此之前，�
 单独禁用而制造功能空窗。故 T008.5 与最终 T008.9 保持未完成，T009.1 必须先以默认零写和
 显式 `--apply` 合同覆盖这些调用路径；T009 接通后回填 T008.5/9 验收。
 
+**T009 回填（2026-07-17）**：CLI 与 MCP lifecycle 已统一切换到 projection，旧
+`lifecycle.rs` 的 materialize/MCP/Hook/platform 写循环已删除；真实 MCP stdio 与 CLI 对同一
+request 的 schema、digest、actions 完全一致。GUI 的 `command_bridge` / Tauri commands 仍可达
+旧 `asset_ops`，其替换与 peer-copy 删除属于 T011.4/T011.6 的明确验收范围。为避免把最终
+source-first 要求缩成 CLI-only，T008.5/T008.9 继续保持未完成，直到 T011 删除最后的 GUI
+旁路；该跨任务门禁不重新打开已经完成的 T009 CLI/MCP 合同。
+
 ### T009 — CLI 与 ai-config MCP API 统一走 plan/apply
 
 **Files:**
@@ -877,25 +884,24 @@ public lifecycle 以及 Hermes cross-domain retract/uninstall；在此之前，�
 
 **CLI contract:** `install/sync/uninstall` 默认 plan-only；`--apply` 才写入；`--workspace` 保留。MCP `ai_config_sync/deploy/retract` 增加 `apply: bool = false`。只有 T007 MCP renderer 与 T008 Hook/Prompt/container renderer 均完成后，才在本任务统一切换 public lifecycle，避免任何 kind 出现功能空窗。
 
-**执行状态（2026-07-17，防偏航）**：CLI `install/sync/uninstall` 已完成第一段
-RED→GREEN 接线（`452bbdc`）：默认只输出 `schema_version`、`plan_digest` 与 action/member
-摘要，`--apply` 才创建持久 SQLite ledger 并执行 direct/MCP/Hook/Prompt；foreign/conflict 在
-写入前统一返回 exit 3，Hermes user 仅经 unified coordinator。MCP bridge 已在 `2a9ab6d`
-接入相同 lifecycle：`ai_config_sync` 默认 plan-only，`apply=true` 返回同一计划身份及 apply
-摘要；deploy/retract 在安全的单项计划尚未表达前 fail-closed，不能再直写旧 `asset_ops`。该切片
-已验证第二次 apply 为 unchanged。**仍未完成** workspace adapter、以及
-完整 exit/report 语义（含 missing-secret exit 4）。non-Hermes 多子计划已在 `99ea766` 取得
-一次 lock、共享 undo journal 和最终单次 ledger commit；后续 MCP source 在运行期失效时会全局
-回滚先前 direct/Hook/Prompt/MCP target 与 ledger。T009 仍不可标完成，T010–T013
-不得据此进入真实环境。
+**执行状态（2026-07-17，已完成）**：CLI `install/sync/uninstall` 默认 plan-only，显式
+`--apply` 才创建持久 SQLite ledger 并执行 direct/MCP/Hook/Prompt；workspace members 共用一次
+预检、lock、undo journal 与最终 ledger transaction。MCP `ai_config_sync` 复用同一 lifecycle，
+默认零写；单项 deploy/retract 在安全计划尚未表达前 fail-closed。CLI 与真实 MCP stdio 对同一
+request 的 `schema_version`、`plan_digest`、actions/member identity 完全一致；install 也有默认
+零写与显式 apply 合同。运行期后段失败会把已恢复 action 报为 `rolled_back`、失败 action 报为
+`failed`、未进入 action 报为 `not_applied`，并统一返回 exit 3；缺 MCP key 返回 exit 4 且只显示
+key name；初始化/ledger 文件系统失败保留 exit 5。JSON 错误遵循既有 output contract 在 stdout
+输出 redacted envelope，stderr 不混入第二份非结构化错误。旧 `lifecycle.rs` 直写循环已删除，
+core+CLI 全量测试与严格 clippy 通过；GUI 旁路仍由 T011 单独收敛。
 
-- [ ] **T009.1 Write failing CLI contract tests**：default sync zero-write；`sync --apply` 对 direct/MCP/Hook/Prompt 创建 links/generated batches；second apply unchanged；JSON has schema_version/plan_digest/action/member summaries；blocking foreign conflict 以 exit 3 整 plan 零写入；uninstall leaves source/foreign/generated container；MCP tool default no-write；CLI 与 MCP tool 对同一 request 产生相同 digest。
+- [x] **T009.1 Write failing CLI contract tests**：default sync zero-write；`sync --apply` 对 direct/MCP/Hook/Prompt 创建 links/generated batches；second apply unchanged；JSON has schema_version/plan_digest/action/member summaries；blocking foreign conflict 以 exit 3 整 plan零写入；uninstall leaves source/foreign/generated container；MCP tool default no-write；CLI 与 MCP tool 对同一 request 产生相同 digest；install 默认 plan-only、显式 apply。
 - [x] **T009.2 Verify RED**：`projection_lifecycle` 5 条合同先在无 `--apply`/plan 报告/统一编排的旧入口下实际失败，再转 GREEN。
-- [ ] **T009.3 Add contexts, clap flags and reports**：CLI/serve 调用层构造可序列化 `ProjectionRequest` 与注入式 `PlannerContext`/`ExecutorContext`；core 不打开 store；apply 只把 plan、context 和 options 交给 core。确认所有 kind 已迁移后再删除 lifecycle 的 materialize/MCP/Hook platform loops。
-- [ ] **T009.4 Define exit/report contract**：0=plan/apply success，3=blocking conflict 或已回滚 transaction failure，4=missing secret skipped，5=filesystem；输出 `rolled_back/not_applied`，JSON stderr 继续 envelope 且 redacted。
+- [x] **T009.3 Add contexts, clap flags and reports**：CLI/serve 调用层构造可序列化 `ProjectionRequest` 与注入式 `PlannerContext`/`ExecutorContext`；core 不打开 store；apply 只把 plan、context 和 options 交给 core。CLI/MCP 所有 kind 迁移后已删除 lifecycle 的 materialize/MCP/Hook platform loops；GUI 旧 commands 明确留给 T011.4 删除。
+- [x] **T009.4 Define exit/report contract**：0=plan/apply success，3=blocking conflict 或已回滚 transaction failure，4=missing secret skipped，5=filesystem；输出 `failed/rolled_back/not_applied`；JSON error 继续使用 redacted envelope，并遵循既有 output contract 写 stdout。
 - [x] **T009.5 Update MCP schemas**：tool output schema 使用 ProjectionPlan/ApplyReport；`apply` 默认 false；agent 无法绕过 conflict/adopt guard。`ai_config_sync` 已复用 lifecycle projection；单项 deploy/retract 在计划表达完成前 fail-closed，禁止旧直写旁路。
-- [ ] **T009.6 Verify**：`cargo test -p ai-config-cli --test projection_lifecycle --test report_json --test agent_api_cli --test deploy_retract`。
-- [ ] **T009.7 Commit checkpoint**：`git commit -m "feat(cli): 同步与卸载改为显式计划应用"`。
+- [x] **T009.6 Verify**：指定四组 32 passed；另 `workspace_projection_lifecycle` 4 passed、`cargo test -p ai-config-core -p ai-config-cli` 全绿、core+CLI strict clippy 通过。
+- [x] **T009.7 Commit checkpoint**：本任务以 `fix(cli): 完成投影生命周期事务合同` 建立独立 checkpoint；不包含用户 GUI/009 安全止血脏改。
 
 ### T010 — Explicit import 与 legacy/.cc-switch migration
 

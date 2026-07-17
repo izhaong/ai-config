@@ -3,7 +3,8 @@ use std::fs;
 use ai_config_core::error::CoreError;
 use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::projection::executor::{
-    apply_projection_plan, ApplyActionStatus, ApplyOptions, ExecutorContext,
+    apply_projection_plan, apply_projection_plans_transactionally, ApplyActionStatus, ApplyOptions,
+    ExecutorContext,
 };
 use ai_config_core::projection::fingerprint::path_content_digest;
 use ai_config_core::projection::ledger::MemoryProjectionLedger;
@@ -134,6 +135,45 @@ fn apply_creates_an_exact_link_for_a_missing_direct_target() {
         fs::read_link(target.as_std_path()).unwrap(),
         asset.source_path
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn transactional_apply_failure_preserves_failed_rolled_back_and_not_applied_reports() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let deploy_base = root.join("deploy");
+    let ledger = MemoryProjectionLedger::default();
+    let plans = ["first", "second", "third"]
+        .into_iter()
+        .map(|name| {
+            let asset = skill(root, name);
+            let request = ProjectionRequest {
+                operation: ProjectionOperation::Sync,
+                scope_key: "project:/fixture".to_owned(),
+                scope: DeploymentScope::Project,
+                deploy_base: deploy_base.clone(),
+                assets: vec![asset],
+                platforms: vec![PlatformId::Cursor],
+            };
+            build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap()
+        })
+        .collect::<Vec<_>>();
+    fs::remove_dir_all(root.join("source/skills/second").as_std_path()).unwrap();
+
+    let error = apply_projection_plans_transactionally(
+        plans
+            .iter()
+            .map(|plan| (plan, ApplyOptions::for_plan(plan))),
+        &ExecutorContext::new(&ledger, deploy_base.clone(), root.join("backups")),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.reports.len(), 3);
+    assert_eq!(error.reports[0].rolled_back, 1);
+    assert_eq!(error.reports[1].failed, 1);
+    assert_eq!(error.reports[2].not_applied, 1);
+    assert!(fs::symlink_metadata(deploy_base.join(".agents/skills/first").as_std_path()).is_err());
 }
 
 #[cfg(unix)]

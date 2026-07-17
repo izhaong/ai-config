@@ -2,6 +2,8 @@
 
 use std::fs;
 use std::path::Path;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
 use serde_json::Value;
@@ -87,8 +89,7 @@ fn workspace_report(report: &[u8]) -> Value {
     for member in members {
         assert!(member["member"].is_string(), "member report={member:?}");
         assert!(
-            member["plan"]["schema_version"].is_u64()
-                && member["plan"]["plan_digest"].is_string(),
+            member["plan"]["schema_version"].is_u64() && member["plan"]["plan_digest"].is_string(),
             "member plan must be independently reviewable: {member:?}"
         );
     }
@@ -194,4 +195,81 @@ fn workspace_apply_foreign_member_conflict_rolls_back_all_members() {
         !fixture.member("one").join("AGENTS.md").exists(),
         "foreign conflict in another member must prevent workspace prompt writes"
     );
+}
+
+#[test]
+fn workspace_runtime_failure_reports_rollback_and_not_applied_members_with_exit_three() {
+    let fixture = WorkspaceFixture::new();
+    for index in 0..256 {
+        write(
+            &fixture
+                .member("one")
+                .join(format!(".ai-config/skills/{index:04}-bulk/SKILL.md")),
+            "---\nname: bulk\n---\ncanonical bulk skill\n",
+        );
+    }
+    let first_target = fixture.member("one").join(".agents/skills/0000-bulk");
+    let second_member_source = fixture.member("two").join(".ai-config/skills/two/SKILL.md");
+    let mutation = thread::spawn({
+        let first_target = first_target.clone();
+        let second_member_source = second_member_source.clone();
+        move || {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if first_target.exists() {
+                    fs::write(&second_member_source, "source changed after planning\n")
+                        .expect("simulate a member-two canonical source update");
+                    return true;
+                }
+                thread::yield_now();
+            }
+            false
+        }
+    });
+
+    let output = fixture
+        .cmd()
+        .args(["--json", "sync", "--apply"])
+        .output()
+        .expect("workspace sync with a later source change");
+    assert!(
+        mutation.join().expect("source editor thread"),
+        "the source update must happen after the first workspace member starts staging"
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a workspace runtime transaction failure must use exit 3: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let report = workspace_report(&output.stdout);
+    let members = report["members"].as_array().expect("workspace members");
+    assert!(
+        members.iter().all(|member| {
+            member["blocking_reason"] == "transaction_apply_failed"
+                && member["apply"].is_object()
+        }),
+        "a global transaction failure must preserve a structured report for every member: {report:?}"
+    );
+    assert!(
+        members[0]["apply"]["rolled_back"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0,
+        "member one writes must be reported as rolled back: {report:?}"
+    );
+    assert!(
+        members[1]["apply"]["failed"].as_u64().unwrap_or_default() > 0,
+        "member two source mismatch must be reported as failed: {report:?}"
+    );
+    assert!(
+        members[1]["apply"]["not_applied"]
+            .as_u64()
+            .unwrap_or_default()
+            > 0,
+        "later member-two actions must remain explicitly not_applied: {report:?}"
+    );
+    fixture.assert_no_member_targets();
 }

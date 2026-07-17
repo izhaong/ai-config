@@ -114,12 +114,9 @@ impl Fixture {
 }}"#
             ),
         );
-        let secret_path = Utf8PathBuf::from_path_buf(
-            self.home
-                .path()
-                .join(".config/ai-config/secrets.env"),
-        )
-        .expect("temporary secret path is UTF-8");
+        let secret_path =
+            Utf8PathBuf::from_path_buf(self.home.path().join(".config/ai-config/secrets.env"))
+                .expect("temporary secret path is UTF-8");
         ai_config_core::secrets::save_to(
             &[(
                 "UNRELATED_TEST_SECRET".to_owned(),
@@ -269,12 +266,14 @@ fn sync_apply_missing_mcp_secret_exits_four_reports_key_without_value_and_applie
         "the apply report may expose only the missing key name"
     );
     assert!(
-        report["plan"]["actions"].as_array().is_some_and(|actions| actions.iter().any(|action| {
-            action["reason_code"] == "mcp_missing_secret_keys"
-                && action["state"] == "skipped"
-                && action["mcp_members"][0]["missing_secret_keys"]
-                    == serde_json::json!([MISSING_SECRET_KEY])
-        })),
+        report["plan"]["actions"]
+            .as_array()
+            .is_some_and(|actions| actions.iter().any(|action| {
+                action["reason_code"] == "mcp_missing_secret_keys"
+                    && action["state"] == "skipped"
+                    && action["mcp_members"][0]["missing_secret_keys"]
+                        == serde_json::json!([MISSING_SECRET_KEY])
+            })),
         "the reviewed plan must make the MCP-only skip inspectable"
     );
     assert!(
@@ -361,6 +360,38 @@ fn sync_apply_foreign_project_entry_exits_three_without_partial_writes() {
 }
 
 #[test]
+fn sync_apply_unopenable_ledger_path_exits_five_with_a_redacted_json_error_envelope() {
+    let fixture = Fixture::new();
+    fixture.configure_missing_mcp_secret();
+    fs::create_dir_all(fixture.root().join(".ai-config/projection-ledger.sqlite"))
+        .expect("make the SQLite ledger path a directory");
+
+    let output = fixture
+        .cmd()
+        .args(["--json", "sync", "--apply"])
+        .output()
+        .expect("run sync --apply with an unopenable ledger path");
+
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "a filesystem-backed ledger open failure must use exit 5: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stdout.contains(SECRET_VALUE_SENTINEL) && !stderr.contains(SECRET_VALUE_SENTINEL),
+        "filesystem error output must never expose a secret value"
+    );
+    let envelope: Value = serde_json::from_slice(&output.stdout)
+        .expect("filesystem failures must retain the JSON error envelope");
+    assert_eq!(envelope["error"]["code"], 5);
+    fixture.assert_no_projection_targets();
+}
+
+#[test]
 fn uninstall_without_apply_returns_a_plan_and_preserves_source_and_foreign_container() {
     let fixture = Fixture::new();
     let source_before = fixture.source_bytes();
@@ -441,10 +472,32 @@ fn later_mcp_source_change_rolls_back_all_preceding_non_hermes_subplans() {
     );
     assert_eq!(
         output.status.code(),
-        Some(2),
-        "the stale MCP source must fail during the later MCP sub-plan: stdout={} stderr={}",
+        Some(3),
+        "a later runtime transaction failure must use the partial-failure exit code: stdout={} stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stdout.contains(SECRET_VALUE_SENTINEL) && !stderr.contains(SECRET_VALUE_SENTINEL),
+        "a transaction failure report must not expose secret values"
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)
+        .expect("a runtime transaction failure must still return the lifecycle JSON report");
+    assert_eq!(report["blocking_reason"], "transaction_apply_failed");
+    assert!(
+        report["apply"]["failed"].as_u64().unwrap_or_default() > 0,
+        "the failed action must be visible in the lifecycle report: {report:?}"
+    );
+    assert!(
+        report["apply"]["rolled_back"].as_u64().unwrap_or_default() > 0,
+        "actions reverted by the global transaction must not remain successful: {report:?}"
+    );
+    assert_eq!(
+        report["apply"]["not_applied"].as_u64(),
+        Some(0),
+        "this fixture reaches the only failing final MCP action, so its exact report must not invent not_applied actions: {report:?}"
     );
 
     for target in [
@@ -462,9 +515,7 @@ fn later_mcp_source_change_rolls_back_all_preceding_non_hermes_subplans() {
         );
     }
 
-    let ledger_path = fixture
-        .root()
-        .join(".ai-config/projection-ledger.sqlite");
+    let ledger_path = fixture.root().join(".ai-config/projection-ledger.sqlite");
     let store = Store::open_at(&ledger_path).expect("open lifecycle ledger after failed apply");
     let scope = format!(
         "project:{}",

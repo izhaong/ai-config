@@ -11,7 +11,7 @@ use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::paths::{self, SyncRoots};
 use ai_config_core::projection::executor::{
     apply_projection_plans_transactionally, ApplyOptions, ApplyReport, ExecutorContext,
-    McpSecretProvider,
+    McpSecretProvider, ProjectionTransactionError,
 };
 use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
 use ai_config_core::projection::mcp::source::resolve_effective_mcp_definitions;
@@ -112,6 +112,12 @@ struct PlanBundle {
 struct WorkspaceBundle {
     member: Utf8PathBuf,
     bundle: PlanBundle,
+}
+
+struct WorkspaceApplyFailure {
+    error: CoreError,
+    has_reports: bool,
+    summaries: Vec<ApplySummary>,
 }
 
 struct LifecycleMcpSecrets {
@@ -298,14 +304,22 @@ pub fn execute(
                 },
             )
         }
-        Err(error) => (
-            LifecycleReport {
-                plan: bundle.public,
-                apply: None,
-                blocking_reason: Some(error.to_string()),
-            },
-            error.exit_code(),
-        ),
+        Err(error) => {
+            if error.reports.is_empty() {
+                return Err(error.error);
+            }
+            (
+                LifecycleReport {
+                    plan: bundle.public,
+                    apply: Some(summarize_apply_reports(error.reports)),
+                    // The core error can include a source path or parser context. Preserve only a
+                    // stable failure category in the public lifecycle report so it never becomes a
+                    // secret-bearing error channel.
+                    blocking_reason: Some("transaction_apply_failed".to_owned()),
+                },
+                exit_code::PARTIAL_FAILURE,
+            )
+        }
     };
     Ok(LifecycleExecution { report, exit_code })
 }
@@ -333,29 +347,36 @@ fn execute_workspace(
     };
 
     if !apply {
-        return Ok((workspace_report(bundles, None), exit_code::SUCCESS));
+        return Ok((workspace_report(bundles, None, false), exit_code::SUCCESS));
     }
     if bundles
         .iter()
         .any(|bundle| blocking_reason(&bundle.bundle).is_some())
     {
         return Ok((
-            workspace_report(bundles, None),
+            workspace_report(bundles, None, false),
             exit_code::PARTIAL_FAILURE,
         ));
     }
 
     let store = Store::open_at(ledger_path.as_std_path())
         .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
-    let summaries = apply_workspace_bundles(
-        &bundles,
-        &store.projections(),
-        &workspace_root,
-        &secrets,
-    )?;
+    let summaries =
+        match apply_workspace_bundles(&bundles, &store.projections(), &workspace_root, &secrets) {
+            Ok(summaries) => summaries,
+            Err(failure) => {
+                if !failure.has_reports {
+                    return Err(failure.error);
+                }
+                return Ok((
+                    workspace_report(bundles, Some(failure.summaries), true),
+                    exit_code::PARTIAL_FAILURE,
+                ));
+            }
+        };
     let missing_mcp_secrets = summaries.iter().any(ApplySummary::has_missing_mcp_secrets);
     Ok((
-        workspace_report(bundles, Some(summaries)),
+        workspace_report(bundles, Some(summaries), false),
         if missing_mcp_secrets {
             exit_code::SECRETS_MISSING
         } else {
@@ -375,10 +396,8 @@ fn build_workspace_bundles(
         .into_iter()
         .filter_map(|member| {
             let asset_root = paths::project_asset_root(&member);
-            ai_config_core::workspace::member_has_local_assets(&asset_root).then_some((
-                member,
-                asset_root,
-            ))
+            ai_config_core::workspace::member_has_local_assets(&asset_root)
+                .then_some((member, asset_root))
         })
         .map(|(member, asset_root)| {
             let roots = SyncRoots {
@@ -398,6 +417,7 @@ fn build_workspace_bundles(
 fn workspace_report(
     bundles: Vec<WorkspaceBundle>,
     summaries: Option<Vec<ApplySummary>>,
+    transaction_failed: bool,
 ) -> WorkspaceLifecycleReport {
     let members = bundles
         .into_iter()
@@ -408,11 +428,14 @@ fn workspace_report(
                 .and_then(|summaries| summaries.get(index))
                 .filter(|summary| summary.has_missing_mcp_secrets())
                 .map(|_| "mcp_missing_secret_keys".to_owned())
+                .or_else(|| transaction_failed.then_some("transaction_apply_failed".to_owned()))
                 .or_else(|| blocking_reason(&bundle.bundle));
             WorkspaceMemberReport {
                 member: bundle.member.to_string(),
                 plan: bundle.bundle.public,
-                apply: summaries.as_ref().and_then(|summaries| summaries.get(index).cloned()),
+                apply: summaries
+                    .as_ref()
+                    .and_then(|summaries| summaries.get(index).cloned()),
                 blocking_reason,
             }
         })
@@ -425,7 +448,7 @@ fn apply_workspace_bundles(
     ledger: &dyn ProjectionLedger,
     workspace_root: &Utf8Path,
     secrets: &LifecycleMcpSecrets,
-) -> Result<Vec<ApplySummary>, CoreError> {
+) -> Result<Vec<ApplySummary>, Box<WorkspaceApplyFailure>> {
     let plan_members = bundles
         .iter()
         .enumerate()
@@ -441,12 +464,27 @@ fn apply_workspace_bundles(
     let backup_root = workspace_root.join(".ai-config/projection-backups");
     let context = ExecutorContext::new(ledger, workspace_root.to_path_buf(), backup_root)
         .with_mcp_secret_provider(secrets);
-    let reports = apply_projection_plans_transactionally(
+    let reports = match apply_projection_plans_transactionally(
         plan_members
             .iter()
             .map(|(_, plan)| (*plan, ApplyOptions::for_plan(plan))),
         &context,
-    )?;
+    ) {
+        Ok(reports) => reports,
+        Err(error) => {
+            let ProjectionTransactionError { error, reports } = error;
+            let has_reports = !reports.is_empty();
+            let mut summaries = vec![ApplySummary::default(); bundles.len()];
+            for ((member_index, _), report) in plan_members.into_iter().zip(reports) {
+                add_apply_report(&mut summaries[member_index], report);
+            }
+            return Err(Box::new(WorkspaceApplyFailure {
+                error,
+                has_reports,
+                summaries,
+            }));
+        }
+    };
     let mut summaries = vec![ApplySummary::default(); bundles.len()];
     for ((member_index, _), report) in plan_members.into_iter().zip(reports) {
         add_apply_report(&mut summaries[member_index], report);
@@ -458,7 +496,10 @@ fn emit_workspace_report(mode: OutputMode, report: &WorkspaceLifecycleReport) {
     if mode.is_json() {
         emit_json(mode, report);
     } else if !mode.is_quiet() {
-        emit_line(mode, format!("workspace projection: {} members", report.members.len()));
+        emit_line(
+            mode,
+            format!("workspace projection: {} members", report.members.len()),
+        );
     }
 }
 
@@ -621,7 +662,7 @@ fn apply_bundle(
     ledger: &dyn ProjectionLedger,
     roots: &SyncRoots,
     secrets: &LifecycleMcpSecrets,
-) -> Result<ApplySummary, CoreError> {
+) -> Result<ApplySummary, ProjectionTransactionError> {
     let mut summary = ApplySummary::default();
     let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
     let context = ExecutorContext::new(ledger, roots.deploy_base.clone(), backup_root)
@@ -640,6 +681,14 @@ fn apply_bundle(
     Ok(summary)
 }
 
+fn summarize_apply_reports(reports: Vec<ApplyReport>) -> ApplySummary {
+    let mut summary = ApplySummary::default();
+    for report in reports {
+        add_apply_report(&mut summary, report);
+    }
+    summary
+}
+
 fn add_apply_report(summary: &mut ApplySummary, report: ApplyReport) {
     summary.changed += report.changed;
     summary.unchanged += report.unchanged;
@@ -649,13 +698,15 @@ fn add_apply_report(summary: &mut ApplySummary, report: ApplyReport) {
     summary.rolled_back += report.rolled_back;
     summary.rollback_failed += report.rollback_failed;
     summary.not_applied += report.not_applied;
-    summary.mcp_skipped_members.extend(
-        report
-            .mcp_skipped_members
-            .into_iter()
-            .map(|member| McpSkippedMemberSummary {
-                entry_key: member.entry_key,
-                missing_secret_keys: member.missing_secret_keys,
-            }),
-    );
+    summary
+        .mcp_skipped_members
+        .extend(
+            report
+                .mcp_skipped_members
+                .into_iter()
+                .map(|member| McpSkippedMemberSummary {
+                    entry_key: member.entry_key,
+                    missing_secret_keys: member.missing_secret_keys,
+                }),
+        );
 }

@@ -210,6 +210,23 @@ impl ApplyReport {
             }
         }
     }
+
+    fn mark_rollback_result(&mut self, index: usize, restored: bool) {
+        let rollback_failed = !restored
+            || self
+                .actions
+                .get(index)
+                .is_some_and(|action| action.status == ApplyActionStatus::RollbackFailed);
+        self.set_status(
+            index,
+            if rollback_failed {
+                ApplyActionStatus::RollbackFailed
+            } else {
+                ApplyActionStatus::RolledBack
+            },
+        );
+        self.recount();
+    }
 }
 
 /// An apply error preserves the final transaction report. Callers can surface the precise
@@ -227,6 +244,27 @@ impl std::fmt::Display for ProjectionApplyError {
 }
 
 impl std::error::Error for ProjectionApplyError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+/// A multi-plan transaction failed after at least one plan began staging. The contained reports
+/// describe every slice: completed mutations become rolled back, the failing action remains
+/// failed, and slices not entered remain not applied.
+#[derive(Debug)]
+pub struct ProjectionTransactionError {
+    pub error: CoreError,
+    pub reports: Vec<ApplyReport>,
+}
+
+impl std::fmt::Display for ProjectionTransactionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+impl std::error::Error for ProjectionTransactionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.error)
     }
@@ -400,26 +438,106 @@ pub fn apply_projection_plan(
 pub fn apply_projection_plans_transactionally<'plan>(
     plans: impl IntoIterator<Item = (&'plan ProjectionPlan, ApplyOptions)>,
     context: &ExecutorContext<'_>,
-) -> Result<Vec<ApplyReport>, CoreError> {
-    fs::create_dir_all(context.deploy_base.as_std_path())?;
-    let _lock = ApplyLock::acquire(&context.deploy_base)?;
+) -> Result<Vec<ApplyReport>, ProjectionTransactionError> {
+    fs::create_dir_all(context.deploy_base.as_std_path()).map_err(|error| {
+        ProjectionTransactionError {
+            error: CoreError::Io(error),
+            reports: Vec::new(),
+        }
+    })?;
+    let _lock =
+        ApplyLock::acquire(&context.deploy_base).map_err(|error| ProjectionTransactionError {
+            error,
+            reports: Vec::new(),
+        })?;
     let mut journal = TransactionJournal::default();
     let mut reports = Vec::new();
+    let mut completed_undo_ranges = Vec::new();
+    let mut plans = plans.into_iter();
 
-    for (plan, options) in plans {
+    while let Some((plan, options)) = plans.next() {
+        let undo_start = journal.undo.len();
         match stage_projection_plan(plan, context, options, &mut journal) {
-            Ok(report) => reports.push(report),
+            Ok(report) => {
+                completed_undo_ranges.push((reports.len(), undo_start..journal.undo.len()));
+                reports.push(report);
+            }
             Err(error) => {
-                rollback(&journal.undo, context);
-                return Err(error.error);
+                let mut failed_report = *error.report;
+                let rollback_results = rollback(&journal.undo, context);
+                mark_completed_plan_rollbacks(
+                    &mut reports,
+                    &completed_undo_ranges,
+                    &journal.undo,
+                    &rollback_results,
+                );
+                mark_current_plan_rollbacks(
+                    &mut failed_report,
+                    undo_start,
+                    &journal.undo,
+                    &rollback_results,
+                );
+                reports.push(failed_report);
+                reports.extend(plans.map(|(remaining, _)| unapplied_report(remaining)));
+                return Err(ProjectionTransactionError {
+                    error: error.error,
+                    reports,
+                });
             }
         }
     }
     if let Err(error) = context.ledger.apply_batch(&journal.mutations) {
-        rollback(&journal.undo, context);
-        return Err(error);
+        let rollback_results = rollback(&journal.undo, context);
+        mark_completed_plan_rollbacks(
+            &mut reports,
+            &completed_undo_ranges,
+            &journal.undo,
+            &rollback_results,
+        );
+        return Err(ProjectionTransactionError { error, reports });
     }
     Ok(reports)
+}
+
+fn unapplied_report(plan: &ProjectionPlan) -> ApplyReport {
+    let mut report = ApplyReport::for_plan(plan);
+    report.recount();
+    report
+}
+
+fn mark_completed_plan_rollbacks(
+    reports: &mut [ApplyReport],
+    completed_undo_ranges: &[(usize, std::ops::Range<usize>)],
+    undo: &[(usize, FileUndo)],
+    rollback_results: &[(usize, bool)],
+) {
+    for (rollback_offset, ((action_index, restored), _)) in
+        rollback_results.iter().zip(undo.iter().rev()).enumerate()
+    {
+        let undo_index = undo.len() - rollback_offset - 1;
+        if let Some((report_index, _)) = completed_undo_ranges
+            .iter()
+            .find(|(_, range)| range.contains(&undo_index))
+        {
+            reports[*report_index].mark_rollback_result(*action_index, *restored);
+        }
+    }
+}
+
+fn mark_current_plan_rollbacks(
+    report: &mut ApplyReport,
+    undo_start: usize,
+    undo: &[(usize, FileUndo)],
+    rollback_results: &[(usize, bool)],
+) {
+    for (rollback_offset, ((action_index, restored), _)) in
+        rollback_results.iter().zip(undo.iter().rev()).enumerate()
+    {
+        let undo_index = undo.len() - rollback_offset - 1;
+        if undo_index >= undo_start {
+            report.mark_rollback_result(*action_index, *restored);
+        }
+    }
 }
 
 /// Stage one plan beneath a caller-owned apply lock. No ledger mutation is committed here.
@@ -2674,4 +2792,36 @@ fn create_sibling_symlink(
     }
     fs::rename(temporary.as_std_path(), target.as_std_path())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rollback_failure_is_not_overwritten_by_a_later_success_for_the_same_action() {
+        let mut report = ApplyReport {
+            changed: 1,
+            unchanged: 0,
+            skipped: 0,
+            conflict: 0,
+            failed: 0,
+            rolled_back: 0,
+            rollback_failed: 0,
+            not_applied: 0,
+            actions: vec![ApplyActionReport {
+                action_id: "generated-container".to_owned(),
+                status: ApplyActionStatus::Applied,
+            }],
+            mcp_skipped_members: Vec::new(),
+            failure: None,
+        };
+
+        report.mark_rollback_result(0, false);
+        report.mark_rollback_result(0, true);
+
+        assert_eq!(report.actions[0].status, ApplyActionStatus::RollbackFailed);
+        assert_eq!(report.rollback_failed, 1);
+        assert_eq!(report.rolled_back, 0);
+    }
 }
