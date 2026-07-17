@@ -392,12 +392,13 @@ fn build_workspace_bundles(
     secrets: &LifecycleMcpSecrets,
 ) -> Result<Vec<WorkspaceBundle>, CoreError> {
     let global_default = paths::discover_global_asset_root_read_only();
+    let workspace_assets = paths::project_asset_root(workspace_root);
     ai_config_core::workspace::discover_members(workspace_root)?
         .into_iter()
-        .filter_map(|member| {
+        .filter(|member| member != workspace_root)
+        .map(|member| {
             let asset_root = paths::project_asset_root(&member);
-            ai_config_core::workspace::member_has_local_assets(&asset_root)
-                .then_some((member, asset_root))
+            (member, asset_root)
         })
         .map(|(member, asset_root)| {
             let roots = SyncRoots {
@@ -406,9 +407,21 @@ fn build_workspace_bundles(
                 global_default: global_default.clone(),
                 deploy_base: member.clone(),
             };
+            let overlay = OverlayRoots {
+                global: global_default.clone(),
+                workspace: Some(workspace_assets.clone()),
+                project: roots.asset_root.clone(),
+            };
             Ok(WorkspaceBundle {
                 member,
-                bundle: build_bundle(&roots, operation, ledger, secrets)?,
+                bundle: build_bundle_with_overlay(
+                    &roots,
+                    overlay,
+                    DeploymentScope::Project,
+                    operation,
+                    ledger,
+                    secrets,
+                )?,
             })
         })
         .collect()
@@ -548,6 +561,17 @@ fn build_bundle(
         DeploymentScope::User
     };
     let overlay = overlay_roots(roots);
+    build_bundle_with_overlay(roots, overlay, scope, operation, ledger, secrets)
+}
+
+fn build_bundle_with_overlay(
+    roots: &SyncRoots,
+    overlay: OverlayRoots,
+    scope: DeploymentScope,
+    operation: ProjectionOperation,
+    ledger: &dyn ProjectionLedger,
+    secrets: &LifecycleMcpSecrets,
+) -> Result<PlanBundle, CoreError> {
     let assets = resolve_effective_assets(&overlay)?;
     let definitions = resolve_effective_mcp_definitions(&overlay)?;
     let scope_key = match scope {

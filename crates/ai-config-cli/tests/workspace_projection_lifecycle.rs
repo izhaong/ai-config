@@ -5,6 +5,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use ai_config_core::projection::fingerprint::path_content_digest;
 use assert_cmd::Command;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -73,6 +74,39 @@ impl WorkspaceFixture {
             }
         }
     }
+
+    fn configure_three_layer_overlay(&self) {
+        for member in ["one", "two"] {
+            let assets = self.member(member).join(".ai-config");
+            fs::remove_dir_all(&assets).expect("remove default member assets");
+        }
+
+        write(
+            &self
+                .home
+                .path()
+                .join(".ai-config/skills/global-default/SKILL.md"),
+            "---\nname: global default\n---\nglobal default\n",
+        );
+        write(
+            &self
+                .workspace
+                .path()
+                .join(".ai-config/skills/shared/SKILL.md"),
+            "---\nname: workspace shared\n---\nworkspace shared\n",
+        );
+        write(
+            &self
+                .workspace
+                .path()
+                .join(".ai-config/skills/workspace-default/SKILL.md"),
+            "---\nname: workspace default\n---\nworkspace default\n",
+        );
+        write(
+            &self.member("one").join(".ai-config/skills/shared/SKILL.md"),
+            "---\nname: project shared\n---\nproject shared\n",
+        );
+    }
 }
 
 fn write(path: &Path, content: &str) {
@@ -94,6 +128,21 @@ fn workspace_report(report: &[u8]) -> Value {
         );
     }
     report
+}
+
+fn action_for_skill<'a>(member: &'a Value, skill: &str) -> &'a Value {
+    member["plan"]["actions"]
+        .as_array()
+        .expect("plan actions")
+        .iter()
+        .find(|action| {
+            action["members"].as_array().is_some_and(|members| {
+                members
+                    .iter()
+                    .any(|entry| entry["id"]["kind"] == "skill" && entry["id"]["name"] == skill)
+            })
+        })
+        .unwrap_or_else(|| panic!("member plan must include skill {skill}: {member:?}"))
 }
 
 #[test]
@@ -118,6 +167,180 @@ fn workspace_sync_without_apply_returns_member_plans_and_writes_nothing() {
         "workspace sync without --apply must remain plan-only"
     );
     fixture.assert_no_member_targets();
+}
+
+#[test]
+fn workspace_plan_overlays_workspace_defaults_for_local_and_empty_members_without_home_targets() {
+    let fixture = WorkspaceFixture::new();
+    fixture.configure_three_layer_overlay();
+
+    let output = fixture
+        .cmd()
+        .args(["--json", "sync"])
+        .output()
+        .expect("workspace overlay sync plan");
+
+    assert!(
+        output.status.success(),
+        "workspace overlay plan must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let report = workspace_report(&output.stdout);
+    let members = report["members"].as_array().expect("workspace members");
+    let member = |name: &str| {
+        let expected_member = fixture.member(name).to_string_lossy().into_owned();
+        members
+            .iter()
+            .find(|member| member["member"].as_str() == Some(expected_member.as_str()))
+            .unwrap_or_else(|| panic!("workspace plan must include member {name}: {report:?}"))
+    };
+    let assert_source_and_member_target =
+        |member: &Value, member_name: &str, skill: &str, layer: &str, source: &Path| {
+            let action = action_for_skill(member, skill);
+            let expected_source = source.to_string_lossy().into_owned();
+            let member_root = fixture.member(member_name).to_string_lossy().into_owned();
+            let source_ref = action["members"]
+                .as_array()
+                .expect("action members")
+                .iter()
+                .find(|entry| entry["id"]["name"] == skill)
+                .expect("skill source member");
+            assert_eq!(source_ref["source"]["layer"], layer, "action={action:?}");
+            assert_eq!(
+                source_ref["source"]["absolute_path"].as_str(),
+                Some(expected_source.as_str()),
+                "action={action:?}"
+            );
+            assert!(
+                action["target"]["path"]
+                    .as_str()
+                    .is_some_and(|target| target.starts_with(&member_root)),
+                "workspace source must still deploy into member {member_name}: {action:?}"
+            );
+        };
+
+    let one = member("one");
+    assert_source_and_member_target(
+        one,
+        "one",
+        "shared",
+        "project",
+        &fixture.member("one").join(".ai-config/skills/shared"),
+    );
+    assert_source_and_member_target(
+        one,
+        "one",
+        "workspace-default",
+        "workspace",
+        &fixture
+            .workspace
+            .path()
+            .join(".ai-config/skills/workspace-default"),
+    );
+    assert_source_and_member_target(
+        one,
+        "one",
+        "global-default",
+        "global",
+        &fixture.home.path().join(".ai-config/skills/global-default"),
+    );
+
+    let two = member("two");
+    assert_source_and_member_target(
+        two,
+        "two",
+        "shared",
+        "workspace",
+        &fixture.workspace.path().join(".ai-config/skills/shared"),
+    );
+    assert_source_and_member_target(
+        two,
+        "two",
+        "workspace-default",
+        "workspace",
+        &fixture
+            .workspace
+            .path()
+            .join(".ai-config/skills/workspace-default"),
+    );
+    assert_source_and_member_target(
+        two,
+        "two",
+        "global-default",
+        "global",
+        &fixture.home.path().join(".ai-config/skills/global-default"),
+    );
+    assert!(
+        !fixture.home.path().join(".agents").exists()
+            && !fixture.home.path().join("AGENTS.md").exists()
+            && !fixture
+                .home
+                .path()
+                .join(".ai-config/projection-ledger.sqlite")
+                .exists(),
+        "plan-only workspace overlay must not write HOME targets or a ledger"
+    );
+    fixture.assert_no_member_targets();
+}
+
+#[test]
+fn workspace_apply_uses_three_layer_overlay_for_each_member_without_writing_home() {
+    let fixture = WorkspaceFixture::new();
+    fixture.configure_three_layer_overlay();
+    let home = camino::Utf8Path::from_path(fixture.home.path()).expect("UTF-8 temporary HOME");
+    let home_before = path_content_digest(home).expect("digest HOME before apply");
+
+    let output = fixture
+        .cmd()
+        .args(["--json", "sync", "--apply"])
+        .output()
+        .expect("workspace overlay sync apply");
+
+    assert!(
+        output.status.success(),
+        "workspace overlay apply must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    workspace_report(&output.stdout);
+
+    let assert_member_skill_link = |member: &str, skill: &str, source: &Path| {
+        let target = fixture.member(member).join(format!(".agents/skills/{skill}"));
+        assert_eq!(
+            fs::read_link(&target).expect("projected skill must be a direct link"),
+            source,
+            "member {member} must project {skill} from its effective source"
+        );
+    };
+    let workspace_assets = fixture.workspace.path().join(".ai-config/skills");
+    let global_assets = fixture.home.path().join(".ai-config/skills");
+    assert_member_skill_link(
+        "one",
+        "shared",
+        &fixture.member("one").join(".ai-config/skills/shared"),
+    );
+    assert_member_skill_link("two", "shared", &workspace_assets.join("shared"));
+    for member in ["one", "two"] {
+        assert_member_skill_link(member, "workspace-default", &workspace_assets.join("workspace-default"));
+        assert_member_skill_link(member, "global-default", &global_assets.join("global-default"));
+    }
+
+    assert_eq!(
+        path_content_digest(home).expect("digest HOME after apply"),
+        home_before,
+        "workspace apply must not modify HOME sources, targets, or ledger"
+    );
+    assert!(
+        !fixture.home.path().join(".agents").exists()
+            && !fixture.home.path().join("AGENTS.md").exists()
+            && !fixture
+                .home
+                .path()
+                .join(".ai-config/projection-ledger.sqlite")
+                .exists(),
+        "workspace apply must not create HOME targets or a ledger"
+    );
 }
 
 #[test]

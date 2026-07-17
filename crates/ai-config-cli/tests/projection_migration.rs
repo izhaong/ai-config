@@ -3281,3 +3281,203 @@ fn foreign_hook_inventory_halves_and_marker_command_mismatches_are_blocking() {
         "hook_binding_script_name_mismatch",
     );
 }
+
+#[test]
+fn workspace_inventory_uses_workspace_scope_overlay_and_never_falls_back_to_home_targets() {
+    let home = TempDir::new().expect("temporary isolated HOME");
+    let workspace = TempDir::new().expect("temporary workspace");
+    let global_root = home.path().join(".ai-config");
+    let workspace_root = workspace.path().join(".ai-config");
+
+    let global_shared = write_canonical_command(&global_root, "shared", "global-shared");
+    let global_only = write_canonical_command(&global_root, "global-only", "global-only");
+    let workspace_shared = write_canonical_command(&workspace_root, "shared", "workspace-shared");
+    let workspace_only =
+        write_canonical_command(&workspace_root, "workspace-only", "workspace-only");
+    write(
+        &workspace.path().join(".cursor/commands/shared.md"),
+        &fs::read_to_string(&workspace_shared).expect("read workspace canonical command"),
+    );
+    write(
+        &workspace.path().join(".claude/commands/global-only.md"),
+        &fs::read_to_string(&global_only).expect("read global canonical command"),
+    );
+    write(
+        &workspace.path().join(".claude/commands/workspace-only.md"),
+        &fs::read_to_string(&workspace_only).expect("read workspace-only canonical command"),
+    );
+
+    // These are valid global platform paths, but they are outside the workspace deploy base and
+    // must not be read, hashed, or listed by a workspace inventory.
+    write(
+        &home.path().join(".agents/skills/home-only-skill/SKILL.md"),
+        "workspace inventory must not scan this HOME skill\n",
+    );
+    write(
+        &home.path().join(".cursor/commands/home-only-command.md"),
+        COMMAND_EXTERNAL_SENTINEL,
+    );
+    write(
+        &home
+            .path()
+            .join(".claude/commands/home-only-claude-command.md"),
+        COMMAND_EXTERNAL_SENTINEL,
+    );
+
+    let home_before = tree_snapshot(home.path());
+    let workspace_before = tree_snapshot(workspace.path());
+    let mut command = Command::cargo_bin(BIN).expect("CLI binary");
+    let output = command
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("AI_CONFIG_ROOT")
+        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("HERMES_SKILLS_DIR")
+        .args(["--workspace", "--root"])
+        .arg(workspace.path())
+        .args(["migrate", "inventory", "--json"])
+        .output()
+        .expect("run workspace migration inventory");
+    assert!(
+        output.status.success(),
+        "workspace inventory must be a read-only successful command: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        tree_snapshot(home.path()),
+        home_before,
+        "workspace inventory wrote HOME"
+    );
+    assert_eq!(
+        tree_snapshot(workspace.path()),
+        workspace_before,
+        "workspace inventory wrote the workspace"
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 workspace inventory JSON");
+    let report: Value = serde_json::from_str(&stdout).expect("workspace inventory JSON");
+    assert_eq!(
+        report["scope"], "workspace",
+        "--workspace must never silently downgrade migration inventory to another scope: {report:?}"
+    );
+
+    let canonical_shared = report["entries"]
+        .as_array()
+        .expect("workspace inventory entries")
+        .iter()
+        .filter(|entry| {
+            entry["kind"] == "command"
+                && entry["name"] == "shared"
+                && entry["provenance"] == "canonical"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        canonical_shared.len(),
+        2,
+        "global and workspace layers stay visible"
+    );
+    assert_eq!(
+        canonical_shared
+            .iter()
+            .map(|entry| entry["source_layer"]
+                .as_str()
+                .expect("canonical source layer"))
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from(["global", "workspace"]),
+        "workspace overlay must retain global + workspace canonical provenance"
+    );
+
+    let workspace_current = entry_named(
+        &report,
+        "shared",
+        workspace
+            .path()
+            .join(".cursor/commands/shared.md")
+            .to_string_lossy()
+            .as_ref(),
+    );
+    assert_command_source(
+        workspace_current,
+        "workspace",
+        &workspace_shared,
+        "workspace",
+    );
+    assert_eq!(workspace_current["currently_consumed"], true);
+
+    let inherited_global = entry_named(
+        &report,
+        "global-only",
+        workspace
+            .path()
+            .join(".claude/commands/global-only.md")
+            .to_string_lossy()
+            .as_ref(),
+    );
+    assert_command_source(inherited_global, "global", &global_only, "workspace");
+
+    for path in report["entries"]
+        .as_array()
+        .expect("workspace inventory entries")
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+    {
+        assert!(
+            !Path::new(path).starts_with(home.path()) || Path::new(path).starts_with(&global_root),
+            "workspace inventory scanned a HOME platform target instead of its workspace deploy base: {path}"
+        );
+    }
+    let serialized = serde_json::to_string(&report).expect("serialize workspace inventory");
+    for forbidden in [
+        "home-only-skill",
+        "home-only-command",
+        "home-only-claude-command",
+        COMMAND_EXTERNAL_SENTINEL,
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "workspace inventory must not read or serialize HOME-only platform data: {forbidden}"
+        );
+    }
+
+    assert_ne!(
+        workspace_current["canonical_path"],
+        global_shared.to_string_lossy().as_ref(),
+        "workspace overlay must override the same-name global canonical command"
+    );
+}
+
+#[test]
+fn workspace_inventory_without_root_fails_closed_with_json_error_and_writes_nothing() {
+    let home = TempDir::new().expect("temporary isolated HOME");
+    let before = tree_snapshot(home.path());
+    let mut command = Command::cargo_bin(BIN).expect("CLI binary");
+    let output = command
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env_remove("AI_CONFIG_ROOT")
+        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("HERMES_SKILLS_DIR")
+        .args(["--workspace", "migrate", "inventory", "--json"])
+        .output()
+        .expect("run rootless workspace migration inventory");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        tree_snapshot(home.path()),
+        before,
+        "rootless workspace inventory must fail before touching HOME"
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("JSON error envelope");
+    assert_eq!(report["error"]["code"], 2);
+    assert!(
+        report["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("requires --root <workspace-root>")),
+        "rootless --workspace inventory must fail closed instead of silently choosing another scope: {report:?}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("\"scope\""),
+        "fail-closed error must not emit a downgraded inventory report: {report:?}"
+    );
+}

@@ -271,6 +271,7 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
     let mut unsupported = Vec::new();
 
     scan_skill_root(
+        &request.deploy_base,
         &request.deploy_base.join(".agents/skills"),
         InventoryProvenance::PlatformCurrent,
         true,
@@ -279,8 +280,10 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         &external,
         request.scope,
         &mut entries,
+        &mut issues,
     )?;
     scan_skill_root(
+        &request.deploy_base,
         &request.deploy_base.join(".claude/skills"),
         InventoryProvenance::PlatformCurrent,
         true,
@@ -289,8 +292,10 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         &external,
         request.scope,
         &mut entries,
+        &mut issues,
     )?;
     scan_skill_root(
+        &request.deploy_base,
         &request.deploy_base.join(".cursor/skills"),
         InventoryProvenance::PlatformLegacy,
         true,
@@ -299,8 +304,10 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         &external,
         request.scope,
         &mut entries,
+        &mut issues,
     )?;
     scan_skill_root(
+        &request.deploy_base,
         &request.deploy_base.join(".codex/skills"),
         InventoryProvenance::PlatformLegacy,
         false,
@@ -309,8 +316,11 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         &external,
         request.scope,
         &mut entries,
+        &mut issues,
     )?;
-    scan_rules(request, &effective, &mut entries)?;
+    append_skill_unsupported(request, &effective, &mut unsupported);
+    scan_rules(request, &effective, &mut entries, &mut issues)?;
+    append_rule_unsupported(request, &effective, &mut unsupported);
     scan_mcp_targets(
         request,
         &effective,
@@ -440,33 +450,97 @@ fn canonical_assets(
     canonical_hook_findings: &mut Vec<MigrationInventoryEntry>,
 ) -> Result<Vec<CanonicalAsset>, CoreError> {
     let mut assets = Vec::new();
-    for entry in direct_lstat_entries(&root.asset_root.join("skills"))? {
-        if entry.shape != EntryShape::Directory || !is_regular_file(&entry.path.join("SKILL.md"))? {
-            continue;
+    let root_metadata = match fs::symlink_metadata(root.asset_root.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(assets),
+        Err(_) => {
+            for kind in [
+                AssetKind::Skill,
+                AssetKind::Rule,
+                AssetKind::Mcp,
+                AssetKind::Agent,
+                AssetKind::Command,
+                AssetKind::Hook,
+            ] {
+                push_inventory_issue(
+                    issues,
+                    kind,
+                    &root.asset_root,
+                    scope,
+                    "unreadable_canonical_asset_root",
+                );
+            }
+            return Ok(assets);
         }
-        assets.push(canonical_asset(
-            root.layer,
-            AssetKind::Skill,
-            entry.name,
-            entry.path.clone(),
-        )?);
+    };
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        for (kind, reason_code) in [
+            (AssetKind::Skill, "unsafe_canonical_skill_root"),
+            (AssetKind::Rule, "unsafe_canonical_rule_root"),
+            (AssetKind::Mcp, "unsafe_canonical_mcp_root"),
+            (AssetKind::Agent, "unsafe_canonical_agent_root"),
+            (AssetKind::Command, "unsafe_canonical_command_root"),
+            (AssetKind::Hook, "unsafe_canonical_hook_root"),
+        ] {
+            push_inventory_issue(issues, kind, &root.asset_root, scope, reason_code);
+        }
+        return Ok(assets);
     }
-    for entry in direct_lstat_entries(&root.asset_root.join("rules"))? {
-        if entry.shape != EntryShape::RegularFile || entry.path.extension() != Some("mdc") {
-            continue;
+    let skills = root.asset_root.join("skills");
+    if let Some(parent_issue) = mcp_parent_issue(&root.asset_root, &skills.join(".inventory-probe"))
+    {
+        let reason_code = match parent_issue {
+            "unsafe_mcp_container_parent_symlink" => "unsafe_canonical_skill_parent_symlink",
+            "unsafe_mcp_container_parent_non_directory" => {
+                "unsafe_canonical_skill_parent_non_directory"
+            }
+            _ => "unreadable_canonical_skill_parent",
+        };
+        push_inventory_issue(issues, AssetKind::Skill, &skills, scope, reason_code);
+    } else {
+        for entry in direct_lstat_entries(&skills)? {
+            if entry.shape != EntryShape::Directory
+                || !is_regular_file(&entry.path.join("SKILL.md"))?
+            {
+                continue;
+            }
+            assets.push(canonical_asset(
+                root.layer,
+                AssetKind::Skill,
+                entry.name,
+                entry.path.clone(),
+            )?);
         }
-        let name = entry
-            .path
-            .file_stem()
-            .filter(|name| !name.is_empty())
-            .unwrap_or(&entry.name)
-            .to_owned();
-        assets.push(canonical_asset(
-            root.layer,
-            AssetKind::Rule,
-            name,
-            entry.path,
-        )?);
+    }
+    let rules = root.asset_root.join("rules");
+    if let Some(parent_issue) = mcp_parent_issue(&root.asset_root, &rules.join(".inventory-probe"))
+    {
+        let reason_code = match parent_issue {
+            "unsafe_mcp_container_parent_symlink" => "unsafe_canonical_rule_parent_symlink",
+            "unsafe_mcp_container_parent_non_directory" => {
+                "unsafe_canonical_rule_parent_non_directory"
+            }
+            _ => "unreadable_canonical_rule_parent",
+        };
+        push_inventory_issue(issues, AssetKind::Rule, &rules, scope, reason_code);
+    } else {
+        for entry in direct_lstat_entries(&rules)? {
+            if entry.shape != EntryShape::RegularFile || entry.path.extension() != Some("mdc") {
+                continue;
+            }
+            let name = entry
+                .path
+                .file_stem()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&entry.name)
+                .to_owned();
+            assets.push(canonical_asset(
+                root.layer,
+                AssetKind::Rule,
+                name,
+                entry.path,
+            )?);
+        }
     }
     scan_canonical_agents(root, scope, issues, legacy_agents, &mut assets)?;
     scan_canonical_commands(root, scope, issues, &mut assets)?;
@@ -2141,6 +2215,7 @@ fn hook_compound_digest(script_digest: &str, binding_digest: &str) -> String {
 
 #[allow(clippy::too_many_arguments)]
 fn scan_skill_root(
+    approved_root: &Utf8Path,
     root: &Utf8Path,
     provenance: InventoryProvenance,
     currently_consumed: bool,
@@ -2149,7 +2224,18 @@ fn scan_skill_root(
     external: &[&ExternalSkill],
     scope: InventoryScope,
     entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
 ) -> Result<(), CoreError> {
+    if mcp_parent_issue(approved_root, &root.join(".inventory-probe")).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Skill,
+            root,
+            scope,
+            "unsafe_skill_directory_parent",
+        );
+        return Ok(());
+    }
     for entry in direct_lstat_entries(root)? {
         if provenance == InventoryProvenance::PlatformLegacy
             && root.ends_with(".codex/skills")
@@ -2190,13 +2276,41 @@ fn scan_skill_root(
     Ok(())
 }
 
+fn append_skill_unsupported(
+    request: &InventoryRequest,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    unsupported: &mut Vec<MigrationInventoryUnsupported>,
+) {
+    let reason_code = match request.scope {
+        InventoryScope::Global => return,
+        InventoryScope::Workspace => "hermes_workspace_skill_unsupported",
+        InventoryScope::Project => "hermes_project_skill_unsupported",
+    };
+    for asset in canonical
+        .values()
+        .filter(|asset| asset.kind == AssetKind::Skill)
+    {
+        unsupported.push(MigrationInventoryUnsupported {
+            kind: AssetKind::Skill,
+            platform: PlatformId::Hermes,
+            name: asset.name.clone(),
+            source_layer: Some(asset.layer),
+            canonical_path: Some(asset.path.clone()),
+            scope: request.scope,
+            reason_code: reason_code.to_owned(),
+        });
+    }
+}
+
 fn scan_rules(
     request: &InventoryRequest,
     canonical: &BTreeMap<(u8, String), CanonicalAsset>,
     entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
 ) -> Result<(), CoreError> {
     if request.scope != InventoryScope::Global {
         scan_rule_root(
+            &request.deploy_base,
             &request.deploy_base.join(".cursor/rules"),
             "mdc",
             InventoryProvenance::PlatformCurrent,
@@ -2204,9 +2318,11 @@ fn scan_rules(
             canonical,
             request.scope,
             entries,
+            issues,
         )?;
     }
     scan_rule_root(
+        &request.deploy_base,
         &request.deploy_base.join(".claude/rules"),
         "md",
         InventoryProvenance::PlatformCurrent,
@@ -2214,16 +2330,21 @@ fn scan_rules(
         canonical,
         request.scope,
         entries,
+        issues,
     )?;
     scan_codex_execution_policies(
+        &request.deploy_base,
         &request.deploy_base.join(".codex/rules"),
         canonical,
         request.scope,
         entries,
+        issues,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scan_rule_root(
+    approved_root: &Utf8Path,
     root: &Utf8Path,
     extension: &str,
     provenance: InventoryProvenance,
@@ -2231,7 +2352,18 @@ fn scan_rule_root(
     canonical: &BTreeMap<(u8, String), CanonicalAsset>,
     scope: InventoryScope,
     entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
 ) -> Result<(), CoreError> {
+    if mcp_parent_issue(approved_root, &root.join(".inventory-probe")).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Rule,
+            root,
+            scope,
+            "unsafe_rule_directory_parent",
+        );
+        return Ok(());
+    }
     for entry in direct_lstat_entries(root)? {
         if entry.path.extension() != Some(extension) {
             continue;
@@ -2275,12 +2407,45 @@ fn scan_rule_root(
     Ok(())
 }
 
+fn append_rule_unsupported(
+    request: &InventoryRequest,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    unsupported: &mut Vec<MigrationInventoryUnsupported>,
+) {
+    for asset in canonical
+        .values()
+        .filter(|asset| asset.kind == AssetKind::Rule)
+    {
+        unsupported.push(MigrationInventoryUnsupported {
+            kind: AssetKind::Rule,
+            platform: PlatformId::Codex,
+            name: asset.name.clone(),
+            source_layer: Some(asset.layer),
+            canonical_path: Some(asset.path.clone()),
+            scope: request.scope,
+            reason_code: "codex_instruction_rule_unsupported".to_owned(),
+        });
+    }
+}
+
 fn scan_codex_execution_policies(
+    approved_root: &Utf8Path,
     root: &Utf8Path,
     canonical: &BTreeMap<(u8, String), CanonicalAsset>,
     scope: InventoryScope,
     entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
 ) -> Result<(), CoreError> {
+    if mcp_parent_issue(approved_root, &root.join(".inventory-probe")).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Rule,
+            root,
+            scope,
+            "unsafe_rule_directory_parent",
+        );
+        return Ok(());
+    }
     for entry in direct_lstat_entries(root)? {
         if entry.path.extension() != Some("rules") {
             continue;
@@ -2429,7 +2594,14 @@ fn scan_mcp_targets(
                     source_layer: Some(asset.layer),
                     canonical_path: Some(asset.path.clone()),
                     scope: request.scope,
-                    reason_code: "hermes_project_mcp_unsupported".to_owned(),
+                    reason_code: match request.scope {
+                        InventoryScope::Workspace => "hermes_workspace_mcp_unsupported",
+                        InventoryScope::Project => "hermes_project_mcp_unsupported",
+                        InventoryScope::Global => {
+                            unreachable!("global Hermes MCP was scanned above")
+                        }
+                    }
+                    .to_owned(),
                 });
             }
         }
@@ -2552,6 +2724,11 @@ fn scan_agent_targets(
         .values()
         .filter(|asset| asset.kind == AssetKind::Agent)
     {
+        let reason_code = if request.scope == InventoryScope::Workspace {
+            "hermes_workspace_agent_unsupported"
+        } else {
+            "hermes_static_agent_unsupported"
+        };
         unsupported.push(MigrationInventoryUnsupported {
             kind: AssetKind::Agent,
             platform: PlatformId::Hermes,
@@ -2559,7 +2736,7 @@ fn scan_agent_targets(
             source_layer: Some(asset.layer),
             canonical_path: Some(asset.path.clone()),
             scope: request.scope,
-            reason_code: "hermes_static_agent_unsupported".to_owned(),
+            reason_code: reason_code.to_owned(),
         });
     }
     Ok(())
@@ -3964,6 +4141,17 @@ fn agent_entry_format(entry: &DirectEntry) -> String {
 }
 
 fn mcp_parent_issue(approved_root: &Utf8Path, path: &Utf8Path) -> Option<&'static str> {
+    match fs::symlink_metadata(approved_root.as_std_path()) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Some("unsafe_mcp_container_parent_symlink")
+        }
+        Ok(metadata) if !metadata.is_dir() => {
+            return Some("unsafe_mcp_container_parent_non_directory")
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(_) => return Some("unreadable_mcp_container_parent"),
+    }
     let parent = path.parent()?;
     let relative = parent.strip_prefix(approved_root).ok()?;
     let mut current = approved_root.to_path_buf();
@@ -4803,6 +4991,525 @@ mod tests {
         assert!(!serialized.contains("workspace-legacy"));
         assert!(!serialized.contains(".codex/commands"));
         assert!(!serialized.contains(".hermes/commands"));
+    }
+
+    #[test]
+    fn workspace_core_inventory_overlays_whole_items_and_never_reads_home_platforms() {
+        const HOME_PLATFORM_SENTINEL: &str = "workspace-core-home-platform-must-not-be-read";
+
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let home = root.join("home");
+        let workspace = root.join("workspace");
+        let project = workspace.join("project");
+        let global = home.join(".ai-config");
+        let workspace_assets = workspace.join(".ai-config");
+        let project_assets = project.join(".ai-config");
+
+        for (asset_root, label) in [
+            (&global, "global"),
+            (&workspace_assets, "workspace"),
+            (&project_assets, "project"),
+        ] {
+            write(
+                &asset_root.join("skills/shared/SKILL.md"),
+                &format!("{label} skill\n"),
+            );
+            write(
+                &asset_root.join("rules/shared.mdc"),
+                &format!("{label} rule\n"),
+            );
+            write(
+                &asset_root.join("mcp/servers/shared.json"),
+                &format!(r#"{{"name":"shared","config":{{"command":"{label}-mcp"}}}}"#),
+            );
+            write(
+                &asset_root.join("agents/shared.md"),
+                &format!(
+                    "---\nname: shared\ndescription: {label} agent\n---\n{label} instructions\n"
+                ),
+            );
+        }
+
+        for (deploy_base, label) in [(&workspace, "workspace"), (&project, "project")] {
+            write(
+                &deploy_base.join(".agents/skills/shared/SKILL.md"),
+                &format!("{label} skill\n"),
+            );
+            write(
+                &deploy_base.join(".cursor/rules/shared.mdc"),
+                &format!("{label} rule\n"),
+            );
+            write(
+                &deploy_base.join(".cursor/mcp.json"),
+                &format!(r#"{{"mcpServers":{{"shared":{{"command":"{label}-mcp"}}}}}}"#),
+            );
+            write(
+                &deploy_base.join(".cursor/agents/shared.md"),
+                &format!("{label} agent\n"),
+            );
+        }
+
+        for path in [
+            home.join(".agents/skills/home-only/SKILL.md"),
+            home.join(".cursor/rules/home-only.mdc"),
+            home.join(".cursor/mcp.json"),
+            home.join(".cursor/agents/home-only.md"),
+            home.join(".hermes/config.yaml"),
+            workspace.join(".hermes/config.yaml"),
+        ] {
+            write(&path, HOME_PLATFORM_SENTINEL);
+        }
+
+        let workspace_request = InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Workspace,
+                    asset_root: workspace_assets.clone(),
+                },
+            ],
+            deploy_base: workspace.clone(),
+            scope: InventoryScope::Workspace,
+        };
+        let project_request = InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Workspace,
+                    asset_root: workspace_assets.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Project,
+                    asset_root: project_assets.clone(),
+                },
+            ],
+            deploy_base: project.clone(),
+            scope: InventoryScope::Project,
+        };
+
+        let home_before = path_content_digest(&home).unwrap();
+        let workspace_before = path_content_digest(&workspace).unwrap();
+        let workspace_report = inventory(&workspace_request).unwrap();
+        let project_report = inventory(&project_request).unwrap();
+        assert_eq!(path_content_digest(&home).unwrap(), home_before);
+        assert_eq!(path_content_digest(&workspace).unwrap(), workspace_before);
+
+        for (report, deploy_base, layer, source_root, scope) in [
+            (
+                &workspace_report,
+                &workspace,
+                SourceLayer::Workspace,
+                &workspace_assets,
+                InventoryScope::Workspace,
+            ),
+            (
+                &project_report,
+                &project,
+                SourceLayer::Project,
+                &project_assets,
+                InventoryScope::Project,
+            ),
+        ] {
+            for (kind, path) in [
+                (AssetKind::Skill, deploy_base.join(".agents/skills/shared")),
+                (
+                    AssetKind::Rule,
+                    deploy_base.join(".cursor/rules/shared.mdc"),
+                ),
+                (AssetKind::Mcp, deploy_base.join(".cursor/mcp.json")),
+                (
+                    AssetKind::Agent,
+                    deploy_base.join(".cursor/agents/shared.md"),
+                ),
+            ] {
+                let entry = report
+                    .entries
+                    .iter()
+                    .find(|entry| {
+                        entry.kind == kind && entry.path == path && entry.name == "shared"
+                    })
+                    .unwrap_or_else(|| panic!("missing {kind:?} target: {path}"));
+                assert_eq!(entry.source_layer, Some(layer));
+                let canonical_path = match kind {
+                    AssetKind::Skill => source_root.join("skills/shared"),
+                    AssetKind::Rule => source_root.join("rules/shared.mdc"),
+                    AssetKind::Mcp => source_root.join("mcp/servers/shared.json"),
+                    AssetKind::Agent => source_root.join("agents/shared.md"),
+                    _ => unreachable!("workspace core test only covers Skills/Rules/MCP/Agents"),
+                };
+                assert_eq!(entry.canonical_path, Some(canonical_path));
+                assert_eq!(entry.scope, scope);
+                assert!(entry.path.starts_with(deploy_base));
+            }
+        }
+
+        for (kind, platform, reason_code) in [
+            (
+                AssetKind::Skill,
+                PlatformId::Hermes,
+                "hermes_workspace_skill_unsupported",
+            ),
+            (
+                AssetKind::Mcp,
+                PlatformId::Hermes,
+                "hermes_workspace_mcp_unsupported",
+            ),
+            (
+                AssetKind::Agent,
+                PlatformId::Hermes,
+                "hermes_workspace_agent_unsupported",
+            ),
+            (
+                AssetKind::Rule,
+                PlatformId::Codex,
+                "codex_instruction_rule_unsupported",
+            ),
+        ] {
+            assert!(
+                workspace_report.unsupported.iter().any(|entry| {
+                    entry.kind == kind
+                        && entry.platform == platform
+                        && entry.name == "shared"
+                        && entry.scope == InventoryScope::Workspace
+                        && entry.source_layer == Some(SourceLayer::Workspace)
+                        && entry
+                            .canonical_path
+                            .as_ref()
+                            .is_some_and(|path| path.starts_with(&workspace_assets))
+                        && entry.reason_code == reason_code
+                }),
+                "missing Workspace unsupported {kind:?}/{platform:?}: {reason_code}; actual={:?}",
+                workspace_report.unsupported
+            );
+        }
+
+        let forbidden_roots = [
+            home.join(".agents/skills"),
+            home.join(".cursor/rules"),
+            home.join(".cursor/mcp.json"),
+            home.join(".cursor/agents"),
+            home.join(".hermes/config.yaml"),
+            workspace.join(".hermes/config.yaml"),
+        ];
+        assert!(workspace_report.entries.iter().all(|entry| {
+            !forbidden_roots
+                .iter()
+                .any(|root| entry.path.starts_with(root))
+        }));
+        assert!(workspace_report.issues.iter().all(|issue| {
+            !forbidden_roots
+                .iter()
+                .any(|root| issue.path.starts_with(root))
+        }));
+        let serialized = serde_json::to_string(&workspace_report).unwrap();
+        assert!(!serialized.contains(HOME_PLATFORM_SENTINEL));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_and_rule_parent_symlinks_are_fail_closed_for_canonical_and_workspace_platform_roots() {
+        const OUTSIDE_SENTINEL: &str = "skill-rule-parent-symlink-must-not-be-read";
+
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let global = root.join("home/.ai-config");
+        let workspace = root.join("workspace");
+        let outside = root.join("outside");
+        let request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: global.clone(),
+            }],
+            deploy_base: workspace.clone(),
+            scope: InventoryScope::Workspace,
+        };
+
+        write(
+            &outside.join("canonical-skills/shared/SKILL.md"),
+            OUTSIDE_SENTINEL,
+        );
+        write(
+            &outside.join("canonical-rules/shared.mdc"),
+            OUTSIDE_SENTINEL,
+        );
+        fs::create_dir_all(global.as_std_path()).unwrap();
+        std::os::unix::fs::symlink(
+            outside.join("canonical-skills").as_std_path(),
+            global.join("skills").as_std_path(),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            outside.join("canonical-rules").as_std_path(),
+            global.join("rules").as_std_path(),
+        )
+        .unwrap();
+
+        write(
+            &outside.join("platform-agents/skills/shared/SKILL.md"),
+            OUTSIDE_SENTINEL,
+        );
+        write(
+            &outside.join("platform-cursor/rules/shared.mdc"),
+            OUTSIDE_SENTINEL,
+        );
+        fs::create_dir_all(workspace.as_std_path()).unwrap();
+        std::os::unix::fs::symlink(
+            outside.join("platform-agents").as_std_path(),
+            workspace.join(".agents").as_std_path(),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            outside.join("platform-cursor").as_std_path(),
+            workspace.join(".cursor").as_std_path(),
+        )
+        .unwrap();
+
+        let report = inventory(&request).unwrap();
+        for (kind, path, reason_code) in [
+            (
+                AssetKind::Skill,
+                global.join("skills"),
+                "unsafe_canonical_skill_parent_symlink",
+            ),
+            (
+                AssetKind::Rule,
+                global.join("rules"),
+                "unsafe_canonical_rule_parent_symlink",
+            ),
+            (
+                AssetKind::Skill,
+                workspace.join(".agents/skills"),
+                "unsafe_skill_directory_parent",
+            ),
+            (
+                AssetKind::Rule,
+                workspace.join(".cursor/rules"),
+                "unsafe_rule_directory_parent",
+            ),
+        ] {
+            assert!(
+                report.issues.iter().any(|issue| {
+                    issue.kind == kind
+                        && issue.path == path
+                        && issue.scope == InventoryScope::Workspace
+                        && issue.reason_code == reason_code
+                        && issue.blocking
+                }),
+                "missing fail-closed issue for {path}: {reason_code}; actual={:?}",
+                report.issues
+            );
+        }
+        assert!(report
+            .entries
+            .iter()
+            .all(|entry| !entry.path.starts_with(&outside)));
+        let serialized = serde_json::to_string(&report).unwrap();
+        assert!(!serialized.contains(OUTSIDE_SENTINEL));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_and_rule_canonical_asset_root_symlink_is_fail_closed() {
+        const OUTSIDE_SENTINEL: &str = "canonical-asset-root-symlink-must-not-be-read";
+
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let home = root.join("home");
+        let asset_root = home.join(".ai-config");
+        let outside = root.join("outside/.ai-config");
+        write(&outside.join("skills/shared/SKILL.md"), OUTSIDE_SENTINEL);
+        write(&outside.join("rules/shared.mdc"), OUTSIDE_SENTINEL);
+        fs::create_dir_all(home.as_std_path()).unwrap();
+        std::os::unix::fs::symlink(outside.as_std_path(), asset_root.as_std_path()).unwrap();
+
+        let request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: asset_root.clone(),
+            }],
+            deploy_base: home,
+            scope: InventoryScope::Global,
+        };
+
+        let report = inventory(&request).unwrap();
+        for (kind, reason_code) in [
+            (AssetKind::Skill, "unsafe_canonical_skill_root"),
+            (AssetKind::Rule, "unsafe_canonical_rule_root"),
+        ] {
+            assert!(
+                report.issues.iter().any(|issue| {
+                    issue.kind == kind
+                        && issue.path == asset_root
+                        && issue.scope == InventoryScope::Global
+                        && issue.reason_code == reason_code
+                        && issue.blocking
+                }),
+                "missing fail-closed canonical root issue for {kind:?}: {reason_code}; actual={:?}",
+                report.issues
+            );
+        }
+        assert!(report
+            .entries
+            .iter()
+            .all(|entry| { entry.kind != AssetKind::Skill && entry.kind != AssetKind::Rule }));
+        let serialized = serde_json::to_string(&report).unwrap();
+        assert!(!serialized.contains(OUTSIDE_SENTINEL));
+    }
+
+    #[test]
+    fn core_unsupported_contract_keeps_global_project_and_workspace_scope_reasons_at_schema_v1() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let global = root.join("home/.ai-config");
+        let workspace = root.join("workspace");
+        let workspace_assets = workspace.join(".ai-config");
+        let project = workspace.join("project");
+        let project_assets = project.join(".ai-config");
+
+        write(&global.join("rules/global-rule.mdc"), "global rule\n");
+        write(
+            &workspace_assets.join("rules/workspace-rule.mdc"),
+            "workspace rule\n",
+        );
+        write(
+            &workspace_assets.join("skills/workspace-skill/SKILL.md"),
+            "workspace skill\n",
+        );
+        write(
+            &project_assets.join("rules/project-rule.mdc"),
+            "project rule\n",
+        );
+        write(
+            &project_assets.join("skills/project-skill/SKILL.md"),
+            "project skill\n",
+        );
+
+        let global_report = inventory(&InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: global.clone(),
+            }],
+            deploy_base: root.join("home"),
+            scope: InventoryScope::Global,
+        })
+        .unwrap();
+        let workspace_report = inventory(&InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Workspace,
+                    asset_root: workspace_assets.clone(),
+                },
+            ],
+            deploy_base: workspace.clone(),
+            scope: InventoryScope::Workspace,
+        })
+        .unwrap();
+        let project_report = inventory(&InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Workspace,
+                    asset_root: workspace_assets.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Project,
+                    asset_root: project_assets.clone(),
+                },
+            ],
+            deploy_base: project,
+            scope: InventoryScope::Project,
+        })
+        .unwrap();
+
+        let assert_unsupported = |report: &MigrationInventory,
+                                  kind: AssetKind,
+                                  platform: PlatformId,
+                                  name: &str,
+                                  layer: SourceLayer,
+                                  path: Utf8PathBuf,
+                                  scope: InventoryScope,
+                                  reason_code: &str| {
+            assert_eq!(report.schema_version, MIGRATION_INVENTORY_SCHEMA_VERSION);
+            assert_eq!(report.schema_version, 1);
+            assert!(
+                report.unsupported.iter().any(|entry| {
+                    entry.kind == kind
+                        && entry.platform == platform
+                        && entry.name == name
+                        && entry.source_layer == Some(layer)
+                        && entry.canonical_path == Some(path.clone())
+                        && entry.scope == scope
+                        && entry.reason_code == reason_code
+                }),
+                "missing unsupported {kind:?}/{platform:?}/{name}: {reason_code}; actual={:?}",
+                report.unsupported
+            );
+        };
+
+        assert_unsupported(
+            &global_report,
+            AssetKind::Rule,
+            PlatformId::Codex,
+            "global-rule",
+            SourceLayer::Global,
+            global.join("rules/global-rule.mdc"),
+            InventoryScope::Global,
+            "codex_instruction_rule_unsupported",
+        );
+        assert_unsupported(
+            &workspace_report,
+            AssetKind::Rule,
+            PlatformId::Codex,
+            "workspace-rule",
+            SourceLayer::Workspace,
+            workspace_assets.join("rules/workspace-rule.mdc"),
+            InventoryScope::Workspace,
+            "codex_instruction_rule_unsupported",
+        );
+        assert_unsupported(
+            &workspace_report,
+            AssetKind::Skill,
+            PlatformId::Hermes,
+            "workspace-skill",
+            SourceLayer::Workspace,
+            workspace_assets.join("skills/workspace-skill"),
+            InventoryScope::Workspace,
+            "hermes_workspace_skill_unsupported",
+        );
+        assert_unsupported(
+            &project_report,
+            AssetKind::Rule,
+            PlatformId::Codex,
+            "project-rule",
+            SourceLayer::Project,
+            project_assets.join("rules/project-rule.mdc"),
+            InventoryScope::Project,
+            "codex_instruction_rule_unsupported",
+        );
+        assert_unsupported(
+            &project_report,
+            AssetKind::Skill,
+            PlatformId::Hermes,
+            "project-skill",
+            SourceLayer::Project,
+            project_assets.join("skills/project-skill"),
+            InventoryScope::Project,
+            "hermes_project_skill_unsupported",
+        );
     }
 
     #[test]

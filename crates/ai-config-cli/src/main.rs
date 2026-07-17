@@ -343,7 +343,7 @@ fn main() -> ExitCode {
             mapped.run(mode, &default_root)
         }
         Cmd::Migrate { action } => match action {
-            MigrateCmd::Inventory => migration::run_inventory(mode, &default_root),
+            MigrateCmd::Inventory => migration::run_inventory(mode, &default_root, cli.workspace),
         },
         Cmd::Daemon { action } => {
             // 桥接 main::DaemonCmd → daemon 模块的 DaemonCmd(传入 --json 全局标志)
