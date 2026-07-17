@@ -972,6 +972,20 @@ RED 1/1、current wrong-shape RED 1/1 均实际运行；同扩展目录/特殊�
 child symlink 只 lstat、不跟随。最终 CLI E2E 15 passed、core unit 5 passed、strict clippy 通过。
 T010.4 仍未完成：workspace scope 与 Commands → Hooks 必须继续逐类 RED→GREEN。
 
+**执行状态（2026-07-17，Commands inventory checkpoint）**：补齐 global/workspace/project
+Command 分层盘点。canonical 仅接受 direct regular UTF-8 `commands/<name>.md`，按 whole-command
+执行 `global → workspace → project` overlay；Cursor/Claude current target 分别为 scope deploy base
+下 `.cursor/commands/*.md` 与 `.claude/commands/*.md`，正确 canonical link 为 ManagedLink，普通
+同内容文件仅为 Equivalent，foreign/wrong-shape/unknown link 均 fail-closed。Codex/Hermes 对所有
+effective Command 明确 `unsupported`，禁止扫描或创建 `.codex/commands`、`.hermes/commands`；仅
+global 盘点 deprecated `.codex/prompts/*.md`，保持 consumed 但 foreign/unowned/unselectable/
+nonblocking，并排除出 current/canonical case-collision 域。Workspace/Project 不扫描 HOME 平台
+目录或本地 `.codex/prompts`。canonical/current/legacy 父路径与 direct child 均 lstat-only；报告只含
+opaque digest/format/provenance/reason，不序列化正文、frontmatter、argument hint 或外链内容。
+CLI global/project/security RED 3/3、Workspace core RED 1/1 均实际运行；最终 Commands CLI 3 passed、
+完整 migration E2E 18 passed、core migration 6 passed、strict clippy 通过。T010.4 仍未完成：Hooks
+inventory 必须继续 RED→GREEN；Workspace 的 Skills/Rules/MCP/Agents 统一补证仍是未完成边界。
+
 - [x] **T010.1 Write failing inventory tests**：legacy marker copy、unmarked equal copy、different copy、correct/wrong/broken symlink、`.cc-switch` external_owned、plugin/builtin、case-only collision、dotfiles in digest、unknown-root link 不跟随；另补未知不可读 target lstat-only、external platform link 不获 ownership、builtin 不重复盘点。
 - [ ] **T010.2 Write failing migration/import/adopt E2E**：inventory no-write；plan deterministic；stale digest/action reject；未选择项零写入；不存在平台级/来源级 bulk takeover；Equivalent 逐 action-id 备份后 adopt；不同内容 foreign 直接 adopt 拒绝、必须先 import；`.cc-switch` 逐项选择；canonical-first then projection；transaction failure rollback；repeat plan noop；rollback refuses drifted post-state；import preview 显示 normalized diff、明确 destination source layer/absolute path、secret preflight 结果；foreign `AGENTS.md` 只有显式 import 后才进入 Prompt source 且平台原件不删除。
 - [x] **T010.3 Verify RED**：首轮 4 tests 编译并实际运行，均因顶层 `migrate` 不存在而失败；安全复审扩为 6 tests 后由最小 Skills inventory 实现转 GREEN。

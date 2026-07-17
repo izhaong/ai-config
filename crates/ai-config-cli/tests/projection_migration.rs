@@ -2289,3 +2289,470 @@ fn agent_inventory_reports_symlink_boundaries_and_invalid_canonical_schema_witho
     assert!(!serialized.contains("/agents/.hidden.md"));
     assert!(!serialized.contains("/agents/README.md"));
 }
+
+const COMMAND_BODY_SENTINEL: &str = "t010-command-body-must-never-serialize";
+const COMMAND_EXTERNAL_SENTINEL: &str = "t010-command-external-must-never-be-read";
+
+fn write_canonical_command(asset_root: &Path, name: &str, label: &str) -> PathBuf {
+    let path = asset_root.join("commands").join(format!("{name}.md"));
+    write(
+        &path,
+        &format!(
+            "---\ndescription: explicit {label}\nargument-hint: {COMMAND_BODY_SENTINEL}-args\n---\n\
+             # {name}\n\n{COMMAND_BODY_SENTINEL}-{label}\n"
+        ),
+    );
+    path
+}
+
+fn assert_command_source(entry: &Value, layer: &str, canonical: &Path, scope: &str) {
+    assert_eq!(entry["kind"], "command", "entry={entry:?}");
+    assert_eq!(entry["source_layer"], layer, "entry={entry:?}");
+    assert_eq!(
+        entry["canonical_path"],
+        canonical.to_string_lossy().as_ref(),
+        "entry={entry:?}"
+    );
+    assert_eq!(entry["scope"], scope, "entry={entry:?}");
+}
+
+fn assert_command_unsupported(
+    report: &Value,
+    name: &str,
+    platform: &str,
+    layer: &str,
+    canonical: &Path,
+    scope: &str,
+) {
+    let entry = report["unsupported"]
+        .as_array()
+        .expect("Command unsupported rows")
+        .iter()
+        .find(|entry| {
+            entry["kind"] == "command"
+                && entry["name"] == name
+                && entry["platform"] == platform
+                && entry["scope"] == scope
+        })
+        .unwrap_or_else(|| panic!("missing {platform} Command unsupported row: {report:?}"));
+    assert_eq!(
+        entry["reason_code"],
+        format!("{platform}_command_unsupported")
+    );
+    assert_eq!(entry["source_layer"], layer);
+    assert_eq!(
+        entry["canonical_path"],
+        canonical.to_string_lossy().as_ref()
+    );
+}
+
+fn assert_command_redacted(stdout: &str, stderr: &str) {
+    for sentinel in [COMMAND_BODY_SENTINEL, COMMAND_EXTERNAL_SENTINEL] {
+        assert!(
+            !stdout.contains(sentinel) && !stderr.contains(sentinel),
+            "Command inventory leaked {sentinel}"
+        );
+    }
+}
+
+#[test]
+fn global_command_inventory_reports_current_legacy_and_unsupported_without_bodies() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    let source = write_canonical_command(&asset_root, "review", "global");
+    let case_source = write_canonical_command(&asset_root, "Reviewer", "global-case");
+    fs::create_dir_all(home.path().join(".cursor/commands")).expect("create Cursor commands");
+    symlink(&source, home.path().join(".cursor/commands/review.md"))
+        .expect("link canonical Cursor command");
+    symlink(
+        &case_source,
+        home.path().join(".cursor/commands/Reviewer.md"),
+    )
+    .expect("link case-sensitive canonical Cursor command");
+    write(
+        &home.path().join(".claude/commands/review.md"),
+        &fs::read_to_string(&source).expect("read canonical command fixture"),
+    );
+    write(
+        &home.path().join(".codex/prompts/review.md"),
+        &format!("{COMMAND_BODY_SENTINEL}-deprecated-codex-prompt\n"),
+    );
+    write(
+        &home.path().join(".codex/prompts/reviewer.md"),
+        &format!("{COMMAND_BODY_SENTINEL}-deprecated-case-prompt\n"),
+    );
+    let legacy_outside = home.path().join("outside-legacy-command.md");
+    write(&legacy_outside, COMMAND_EXTERNAL_SENTINEL);
+    symlink(
+        &legacy_outside,
+        home.path().join(".codex/prompts/linked.md"),
+    )
+    .expect("link deprecated Codex prompt outside allowlist");
+    write(
+        &home.path().join(".codex/commands/must-not-scan.md"),
+        COMMAND_BODY_SENTINEL,
+    );
+    write(
+        &home.path().join(".hermes/commands/must-not-scan.md"),
+        COMMAND_BODY_SENTINEL,
+    );
+
+    let before = tree_snapshot(home.path());
+    let output = rules_inventory_output(home.path(), &asset_root);
+    assert!(
+        output.status.success(),
+        "global Command inventory failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 Command inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 Command stderr");
+    assert_command_redacted(&stdout, &stderr);
+    assert_eq!(
+        tree_snapshot(home.path()),
+        before,
+        "Command inventory wrote"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("global Command inventory JSON");
+
+    let cursor = entry_named(&report, "review", ".cursor/commands/review.md");
+    assert_eq!(cursor["classification"], "managed_link");
+    assert_eq!(cursor["ownership_state"], "managed_link");
+    assert_eq!(cursor["provenance"], "platform_current");
+    assert_eq!(cursor["reason_code"], "canonical_symlink");
+    assert_eq!(cursor["currently_consumed"], true);
+    assert_eq!(cursor["blocking"], false);
+    assert_eq!(cursor["owned"], true);
+    assert_eq!(cursor["selectable"], false);
+    assert_eq!(cursor["followed"], false);
+    assert_eq!(cursor["format"], "markdown");
+    assert_eq!(cursor["consumers"], serde_json::json!(["cursor"]));
+    assert_command_source(cursor, "global", &source, "global");
+
+    let claude = entry_named(&report, "review", ".claude/commands/review.md");
+    assert_eq!(claude["classification"], "equivalent");
+    assert_eq!(claude["ownership_state"], "equivalent");
+    assert_eq!(claude["provenance"], "platform_current");
+    assert_eq!(claude["reason_code"], "unmarked_equal_copy");
+    assert_eq!(claude["currently_consumed"], true);
+    assert_eq!(claude["blocking"], false);
+    assert_eq!(claude["owned"], false);
+    assert_eq!(claude["selectable"], true);
+    assert_eq!(claude["format"], "markdown");
+    assert_eq!(claude["consumers"], serde_json::json!(["claude"]));
+    assert_command_source(claude, "global", &source, "global");
+
+    let legacy = entry_named(&report, "review", ".codex/prompts/review.md");
+    assert_eq!(legacy["kind"], "command");
+    assert_eq!(legacy["classification"], "foreign");
+    assert_eq!(legacy["ownership_state"], "foreign");
+    assert_eq!(legacy["provenance"], "platform_legacy");
+    assert_eq!(legacy["reason_code"], "legacy_codex_prompt");
+    assert_eq!(legacy["currently_consumed"], true);
+    assert_eq!(legacy["blocking"], false);
+    assert_eq!(legacy["owned"], false);
+    assert_eq!(legacy["selectable"], false);
+    assert_eq!(legacy["format"], "markdown");
+    assert_eq!(legacy["consumers"], serde_json::json!(["codex"]));
+    assert_command_source(legacy, "global", &source, "global");
+
+    let current_case = entry_named(&report, "Reviewer", ".cursor/commands/Reviewer.md");
+    assert_ne!(current_case["classification"], "case_collision");
+    assert_ne!(
+        entry_named(&report, "Reviewer", "/commands/Reviewer.md")["classification"],
+        "case_collision"
+    );
+    let legacy_case = entry_named(&report, "reviewer", ".codex/prompts/reviewer.md");
+    assert_eq!(legacy_case["classification"], "foreign");
+    assert_eq!(legacy_case["blocking"], false);
+    let legacy_link_issue = report["issues"]
+        .as_array()
+        .expect("Command issues")
+        .iter()
+        .find(|issue| {
+            issue["kind"] == "command"
+                && issue["path"]
+                    .as_str()
+                    .is_some_and(|path| path.contains(".codex/prompts/linked.md"))
+        })
+        .expect("legacy Codex prompt symlink issue");
+    assert_eq!(
+        legacy_link_issue["reason_code"],
+        "unsafe_legacy_command_file_symlink"
+    );
+    assert_eq!(legacy_link_issue["blocking"], true);
+
+    for platform in ["codex", "hermes"] {
+        assert_command_unsupported(&report, "review", platform, "global", &source, "global");
+    }
+    let serialized = serde_json::to_string(&report).expect("serialize global Commands");
+    assert!(!serialized.contains(".codex/commands"));
+    assert!(!serialized.contains(".hermes/commands"));
+    for raw in ["body", "content", "frontmatter", "argument_hint"] {
+        assert!(cursor[raw].is_null() && claude[raw].is_null() && legacy[raw].is_null());
+    }
+}
+
+#[test]
+fn project_command_inventory_uses_overlay_and_never_scans_home_or_unsupported_paths() {
+    let home = TempDir::new().expect("temporary HOME");
+    let repo = TempDir::new().expect("temporary project");
+    let global_root = home.path().join(".ai-config");
+    let project_root = repo.path().join(".ai-config");
+    let global_shared = write_canonical_command(&global_root, "shared", "global-shared");
+    let global_only = write_canonical_command(&global_root, "global-only", "global-only");
+    let project_shared = write_canonical_command(&project_root, "shared", "project-shared");
+    for (path, source) in [
+        (
+            repo.path().join(".cursor/commands/shared.md"),
+            &project_shared,
+        ),
+        (
+            repo.path().join(".cursor/commands/global-only.md"),
+            &global_only,
+        ),
+        (
+            repo.path().join(".claude/commands/shared.md"),
+            &project_shared,
+        ),
+    ] {
+        write(
+            &path,
+            &fs::read_to_string(source).expect("read canonical Command"),
+        );
+    }
+    for path in [
+        home.path().join(".cursor/commands/home-only.md"),
+        home.path().join(".claude/commands/home-only.md"),
+        home.path().join(".codex/prompts/home-legacy.md"),
+        repo.path().join(".codex/prompts/project-legacy.md"),
+        repo.path().join(".codex/commands/project-forbidden.md"),
+        repo.path().join(".hermes/commands/project-forbidden.md"),
+    ] {
+        write(&path, COMMAND_EXTERNAL_SENTINEL);
+    }
+
+    let home_before = tree_snapshot(home.path());
+    let repo_before = tree_snapshot(repo.path());
+    let output = rules_inventory_output(home.path(), repo.path());
+    assert!(
+        output.status.success(),
+        "project Command inventory failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 project Command inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 project Command stderr");
+    assert_command_redacted(&stdout, &stderr);
+    assert_eq!(tree_snapshot(home.path()), home_before, "HOME changed");
+    assert_eq!(tree_snapshot(repo.path()), repo_before, "project changed");
+    let report: Value = serde_json::from_str(&stdout).expect("project Command inventory JSON");
+    assert_eq!(report["scope"], "project");
+
+    let cursor = entry_named(&report, "shared", ".cursor/commands/shared.md");
+    assert_eq!(cursor["classification"], "equivalent");
+    assert_eq!(cursor["ownership_state"], "equivalent");
+    assert_eq!(cursor["provenance"], "platform_current");
+    assert_eq!(cursor["currently_consumed"], true);
+    assert_eq!(cursor["format"], "markdown");
+    assert_eq!(cursor["consumers"], serde_json::json!(["cursor"]));
+    assert_command_source(cursor, "project", &project_shared, "project");
+    assert_ne!(
+        cursor["canonical_path"],
+        global_shared.to_string_lossy().as_ref()
+    );
+
+    let inherited = entry_named(&report, "global-only", ".cursor/commands/global-only.md");
+    assert_eq!(inherited["classification"], "equivalent");
+    assert_command_source(inherited, "global", &global_only, "project");
+    let claude = entry_named(&report, "shared", ".claude/commands/shared.md");
+    assert_eq!(claude["classification"], "equivalent");
+    assert_eq!(claude["consumers"], serde_json::json!(["claude"]));
+    assert_command_source(claude, "project", &project_shared, "project");
+
+    let raw_shared = report["entries"]
+        .as_array()
+        .expect("Command entries")
+        .iter()
+        .filter(|entry| {
+            entry["kind"] == "command"
+                && entry["name"] == "shared"
+                && entry["provenance"] == "canonical"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        raw_shared.len(),
+        2,
+        "raw global/project Command provenance lost"
+    );
+    let layers = raw_shared
+        .iter()
+        .map(|entry| entry["source_layer"].as_str().unwrap_or_default())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        layers,
+        std::collections::BTreeSet::from(["global", "project"])
+    );
+    for (name, layer, source) in [
+        ("shared", "project", project_shared.as_path()),
+        ("global-only", "global", global_only.as_path()),
+    ] {
+        for platform in ["codex", "hermes"] {
+            assert_command_unsupported(&report, name, platform, layer, source, "project");
+        }
+    }
+    let serialized = serde_json::to_string(&report).expect("serialize project Commands");
+    for forbidden in [
+        "home-only",
+        "home-legacy",
+        "project-legacy",
+        ".codex/commands",
+        ".hermes/commands",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "project inventory scanned forbidden Command path: {forbidden}"
+        );
+    }
+    for issue in report["issues"].as_array().expect("Command issues") {
+        if issue["kind"] == "command" {
+            assert!(
+                issue["path"].as_str().is_some_and(|path| {
+                    Path::new(path).starts_with(repo.path())
+                        || Path::new(path).starts_with(&global_root)
+                }),
+                "project Command issue escaped approved project/canonical roots: {issue:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn command_inventory_is_fail_closed_for_links_wrong_shapes_and_kind_scoped_collisions() {
+    let home = TempDir::new().expect("temporary HOME");
+    let repo = TempDir::new().expect("temporary project");
+    let global_root = home.path().join(".ai-config");
+    let project_root = repo.path().join(".ai-config");
+    write_canonical_command(&global_root, "safe", "global-safe");
+    let case_source = write_canonical_command(&global_root, "CaseCommand", "global-case");
+    write(
+        &global_root.join("skills/casecommand/SKILL.md"),
+        "same case-insensitive spelling in another kind\n",
+    );
+    fs::create_dir_all(&project_root).expect("create project canonical root");
+    let outside_canonical = TempDir::new().expect("outside canonical Commands");
+    write(
+        &outside_canonical.path().join("escaped.md"),
+        COMMAND_EXTERNAL_SENTINEL,
+    );
+    symlink(outside_canonical.path(), project_root.join("commands"))
+        .expect("escape canonical Commands root");
+
+    let outside_platform = TempDir::new().expect("outside platform Commands");
+    write(
+        &outside_platform.path().join("commands/escaped.md"),
+        COMMAND_EXTERNAL_SENTINEL,
+    );
+    symlink(outside_platform.path(), repo.path().join(".cursor")).expect("escape Cursor parent");
+    let outside_file = outside_platform.path().join("linked.md");
+    write(&outside_file, COMMAND_EXTERNAL_SENTINEL);
+    fs::create_dir_all(repo.path().join(".claude/commands")).expect("create Claude Commands root");
+    symlink(&outside_file, repo.path().join(".claude/commands/safe.md"))
+        .expect("link final Command file");
+    write(
+        &repo
+            .path()
+            .join(".claude/commands/directory.md/must-not-recurse.md"),
+        COMMAND_EXTERNAL_SENTINEL,
+    );
+    write(
+        &repo.path().join(".claude/commands/casecommand.md"),
+        &format!("{COMMAND_BODY_SENTINEL}-case-platform"),
+    );
+
+    let home_before = tree_snapshot(home.path());
+    let repo_before = tree_snapshot(repo.path());
+    let outside_before = tree_snapshot(outside_platform.path());
+    let output = rules_inventory_output(home.path(), repo.path());
+    assert!(
+        output.status.success(),
+        "Command security inventory failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 Command security inventory");
+    let stderr = String::from_utf8(output.stderr).expect("UTF-8 Command security stderr");
+    assert_command_redacted(&stdout, &stderr);
+    assert_eq!(tree_snapshot(home.path()), home_before, "HOME changed");
+    assert_eq!(tree_snapshot(repo.path()), repo_before, "project changed");
+    assert_eq!(
+        tree_snapshot(outside_platform.path()),
+        outside_before,
+        "outside Command owner changed"
+    );
+    let report: Value = serde_json::from_str(&stdout).expect("Command security inventory JSON");
+    let assert_issue = |fragment: &str, reason: &str| {
+        let issue = report["issues"]
+            .as_array()
+            .expect("Command issues")
+            .iter()
+            .find(|issue| {
+                issue["kind"] == "command"
+                    && issue["path"]
+                        .as_str()
+                        .is_some_and(|path| path.contains(fragment))
+            })
+            .unwrap_or_else(|| panic!("missing Command issue {reason}: {report:?}"));
+        assert_eq!(issue["reason_code"], reason);
+        assert_eq!(issue["blocking"], true);
+    };
+    assert_issue("/.ai-config/commands", "unsafe_canonical_command_directory");
+    assert_issue("/.cursor/commands", "unsafe_command_directory_parent");
+    assert_issue("/.claude/commands/safe.md", "unsafe_command_file_symlink");
+    assert_issue(
+        "/.claude/commands/directory.md",
+        "unsafe_command_file_non_regular",
+    );
+
+    let collisions = report["entries"]
+        .as_array()
+        .expect("Command entries")
+        .iter()
+        .filter(|entry| {
+            entry["kind"] == "command"
+                && matches!(entry["name"].as_str(), Some("CaseCommand" | "casecommand"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        collisions.len(),
+        2,
+        "Command collision rows: {collisions:?}"
+    );
+    assert!(collisions.iter().all(|entry| {
+        entry["classification"] == "case_collision"
+            && entry["reason_code"] == "case_only_name_collision"
+            && entry["blocking"] == true
+    }));
+    let cross_kind = entry_named(&report, "casecommand", "/skills/");
+    assert_ne!(cross_kind["classification"], "case_collision");
+    assert_eq!(
+        entry_named(&report, "CaseCommand", "/commands/")["canonical_path"],
+        case_source.to_string_lossy().as_ref()
+    );
+    let serialized = serde_json::to_string(&report).expect("serialize Command security report");
+    assert!(!serialized.contains("must-not-recurse"));
+    assert!(!serialized.contains(outside_canonical.path().to_string_lossy().as_ref()));
+    assert!(!serialized.contains(outside_platform.path().to_string_lossy().as_ref()));
+    assert!(!report["entries"]
+        .as_array()
+        .expect("Command entries")
+        .iter()
+        .any(|entry| {
+            entry["kind"] == "command"
+                && entry["provenance"] != "canonical"
+                && matches!(
+                    entry["name"].as_str(),
+                    Some("safe" | "directory" | "escaped")
+                )
+        }));
+}

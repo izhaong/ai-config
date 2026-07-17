@@ -283,6 +283,13 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
         &mut unsupported,
         &mut issues,
     )?;
+    scan_command_targets(
+        request,
+        &effective,
+        &mut entries,
+        &mut unsupported,
+        &mut issues,
+    )?;
     scan_legacy_canonical_mcp(
         &request.canonical_layers,
         request.scope,
@@ -412,6 +419,7 @@ fn canonical_assets(
         )?);
     }
     scan_canonical_agents(root, scope, issues, legacy_agents, &mut assets)?;
+    scan_canonical_commands(root, scope, issues, &mut assets)?;
     let mcp_servers = root.asset_root.join("mcp/servers");
     if let Some(parent_issue) = mcp_parent_issue(&root.asset_root, &mcp_servers) {
         let reason_code = match parent_issue {
@@ -472,6 +480,143 @@ fn canonical_assets(
         assets.push(asset);
     }
     Ok(assets)
+}
+
+fn scan_canonical_commands(
+    root: &CanonicalLayerRoot,
+    scope: InventoryScope,
+    issues: &mut Vec<MigrationInventoryIssue>,
+    assets: &mut Vec<CanonicalAsset>,
+) -> Result<(), CoreError> {
+    let root_metadata = match fs::symlink_metadata(root.asset_root.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &root.asset_root,
+                scope,
+                "unreadable_canonical_command_root",
+            );
+            return Ok(());
+        }
+    };
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Command,
+            &root.asset_root,
+            scope,
+            "unsafe_canonical_command_root",
+        );
+        return Ok(());
+    }
+
+    let commands = root.asset_root.join("commands");
+    let metadata = match fs::symlink_metadata(commands.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &commands,
+                scope,
+                "unreadable_canonical_command_directory",
+            );
+            return Ok(());
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Command,
+            &commands,
+            scope,
+            "unsafe_canonical_command_directory",
+        );
+        return Ok(());
+    }
+
+    let entries = match direct_lstat_entries(&commands) {
+        Ok(entries) => entries,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &commands,
+                scope,
+                "unreadable_canonical_command_directory",
+            );
+            return Ok(());
+        }
+    };
+    for entry in entries {
+        if is_excluded_agent_entry(&entry.name) || entry.path.extension() != Some("md") {
+            continue;
+        }
+        if entry.shape == EntryShape::Symlink {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &entry.path,
+                scope,
+                "unsafe_canonical_command_file_symlink",
+            );
+            continue;
+        }
+        if entry.shape != EntryShape::RegularFile {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &entry.path,
+                scope,
+                "unsafe_canonical_command_file_non_regular",
+            );
+            continue;
+        }
+        let Some(name) = entry
+            .path
+            .file_stem()
+            .filter(|name| is_safe_asset_name(name))
+        else {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &entry.path,
+                scope,
+                "invalid_canonical_command_name",
+            );
+            continue;
+        };
+        if fs::read_to_string(entry.path.as_std_path()).is_err() {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &entry.path,
+                scope,
+                "unreadable_canonical_command",
+            );
+            continue;
+        }
+        match canonical_asset(
+            root.layer,
+            AssetKind::Command,
+            name.to_owned(),
+            entry.path.clone(),
+        ) {
+            Ok(asset) => assets.push(asset),
+            Err(_) => push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &entry.path,
+                scope,
+                "unreadable_canonical_command",
+            ),
+        }
+    }
+    Ok(())
 }
 
 fn scan_canonical_agents(
@@ -1353,6 +1498,296 @@ fn scan_agent_directory(
     Ok(())
 }
 
+fn scan_command_targets(
+    request: &InventoryRequest,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    unsupported: &mut Vec<MigrationInventoryUnsupported>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    scan_current_command_root(
+        &request.deploy_base,
+        &request.deploy_base.join(".cursor/commands"),
+        PlatformId::Cursor,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    scan_current_command_root(
+        &request.deploy_base,
+        &request.deploy_base.join(".claude/commands"),
+        PlatformId::Claude,
+        canonical,
+        request.scope,
+        entries,
+        issues,
+    )?;
+    if request.scope == InventoryScope::Global {
+        scan_legacy_codex_prompts(
+            &request.deploy_base,
+            &request.deploy_base.join(".codex/prompts"),
+            canonical,
+            request.scope,
+            entries,
+            issues,
+        )?;
+    }
+    for asset in canonical
+        .values()
+        .filter(|asset| asset.kind == AssetKind::Command)
+    {
+        for (platform, reason_code) in [
+            (PlatformId::Codex, "codex_command_unsupported"),
+            (PlatformId::Hermes, "hermes_command_unsupported"),
+        ] {
+            unsupported.push(MigrationInventoryUnsupported {
+                kind: AssetKind::Command,
+                platform,
+                name: asset.name.clone(),
+                source_layer: Some(asset.layer),
+                canonical_path: Some(asset.path.clone()),
+                scope: request.scope,
+                reason_code: reason_code.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_current_command_root(
+    approved_root: &Utf8Path,
+    directory: &Utf8Path,
+    platform: PlatformId,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    if mcp_parent_issue(approved_root, &directory.join(".inventory-probe")).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Command,
+            directory,
+            scope,
+            "unsafe_command_directory_parent",
+        );
+        return Ok(());
+    }
+    let metadata = match fs::symlink_metadata(directory.as_std_path()) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                directory,
+                scope,
+                "unreadable_command_directory",
+            );
+            return Ok(());
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Command,
+            directory,
+            scope,
+            "unsafe_command_directory",
+        );
+        return Ok(());
+    }
+
+    let paths = match direct_lstat_entries(directory) {
+        Ok(paths) => paths,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                directory,
+                scope,
+                "unreadable_command_directory",
+            );
+            return Ok(());
+        }
+    };
+    for direct in paths {
+        if is_excluded_agent_entry(&direct.name) || direct.path.extension() != Some("md") {
+            continue;
+        }
+        let Some(name) = direct
+            .path
+            .file_stem()
+            .filter(|name| is_safe_asset_name(name))
+            .map(str::to_owned)
+        else {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &direct.path,
+                scope,
+                "invalid_command_file_name",
+            );
+            continue;
+        };
+        let source = canonical.get(&(asset_kind_order(AssetKind::Command), name.clone()));
+        let (classification, reason_code, content_digest, blocking, followed) = match direct.shape {
+            EntryShape::Symlink => match classify_link(&direct.path, source, &[]) {
+                Ok(result) if result.0 == InventoryClassification::ManagedLink => result,
+                Ok(_) | Err(_) => {
+                    push_inventory_issue(
+                        issues,
+                        AssetKind::Command,
+                        &direct.path,
+                        scope,
+                        "unsafe_command_file_symlink",
+                    );
+                    continue;
+                }
+            },
+            EntryShape::RegularFile => {
+                if fs::read_to_string(direct.path.as_std_path()).is_err() {
+                    push_inventory_issue(
+                        issues,
+                        AssetKind::Command,
+                        &direct.path,
+                        scope,
+                        "unreadable_command_file",
+                    );
+                    continue;
+                }
+                classify_regular_asset(&direct.path, source, false, "no_canonical_command")?
+            }
+            EntryShape::Directory | EntryShape::Other => {
+                push_inventory_issue(
+                    issues,
+                    AssetKind::Command,
+                    &direct.path,
+                    scope,
+                    "unsafe_command_file_non_regular",
+                );
+                continue;
+            }
+        };
+        let mut entry = target_entry(
+            name,
+            direct.path,
+            AssetKind::Command,
+            classification,
+            InventoryProvenance::PlatformCurrent,
+            reason_code,
+            content_digest,
+            true,
+            blocking,
+            followed,
+            source,
+            vec![platform],
+            scope,
+        );
+        entry.format = Some("markdown".to_owned());
+        entries.push(entry);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_legacy_codex_prompts(
+    approved_root: &Utf8Path,
+    directory: &Utf8Path,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+    issues: &mut Vec<MigrationInventoryIssue>,
+) -> Result<(), CoreError> {
+    if mcp_parent_issue(approved_root, &directory.join(".inventory-probe")).is_some() {
+        push_inventory_issue(
+            issues,
+            AssetKind::Command,
+            directory,
+            scope,
+            "unsafe_legacy_command_directory_parent",
+        );
+        return Ok(());
+    }
+    let paths = match direct_lstat_entries(directory) {
+        Ok(paths) => paths,
+        Err(_) => {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                directory,
+                scope,
+                "unreadable_legacy_command_directory",
+            );
+            return Ok(());
+        }
+    };
+    for direct in paths {
+        if is_excluded_agent_entry(&direct.name) || direct.path.extension() != Some("md") {
+            continue;
+        }
+        if direct.shape == EntryShape::Symlink {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &direct.path,
+                scope,
+                "unsafe_legacy_command_file_symlink",
+            );
+            continue;
+        }
+        if direct.shape != EntryShape::RegularFile {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &direct.path,
+                scope,
+                "unsafe_legacy_command_file_non_regular",
+            );
+            continue;
+        }
+        let Some(name) = direct
+            .path
+            .file_stem()
+            .filter(|name| is_safe_asset_name(name))
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        if fs::read_to_string(direct.path.as_std_path()).is_err() {
+            push_inventory_issue(
+                issues,
+                AssetKind::Command,
+                &direct.path,
+                scope,
+                "unreadable_legacy_command_file",
+            );
+            continue;
+        }
+        let source = canonical.get(&(asset_kind_order(AssetKind::Command), name.clone()));
+        let mut entry = target_entry(
+            name,
+            direct.path.clone(),
+            AssetKind::Command,
+            InventoryClassification::Foreign,
+            InventoryProvenance::PlatformLegacy,
+            "legacy_codex_prompt".to_owned(),
+            Some(path_content_digest(&direct.path)?),
+            true,
+            false,
+            false,
+            source,
+            vec![PlatformId::Codex],
+            scope,
+        );
+        entry.format = Some("markdown".to_owned());
+        entries.push(entry);
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scan_mcp_container(
     approved_root: &Utf8Path,
@@ -1880,7 +2315,8 @@ fn mark_case_collisions(entries: &mut [MigrationInventoryEntry]) {
 
 fn is_legacy_only(entry: &MigrationInventoryEntry) -> bool {
     entry.provenance == InventoryProvenance::CanonicalLegacy
-        || (entry.provenance == InventoryProvenance::PlatformLegacy && !entry.currently_consumed)
+        || (entry.provenance == InventoryProvenance::PlatformLegacy
+            && (!entry.currently_consumed || entry.kind == AssetKind::Command))
 }
 
 fn asset_kind_order(kind: AssetKind) -> u8 {
@@ -2133,5 +2569,213 @@ mod tests {
             .entries
             .iter()
             .all(|entry| { entry.classification == InventoryClassification::CanonicalSource }));
+    }
+
+    #[test]
+    fn workspace_command_inventory_uses_workspace_overlay_and_never_scans_home_platforms() {
+        const COMMAND_BODY_SENTINEL: &str = "workspace-command-body-must-not-serialize";
+        const HOME_PLATFORM_SENTINEL: &str = "workspace-command-home-platform-must-not-be-read";
+
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let home = root.join("home");
+        let workspace = root.join("workspace");
+        let global = home.join(".ai-config");
+        let workspace_assets = workspace.join(".ai-config");
+        let request = InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Workspace,
+                    asset_root: workspace_assets.clone(),
+                },
+            ],
+            deploy_base: workspace.clone(),
+            scope: InventoryScope::Workspace,
+        };
+
+        write(
+            &global.join("commands/shared.md"),
+            &format!("global shared {COMMAND_BODY_SENTINEL}\n"),
+        );
+        write(
+            &global.join("commands/global-only.md"),
+            &format!("global only {COMMAND_BODY_SENTINEL}\n"),
+        );
+        write(
+            &workspace_assets.join("commands/shared.md"),
+            &format!("workspace shared {COMMAND_BODY_SENTINEL}\n"),
+        );
+        write(
+            &workspace_assets.join("commands/workspace-only.md"),
+            &format!("workspace only {COMMAND_BODY_SENTINEL}\n"),
+        );
+
+        write(
+            &workspace.join(".cursor/commands/shared.md"),
+            &format!("workspace shared {COMMAND_BODY_SENTINEL}\n"),
+        );
+        write(
+            &workspace.join(".claude/commands/global-only.md"),
+            &format!("global only {COMMAND_BODY_SENTINEL}\n"),
+        );
+        write(
+            &workspace.join(".claude/commands/workspace-only.md"),
+            &format!("workspace only {COMMAND_BODY_SENTINEL}\n"),
+        );
+
+        for path in [
+            home.join(".cursor/commands/home-only.md"),
+            home.join(".claude/commands/home-only.md"),
+            home.join(".codex/prompts/home-legacy.md"),
+            home.join(".codex/commands/forbidden.md"),
+            home.join(".hermes/commands/forbidden.md"),
+            workspace.join(".codex/prompts/workspace-legacy.md"),
+            workspace.join(".codex/commands/forbidden.md"),
+            workspace.join(".hermes/commands/forbidden.md"),
+        ] {
+            write(&path, HOME_PLATFORM_SENTINEL);
+        }
+
+        let home_before = path_content_digest(&home).unwrap();
+        let workspace_before = path_content_digest(&workspace).unwrap();
+        let first = inventory(&request).unwrap();
+        let second = inventory(&request).unwrap();
+        assert_eq!(first.plan_digest, second.plan_digest);
+        assert_eq!(path_content_digest(&home).unwrap(), home_before);
+        assert_eq!(path_content_digest(&workspace).unwrap(), workspace_before);
+
+        let command_entry = |path: &Utf8Path| {
+            first
+                .entries
+                .iter()
+                .find(|entry| entry.kind == AssetKind::Command && entry.path == path)
+                .unwrap_or_else(|| panic!("missing workspace Command entry: {path}"))
+        };
+        let cursor = command_entry(&workspace.join(".cursor/commands/shared.md"));
+        assert_eq!(cursor.classification, InventoryClassification::Equivalent);
+        assert_eq!(cursor.provenance, InventoryProvenance::PlatformCurrent);
+        assert_eq!(cursor.source_layer, Some(SourceLayer::Workspace));
+        assert_eq!(
+            cursor.canonical_path,
+            Some(workspace_assets.join("commands/shared.md"))
+        );
+        assert_eq!(cursor.consumers, vec![PlatformId::Cursor]);
+        assert_eq!(cursor.scope, InventoryScope::Workspace);
+        assert_eq!(cursor.format.as_deref(), Some("markdown"));
+        assert_eq!(cursor.trust_requirement, TrustRequirement::None);
+        assert!(cursor.currently_consumed);
+        assert!(!cursor.owned && cursor.selectable && !cursor.followed);
+
+        let inherited = command_entry(&workspace.join(".claude/commands/global-only.md"));
+        assert_eq!(
+            inherited.classification,
+            InventoryClassification::Equivalent
+        );
+        assert_eq!(inherited.source_layer, Some(SourceLayer::Global));
+        assert_eq!(
+            inherited.canonical_path,
+            Some(global.join("commands/global-only.md"))
+        );
+        assert_eq!(inherited.consumers, vec![PlatformId::Claude]);
+        assert_eq!(inherited.scope, InventoryScope::Workspace);
+        assert_eq!(inherited.format.as_deref(), Some("markdown"));
+
+        let workspace_only = command_entry(&workspace.join(".claude/commands/workspace-only.md"));
+        assert_eq!(workspace_only.source_layer, Some(SourceLayer::Workspace));
+        assert_eq!(
+            workspace_only.canonical_path,
+            Some(workspace_assets.join("commands/workspace-only.md"))
+        );
+
+        let raw_shared = first
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.kind == AssetKind::Command
+                    && entry.name == "shared"
+                    && entry.provenance == InventoryProvenance::Canonical
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(raw_shared.len(), 2);
+        assert_eq!(
+            raw_shared
+                .iter()
+                .map(|entry| entry.source_layer.unwrap())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([SourceLayer::Global, SourceLayer::Workspace])
+        );
+
+        for (name, layer, canonical_path) in [
+            (
+                "shared",
+                SourceLayer::Workspace,
+                workspace_assets.join("commands/shared.md"),
+            ),
+            (
+                "global-only",
+                SourceLayer::Global,
+                global.join("commands/global-only.md"),
+            ),
+            (
+                "workspace-only",
+                SourceLayer::Workspace,
+                workspace_assets.join("commands/workspace-only.md"),
+            ),
+        ] {
+            for (platform, reason_code) in [
+                (PlatformId::Codex, "codex_command_unsupported"),
+                (PlatformId::Hermes, "hermes_command_unsupported"),
+            ] {
+                let unsupported = first
+                    .unsupported
+                    .iter()
+                    .find(|entry| {
+                        entry.kind == AssetKind::Command
+                            && entry.platform == platform
+                            && entry.name == name
+                            && entry.scope == InventoryScope::Workspace
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("missing workspace Command unsupported row: {platform:?}/{name}")
+                    });
+                assert_eq!(unsupported.reason_code, reason_code);
+                assert_eq!(unsupported.source_layer, Some(layer));
+                assert_eq!(unsupported.canonical_path, Some(canonical_path.clone()));
+            }
+        }
+
+        let forbidden_platform_roots = [
+            home.join(".cursor/commands"),
+            home.join(".claude/commands"),
+            home.join(".codex/prompts"),
+            home.join(".codex/commands"),
+            home.join(".hermes/commands"),
+            workspace.join(".codex/prompts"),
+            workspace.join(".codex/commands"),
+            workspace.join(".hermes/commands"),
+        ];
+        assert!(first.entries.iter().all(|entry| {
+            !forbidden_platform_roots
+                .iter()
+                .any(|root| entry.path.starts_with(root))
+        }));
+        assert!(first.issues.iter().all(|issue| {
+            !forbidden_platform_roots
+                .iter()
+                .any(|root| issue.path.starts_with(root))
+        }));
+
+        let serialized = serde_json::to_string(&first).unwrap();
+        assert!(!serialized.contains(COMMAND_BODY_SENTINEL));
+        assert!(!serialized.contains(HOME_PLATFORM_SENTINEL));
+        assert!(!serialized.contains("home-only"));
+        assert!(!serialized.contains("home-legacy"));
+        assert!(!serialized.contains("workspace-legacy"));
+        assert!(!serialized.contains(".codex/commands"));
+        assert!(!serialized.contains(".hermes/commands"));
     }
 }
