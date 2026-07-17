@@ -922,9 +922,19 @@ ai-config import <kind> <name> --from <platform> --to global|project [--replace]
 ai-config adopt --plan <file> --select <action-id>... --apply
 ```
 
-- [ ] **T010.1 Write failing inventory tests**：legacy marker copy、unmarked equal copy、different copy、correct/wrong/broken symlink、`.cc-switch` external_owned、plugin/builtin、case-only collision、dotfiles in digest、unknown-root link 不跟随。
+**执行状态（2026-07-17，Skills inventory checkpoint）**：已新增纯 core migration
+inventory 与 `migrate inventory` 只读 CLI，第一切片只处理 Skills，并严格扫描 canonical
+`skills/`、current `.agents/skills` / `.claude/skills`、legacy `.cursor/skills` /
+`.codex/skills`、external `.cc-switch/skills` 与 builtin `.codex/skills/.system`。未知链接
+只 readlink + lexical compare，未命中 allowlist 时不 canonicalize/read/hash target；legacy marker
+只产生 foreign candidate，不授予 ownership；`.cc-switch` / builtin 永不 selectable；报告与 digest
+deterministic 且不创建 lock/backup/DB。CLI E2E 6 passed、core unit 3 passed、core+CLI strict clippy
+通过。T010.4 仍未完成：Rules → MCP → Agents → Commands → Hooks 及 workspace/project scopes
+必须继续逐类 RED→GREEN，不能把 Skills-only inventory 当成完整迁移盘点。
+
+- [x] **T010.1 Write failing inventory tests**：legacy marker copy、unmarked equal copy、different copy、correct/wrong/broken symlink、`.cc-switch` external_owned、plugin/builtin、case-only collision、dotfiles in digest、unknown-root link 不跟随；另补未知不可读 target lstat-only、external platform link 不获 ownership、builtin 不重复盘点。
 - [ ] **T010.2 Write failing migration/import/adopt E2E**：inventory no-write；plan deterministic；stale digest/action reject；未选择项零写入；不存在平台级/来源级 bulk takeover；Equivalent 逐 action-id 备份后 adopt；不同内容 foreign 直接 adopt 拒绝、必须先 import；`.cc-switch` 逐项选择；canonical-first then projection；transaction failure rollback；repeat plan noop；rollback refuses drifted post-state；import preview 显示 normalized diff、明确 destination source layer/absolute path、secret preflight 结果；foreign `AGENTS.md` 只有显式 import 后才进入 Prompt source 且平台原件不删除。
-- [ ] **T010.3 Verify RED**：`cargo test -p ai-config-cli --test projection_migration`。
+- [x] **T010.3 Verify RED**：首轮 4 tests 编译并实际运行，均因顶层 `migrate` 不存在而失败；安全复审扩为 6 tests 后由最小 Skills inventory 实现转 GREEN。
 - [ ] **T010.4 Implement allowlisted inventory**：只扫描 canonical/global/workspace/project、官方 current/legacy platform roots、`.cc-switch/skills` 和已知 plugin roots；每项记录 provenance/reason，不读取/输出 secret values。
 - [ ] **T010.5 Implement explicit import**：只允许 create-only 或 replace-source-with-backup；预览必须包含 normalized diff、destination layer/path、敏感信息检查；平台原件不删除；source 校验通过后另建 projection plan。
 - [ ] **T010.6 Implement migration/adopt/rollback**：默认 dry-run；legacy marker 只可生成建议，任何 apply 都需 plan digest + selected action IDs；equal ordinary copy 和 `.cc-switch` 必须逐项选择；transaction manifest 保留至少一个发布周期。

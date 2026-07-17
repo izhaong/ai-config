@@ -16,6 +16,7 @@ mod asset;
 mod daemon;
 mod lifecycle;
 mod mcp;
+mod migration;
 mod output;
 mod projection;
 mod secrets;
@@ -112,6 +113,12 @@ enum Cmd {
         action: McpCmd,
     },
 
+    /// Source-first migration tools; inventory is strictly read-only.
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateCmd,
+    },
+
     /// 守护进程子命令
     Daemon {
         #[command(subcommand)]
@@ -196,6 +203,12 @@ enum McpCmd {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum MigrateCmd {
+    /// Inventory legacy/current skill locations without changing the filesystem.
+    Inventory,
 }
 
 #[derive(Debug, Subcommand)]
@@ -329,6 +342,9 @@ fn main() -> ExitCode {
             };
             mapped.run(mode, &default_root)
         }
+        Cmd::Migrate { action } => match action {
+            MigrateCmd::Inventory => migration::run_inventory(mode, &default_root),
+        },
         Cmd::Daemon { action } => {
             // 桥接 main::DaemonCmd → daemon 模块的 DaemonCmd(传入 --json 全局标志)
             let mapped = match action {
@@ -343,7 +359,9 @@ fn main() -> ExitCode {
             daemon::run(mapped, mode)
         }
         Cmd::Install { apply } => projection::run(&default_root, cli.workspace, apply, false, mode),
-        Cmd::Uninstall { apply } => projection::run(&default_root, cli.workspace, apply, true, mode),
+        Cmd::Uninstall { apply } => {
+            projection::run(&default_root, cli.workspace, apply, true, mode)
+        }
         Cmd::Sync { apply } => projection::run(&default_root, cli.workspace, apply, false, mode),
         Cmd::Status => lifecycle::run_status(&default_root, mode),
         Cmd::List => lifecycle::run_list(&default_root, mode),
