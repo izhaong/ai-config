@@ -932,6 +932,17 @@ deterministic 且不创建 lock/backup/DB。CLI E2E 6 passed、core unit 3 passe
 通过。T010.4 仍未完成：Rules → MCP → Agents → Commands → Hooks 及 workspace/project scopes
 必须继续逐类 RED→GREEN，不能把 Skills-only inventory 当成完整迁移盘点。
 
+**执行状态（2026-07-17，Rules inventory checkpoint）**：在 Skills 基线之上补齐
+global/project Rule 分层盘点。canonical `rules/*.mdc` 保留原始 source layer 记录，并按
+`global → project` 选择 effective source；global 只盘点 Claude `.claude/rules/*.md`，project
+盘点 Cursor/Hermes 共享 `.cursor/rules/*.mdc` 与 Claude `.claude/rules/*.md`。Codex
+`.codex/rules/*.rules` 仅作为仍被消费的外部执行策略记录，绝不与 instruction Rule 互认或授予
+ownership。项目盘点只读取项目 deploy root，不回退 HOME，也不扫描仅属于全局用户环境的
+`.cc-switch` / builtin roots；legacy `.codex/skills` 只盘点、不标记为当前消费。Rules RED 为
+2 tests，安全复审新增 2 个断言后再次得到 2 个 RED；最终 CLI E2E 8 passed、core unit 5 passed，
+core+CLI 全量测试与 strict clippy 通过。T010.4 仍未完成：workspace scope 与 MCP → Agents →
+Commands → Hooks 必须继续逐类 RED→GREEN。
+
 - [x] **T010.1 Write failing inventory tests**：legacy marker copy、unmarked equal copy、different copy、correct/wrong/broken symlink、`.cc-switch` external_owned、plugin/builtin、case-only collision、dotfiles in digest、unknown-root link 不跟随；另补未知不可读 target lstat-only、external platform link 不获 ownership、builtin 不重复盘点。
 - [ ] **T010.2 Write failing migration/import/adopt E2E**：inventory no-write；plan deterministic；stale digest/action reject；未选择项零写入；不存在平台级/来源级 bulk takeover；Equivalent 逐 action-id 备份后 adopt；不同内容 foreign 直接 adopt 拒绝、必须先 import；`.cc-switch` 逐项选择；canonical-first then projection；transaction failure rollback；repeat plan noop；rollback refuses drifted post-state；import preview 显示 normalized diff、明确 destination source layer/absolute path、secret preflight 结果；foreign `AGENTS.md` 只有显式 import 后才进入 Prompt source 且平台原件不删除。
 - [x] **T010.3 Verify RED**：首轮 4 tests 编译并实际运行，均因顶层 `migrate` 不存在而失败；安全复审扩为 6 tests 后由最小 Skills inventory 实现转 GREEN。

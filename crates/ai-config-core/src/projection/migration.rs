@@ -1,7 +1,7 @@
-//! Read-only inventory for source-first skill migration.
+//! Read-only inventory for source-first migration.
 //!
-//! Paths are injected by the caller. This module never resolves HOME, creates directories,
-//! follows unknown links, opens a ledger, or emits asset bodies.
+//! Callers inject every source and deployment root.  This module never resolves HOME, creates
+//! directories, follows unknown links, opens a ledger, or emits asset bodies.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -11,15 +11,32 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::CoreError;
-use crate::model::AssetKind;
+use crate::model::{AssetKind, PlatformId};
 use crate::projection::fingerprint::path_content_digest;
+use crate::projection::model::SourceLayer;
 
 pub const MIGRATION_INVENTORY_SCHEMA_VERSION: u16 = 1;
 
+/// A caller-approved canonical source layer.  The migration core does not infer this from HOME.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalLayerRoot {
+    pub layer: SourceLayer,
+    pub asset_root: Utf8PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum InventoryScope {
+    Global,
+    Workspace,
+    Project,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InventoryRequest {
-    pub asset_root: Utf8PathBuf,
+    pub canonical_layers: Vec<CanonicalLayerRoot>,
     pub deploy_base: Utf8PathBuf,
+    pub scope: InventoryScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -70,202 +87,491 @@ pub struct MigrationInventoryEntry {
     pub owned: bool,
     pub selectable: bool,
     pub followed: bool,
+    /// Effective canonical source selected for this target, when one exists.
+    pub source_layer: Option<SourceLayer>,
+    pub canonical_path: Option<Utf8PathBuf>,
+    /// Platforms which can consume this exact target.  Empty means a source or external row.
+    pub consumers: Vec<PlatformId>,
+    pub scope: InventoryScope,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MigrationInventory {
     pub schema_version: u16,
+    pub scope: InventoryScope,
     pub plan_digest: String,
     pub entries: Vec<MigrationInventoryEntry>,
 }
 
-struct CanonicalSkill {
+#[derive(Debug, Clone)]
+struct CanonicalAsset {
     path: Utf8PathBuf,
-    canonical_path: Utf8PathBuf,
+    resolved_path: Utf8PathBuf,
     digest: String,
+    layer: SourceLayer,
+    kind: AssetKind,
 }
 
+#[derive(Debug, Clone)]
 struct ExternalSkill {
     path: Utf8PathBuf,
     digest: Option<String>,
     reason_code: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntryShape {
+    Directory,
+    RegularFile,
+    Symlink,
+    Other,
+}
+
+struct DirectEntry {
+    name: String,
+    path: Utf8PathBuf,
+    shape: EntryShape,
+}
+
 pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreError> {
-    let canonical = canonical_skills(&request.asset_root.join("skills"))?;
-    let cc_switch = external_skills(
-        &request.deploy_base.join(".cc-switch/skills"),
-        "cc_switch_owned",
-    )?;
-    let plugin_builtin = external_skills(
-        &request.deploy_base.join(".codex/skills/.system"),
-        "plugin_or_builtin",
-    )?;
+    let layers = sorted_layers(&request.canonical_layers)?;
+    let mut raw_canonical = Vec::new();
+    let mut effective = BTreeMap::new();
+    for root in layers {
+        for asset in canonical_assets(root)? {
+            effective.insert(
+                (asset_kind_order(asset.kind), asset_name(&asset)?),
+                asset.clone(),
+            );
+            raw_canonical.push(asset);
+        }
+    }
+
+    let (cc_switch, plugin_builtin) = if request.scope == InventoryScope::Global {
+        (
+            external_skills(
+                &request.deploy_base.join(".cc-switch/skills"),
+                "cc_switch_owned",
+            )?,
+            external_skills(
+                &request.deploy_base.join(".codex/skills/.system"),
+                "plugin_or_builtin",
+            )?,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let external = cc_switch
         .iter()
         .chain(plugin_builtin.iter())
         .collect::<Vec<_>>();
-    let mut entries = canonical
+
+    let mut entries = raw_canonical
         .iter()
-        .map(|(name, skill)| MigrationInventoryEntry {
-            name: name.clone(),
-            path: skill.path.clone(),
-            kind: AssetKind::Skill,
-            classification: InventoryClassification::CanonicalSource,
-            provenance: InventoryProvenance::Canonical,
-            reason_code: "canonical_source".to_owned(),
-            content_digest: Some(skill.digest.clone()),
-            currently_consumed: false,
-            blocking: false,
-            ownership_state: InventoryOwnershipState::CanonicalSource,
-            owned: false,
-            selectable: false,
-            followed: false,
-        })
+        .map(|asset| canonical_entry(asset, request.scope))
         .collect::<Vec<_>>();
 
-    scan_target_root(
+    scan_skill_root(
         &request.deploy_base.join(".agents/skills"),
         InventoryProvenance::PlatformCurrent,
         true,
-        &canonical,
+        vec![PlatformId::Cursor, PlatformId::Codex],
+        &effective,
         &external,
+        request.scope,
         &mut entries,
     )?;
-    scan_target_root(
+    scan_skill_root(
         &request.deploy_base.join(".claude/skills"),
         InventoryProvenance::PlatformCurrent,
         true,
-        &canonical,
+        vec![PlatformId::Claude],
+        &effective,
         &external,
+        request.scope,
         &mut entries,
     )?;
-    scan_target_root(
+    scan_skill_root(
         &request.deploy_base.join(".cursor/skills"),
         InventoryProvenance::PlatformLegacy,
         true,
-        &canonical,
+        vec![PlatformId::Cursor],
+        &effective,
         &external,
+        request.scope,
         &mut entries,
     )?;
-    scan_target_root(
+    scan_skill_root(
         &request.deploy_base.join(".codex/skills"),
         InventoryProvenance::PlatformLegacy,
         false,
-        &canonical,
+        vec![PlatformId::Codex],
+        &effective,
         &external,
+        request.scope,
         &mut entries,
     )?;
-    append_external_entries(&cc_switch, InventoryProvenance::CcSwitch, &mut entries);
+    scan_rules(request, &effective, &mut entries)?;
+    append_external_entries(
+        &cc_switch,
+        InventoryProvenance::CcSwitch,
+        request.scope,
+        &mut entries,
+    );
     append_external_entries(
         &plugin_builtin,
         InventoryProvenance::PluginBuiltin,
+        request.scope,
         &mut entries,
     );
 
     mark_case_collisions(&mut entries);
     entries.sort_by(|left, right| {
-        (left.name.as_str(), &left.provenance, left.path.as_str()).cmp(&(
-            right.name.as_str(),
-            &right.provenance,
-            right.path.as_str(),
-        ))
+        (
+            asset_kind_order(left.kind),
+            &left.scope,
+            left.source_layer,
+            &left.provenance,
+            left.name.as_str(),
+            left.path.as_str(),
+        )
+            .cmp(&(
+                asset_kind_order(right.kind),
+                &right.scope,
+                right.source_layer,
+                &right.provenance,
+                right.name.as_str(),
+                right.path.as_str(),
+            ))
     });
     let encoded = serde_json::to_vec(&entries).map_err(CoreError::Json)?;
     Ok(MigrationInventory {
         schema_version: MIGRATION_INVENTORY_SCHEMA_VERSION,
+        scope: request.scope,
         plan_digest: hex::encode(Sha256::digest(encoded)),
         entries,
     })
 }
 
-fn canonical_skills(root: &Utf8Path) -> Result<BTreeMap<String, CanonicalSkill>, CoreError> {
-    let mut skills = BTreeMap::new();
-    for (name, path, metadata) in direct_entries(root)? {
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            continue;
+fn sorted_layers(layers: &[CanonicalLayerRoot]) -> Result<Vec<&CanonicalLayerRoot>, CoreError> {
+    let mut layers = layers.iter().collect::<Vec<_>>();
+    layers.sort_by_key(|root| root.layer);
+    let mut seen = BTreeSet::new();
+    for root in &layers {
+        if !seen.insert(root.layer) {
+            return Err(CoreError::InvalidPath(format!(
+                "duplicate canonical source layer: {:?}",
+                root.layer
+            )));
         }
-        let skill_file = path.join("SKILL.md");
-        if !is_regular_file(&skill_file)? {
-            continue;
-        }
-        let canonical_path = fs::canonicalize(path.as_std_path())
-            .map_err(CoreError::Io)
-            .and_then(utf8_path)?;
-        skills.insert(
-            name,
-            CanonicalSkill {
-                digest: path_content_digest(&path)?,
-                path,
-                canonical_path,
-            },
-        );
     }
-    Ok(skills)
+    Ok(layers)
 }
 
-fn scan_target_root(
+fn canonical_assets(root: &CanonicalLayerRoot) -> Result<Vec<CanonicalAsset>, CoreError> {
+    let mut assets = Vec::new();
+    for entry in direct_lstat_entries(&root.asset_root.join("skills"))? {
+        if entry.shape != EntryShape::Directory || !is_regular_file(&entry.path.join("SKILL.md"))? {
+            continue;
+        }
+        assets.push(canonical_asset(root.layer, AssetKind::Skill, entry.path)?);
+    }
+    for entry in direct_lstat_entries(&root.asset_root.join("rules"))? {
+        if entry.shape != EntryShape::RegularFile || entry.path.extension() != Some("mdc") {
+            continue;
+        }
+        assets.push(canonical_asset(root.layer, AssetKind::Rule, entry.path)?);
+    }
+    Ok(assets)
+}
+
+fn canonical_asset(
+    layer: SourceLayer,
+    kind: AssetKind,
+    path: Utf8PathBuf,
+) -> Result<CanonicalAsset, CoreError> {
+    // The direct child was selected from an explicitly injected canonical root.  It is the only
+    // place migration inventory resolves a link-like filesystem path.
+    let resolved_path = fs::canonicalize(path.as_std_path())
+        .map_err(CoreError::Io)
+        .and_then(utf8_path)?;
+    Ok(CanonicalAsset {
+        digest: path_content_digest(&path)?,
+        path,
+        resolved_path,
+        layer,
+        kind,
+    })
+}
+
+fn asset_name(asset: &CanonicalAsset) -> Result<String, CoreError> {
+    match asset.kind {
+        AssetKind::Rule => asset
+            .path
+            .file_stem()
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                CoreError::InvalidPath(format!("invalid canonical rule: {}", asset.path))
+            }),
+        _ => asset
+            .path
+            .file_name()
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                CoreError::InvalidPath(format!("invalid canonical asset: {}", asset.path))
+            }),
+    }
+}
+
+fn canonical_entry(asset: &CanonicalAsset, scope: InventoryScope) -> MigrationInventoryEntry {
+    MigrationInventoryEntry {
+        name: asset_name(asset).expect("canonical asset was validated before inventory entry"),
+        path: asset.path.clone(),
+        kind: asset.kind,
+        classification: InventoryClassification::CanonicalSource,
+        provenance: InventoryProvenance::Canonical,
+        reason_code: "canonical_source".to_owned(),
+        content_digest: Some(asset.digest.clone()),
+        currently_consumed: false,
+        blocking: false,
+        ownership_state: InventoryOwnershipState::CanonicalSource,
+        owned: false,
+        selectable: false,
+        followed: false,
+        source_layer: Some(asset.layer),
+        canonical_path: Some(asset.path.clone()),
+        consumers: Vec::new(),
+        scope,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_skill_root(
     root: &Utf8Path,
     provenance: InventoryProvenance,
     currently_consumed: bool,
-    canonical: &BTreeMap<String, CanonicalSkill>,
+    consumers: Vec<PlatformId>,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
     external: &[&ExternalSkill],
+    scope: InventoryScope,
     entries: &mut Vec<MigrationInventoryEntry>,
 ) -> Result<(), CoreError> {
-    for (name, path, metadata) in direct_entries(root)? {
+    for entry in direct_lstat_entries(root)? {
         if provenance == InventoryProvenance::PlatformLegacy
             && root.ends_with(".codex/skills")
-            && name == ".system"
+            && entry.name == ".system"
         {
             continue;
         }
-        let canonical_skill = canonical.get(&name);
-        let (classification, reason_code, content_digest, blocking, followed) =
-            if metadata.file_type().is_symlink() {
-                classify_link(&path, canonical_skill, external)?
-            } else if metadata.is_dir() {
-                classify_regular_skill(&path, canonical_skill)?
-            } else {
-                (
-                    InventoryClassification::Foreign,
-                    "unsupported_skill_entry".to_owned(),
-                    None,
-                    true,
-                    false,
-                )
-            };
-        let (ownership_state, owned, selectable) = ownership_fields(&classification);
-        entries.push(MigrationInventoryEntry {
-            name,
-            path,
-            kind: AssetKind::Skill,
+        let source = canonical.get(&(asset_kind_order(AssetKind::Skill), entry.name.clone()));
+        let (classification, reason_code, content_digest, blocking, followed) = match entry.shape {
+            EntryShape::Symlink => classify_link(&entry.path, source, external)?,
+            EntryShape::Directory => {
+                classify_regular_asset(&entry.path, source, true, "no_canonical_skill")?
+            }
+            EntryShape::RegularFile | EntryShape::Other => (
+                InventoryClassification::Foreign,
+                "unsupported_skill_entry".to_owned(),
+                None,
+                true,
+                false,
+            ),
+        };
+        entries.push(target_entry(
+            entry.name,
+            entry.path,
+            AssetKind::Skill,
             classification,
-            provenance: provenance.clone(),
+            provenance.clone(),
             reason_code,
             content_digest,
             currently_consumed,
             blocking,
-            ownership_state,
-            owned,
-            selectable,
             followed,
-        });
+            source,
+            consumers.clone(),
+            scope,
+        ));
     }
     Ok(())
+}
+
+fn scan_rules(
+    request: &InventoryRequest,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    entries: &mut Vec<MigrationInventoryEntry>,
+) -> Result<(), CoreError> {
+    if request.scope != InventoryScope::Global {
+        scan_rule_root(
+            &request.deploy_base.join(".cursor/rules"),
+            "mdc",
+            InventoryProvenance::PlatformCurrent,
+            vec![PlatformId::Cursor, PlatformId::Hermes],
+            canonical,
+            request.scope,
+            entries,
+        )?;
+    }
+    scan_rule_root(
+        &request.deploy_base.join(".claude/rules"),
+        "md",
+        InventoryProvenance::PlatformCurrent,
+        vec![PlatformId::Claude],
+        canonical,
+        request.scope,
+        entries,
+    )?;
+    scan_codex_execution_policies(
+        &request.deploy_base.join(".codex/rules"),
+        canonical,
+        request.scope,
+        entries,
+    )
+}
+
+fn scan_rule_root(
+    root: &Utf8Path,
+    extension: &str,
+    provenance: InventoryProvenance,
+    consumers: Vec<PlatformId>,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+) -> Result<(), CoreError> {
+    for entry in direct_lstat_entries(root)? {
+        if entry.path.extension() != Some(extension) {
+            continue;
+        }
+        let name = entry
+            .path
+            .file_stem()
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&entry.name)
+            .to_owned();
+        let source = canonical.get(&(asset_kind_order(AssetKind::Rule), name.clone()));
+        let (classification, reason_code, content_digest, blocking, followed) = match entry.shape {
+            EntryShape::Symlink => classify_link(&entry.path, source, &[])?,
+            EntryShape::RegularFile => {
+                classify_regular_asset(&entry.path, source, false, "no_canonical_rule")?
+            }
+            EntryShape::Directory | EntryShape::Other => (
+                InventoryClassification::Foreign,
+                "unsupported_rule_entry".to_owned(),
+                None,
+                true,
+                false,
+            ),
+        };
+        entries.push(target_entry(
+            name,
+            entry.path,
+            AssetKind::Rule,
+            classification,
+            provenance.clone(),
+            reason_code,
+            content_digest,
+            true,
+            blocking,
+            followed,
+            source,
+            consumers.clone(),
+            scope,
+        ));
+    }
+    Ok(())
+}
+
+fn scan_codex_execution_policies(
+    root: &Utf8Path,
+    canonical: &BTreeMap<(u8, String), CanonicalAsset>,
+    scope: InventoryScope,
+    entries: &mut Vec<MigrationInventoryEntry>,
+) -> Result<(), CoreError> {
+    for entry in direct_lstat_entries(root)? {
+        if entry.path.extension() != Some("rules") {
+            continue;
+        }
+        let name = entry
+            .path
+            .file_stem()
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&entry.name)
+            .to_owned();
+        let digest = (entry.shape == EntryShape::RegularFile)
+            .then(|| path_content_digest(&entry.path))
+            .transpose()?;
+        let source = canonical.get(&(asset_kind_order(AssetKind::Rule), name.clone()));
+        entries.push(target_entry(
+            name,
+            entry.path,
+            AssetKind::Rule,
+            InventoryClassification::ExternalOwned,
+            InventoryProvenance::PlatformLegacy,
+            "codex_execution_policy".to_owned(),
+            digest,
+            true,
+            false,
+            false,
+            source,
+            vec![PlatformId::Codex],
+            scope,
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn target_entry(
+    name: String,
+    path: Utf8PathBuf,
+    kind: AssetKind,
+    classification: InventoryClassification,
+    provenance: InventoryProvenance,
+    reason_code: String,
+    content_digest: Option<String>,
+    currently_consumed: bool,
+    blocking: bool,
+    followed: bool,
+    source: Option<&CanonicalAsset>,
+    consumers: Vec<PlatformId>,
+    scope: InventoryScope,
+) -> MigrationInventoryEntry {
+    let (ownership_state, owned, selectable) = ownership_fields(&classification);
+    MigrationInventoryEntry {
+        name,
+        path,
+        kind,
+        classification,
+        provenance,
+        reason_code,
+        content_digest,
+        currently_consumed,
+        blocking,
+        ownership_state,
+        owned,
+        selectable,
+        followed,
+        source_layer: source.map(|asset| asset.layer),
+        canonical_path: source.map(|asset| asset.path.clone()),
+        consumers,
+        scope,
+    }
 }
 
 fn external_skills(
     root: &Utf8Path,
     reason_code: &'static str,
 ) -> Result<Vec<ExternalSkill>, CoreError> {
-    direct_entries(root)?
+    direct_lstat_entries(root)?
         .into_iter()
-        .map(|(_, path, metadata)| {
-            let digest = (!metadata.file_type().is_symlink() && metadata.is_dir())
-                .then(|| path_content_digest(&path))
+        .map(|entry| {
+            let digest = (entry.shape == EntryShape::Directory)
+                .then(|| path_content_digest(&entry.path))
                 .transpose()?;
             Ok(ExternalSkill {
-                path,
+                path: entry.path,
                 digest,
                 reason_code,
             })
@@ -276,6 +582,7 @@ fn external_skills(
 fn append_external_entries(
     external: &[ExternalSkill],
     provenance: InventoryProvenance,
+    scope: InventoryScope,
     entries: &mut Vec<MigrationInventoryEntry>,
 ) {
     for skill in external {
@@ -293,13 +600,17 @@ fn append_external_entries(
             owned: false,
             selectable: false,
             followed: false,
+            source_layer: None,
+            canonical_path: None,
+            consumers: Vec::new(),
+            scope,
         });
     }
 }
 
 fn classify_link(
     path: &Utf8Path,
-    canonical: Option<&CanonicalSkill>,
+    canonical: Option<&CanonicalAsset>,
     external: &[&ExternalSkill],
 ) -> Result<(InventoryClassification, String, Option<String>, bool, bool), CoreError> {
     let target = fs::read_link(path.as_std_path()).map_err(CoreError::Io)?;
@@ -312,21 +623,21 @@ fn classify_link(
     };
     let target = utf8_path(target)?;
     let lexical_target = lexical_normalize(&target);
-    if canonical.is_some_and(|skill| {
-        lexical_target == lexical_normalize(&skill.path)
-            || lexical_target == lexical_normalize(&skill.canonical_path)
+    if canonical.is_some_and(|asset| {
+        lexical_target == lexical_normalize(&asset.path)
+            || lexical_target == lexical_normalize(&asset.resolved_path)
     }) {
         return Ok((
             InventoryClassification::ManagedLink,
             "canonical_symlink".to_owned(),
-            canonical.map(|skill| skill.digest.clone()),
+            canonical.map(|asset| asset.digest.clone()),
             false,
             false,
         ));
     }
     if let Some(external) = external
         .iter()
-        .find(|skill| lexical_target == lexical_normalize(&skill.path))
+        .find(|asset| lexical_target == lexical_normalize(&asset.path))
     {
         return Ok((
             InventoryClassification::ExternalOwned,
@@ -354,12 +665,14 @@ fn classify_link(
     }
 }
 
-fn classify_regular_skill(
+fn classify_regular_asset(
     path: &Utf8Path,
-    canonical: Option<&CanonicalSkill>,
+    canonical: Option<&CanonicalAsset>,
+    accepts_legacy_marker: bool,
+    missing_source_reason: &str,
 ) -> Result<(InventoryClassification, String, Option<String>, bool, bool), CoreError> {
     let digest = path_content_digest(path)?;
-    if is_regular_file(&path.join(".ai-config-deploy.json"))? {
+    if accepts_legacy_marker && is_regular_file(&path.join(".ai-config-deploy.json"))? {
         return Ok((
             InventoryClassification::LegacyMarkerCandidate,
             "legacy_marker_present".to_owned(),
@@ -369,7 +682,7 @@ fn classify_regular_skill(
         ));
     }
     match canonical {
-        Some(skill) if skill.digest == digest => Ok((
+        Some(asset) if asset.digest == digest => Ok((
             InventoryClassification::Equivalent,
             "unmarked_equal_copy".to_owned(),
             Some(digest),
@@ -385,7 +698,7 @@ fn classify_regular_skill(
         )),
         None => Ok((
             InventoryClassification::Foreign,
-            "no_canonical_skill".to_owned(),
+            missing_source_reason.to_owned(),
             Some(digest),
             true,
             false,
@@ -393,7 +706,7 @@ fn classify_regular_skill(
     }
 }
 
-fn direct_entries(root: &Utf8Path) -> Result<Vec<(String, Utf8PathBuf, fs::Metadata)>, CoreError> {
+fn direct_lstat_entries(root: &Utf8Path) -> Result<Vec<DirectEntry>, CoreError> {
     let metadata = match fs::symlink_metadata(root.as_std_path()) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -406,14 +719,27 @@ fn direct_entries(root: &Utf8Path) -> Result<Vec<(String, Utf8PathBuf, fs::Metad
     for entry in fs::read_dir(root.as_std_path()).map_err(CoreError::Io)? {
         let entry = entry.map_err(CoreError::Io)?;
         let path = utf8_path(entry.path())?;
-        let name = match path.file_name() {
-            Some(name) if !name.is_empty() => name.to_owned(),
-            _ => continue,
+        let Some(name) = path.file_name().filter(|name| !name.is_empty()) else {
+            continue;
         };
         let metadata = fs::symlink_metadata(path.as_std_path()).map_err(CoreError::Io)?;
-        entries.push((name, path, metadata));
+        let file_type = metadata.file_type();
+        let shape = if file_type.is_symlink() {
+            EntryShape::Symlink
+        } else if file_type.is_dir() {
+            EntryShape::Directory
+        } else if file_type.is_file() {
+            EntryShape::RegularFile
+        } else {
+            EntryShape::Other
+        };
+        entries.push(DirectEntry {
+            name: name.to_owned(),
+            path,
+            shape,
+        });
     }
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(entries)
 }
 
@@ -431,16 +757,24 @@ fn utf8_path(path: std::path::PathBuf) -> Result<Utf8PathBuf, CoreError> {
 }
 
 fn mark_case_collisions(entries: &mut [MigrationInventoryEntry]) {
-    let mut variants = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut variants = BTreeMap::<(u8, InventoryScope, String), BTreeSet<String>>::new();
     for entry in entries.iter() {
         variants
-            .entry(entry.name.to_lowercase())
+            .entry((
+                asset_kind_order(entry.kind),
+                entry.scope,
+                entry.name.to_lowercase(),
+            ))
             .or_default()
             .insert(entry.name.clone());
     }
     for entry in entries {
         if variants
-            .get(&entry.name.to_lowercase())
+            .get(&(
+                asset_kind_order(entry.kind),
+                entry.scope,
+                entry.name.to_lowercase(),
+            ))
             .is_some_and(|names| names.len() > 1)
         {
             entry.classification = InventoryClassification::CaseCollision;
@@ -451,6 +785,18 @@ fn mark_case_collisions(entries: &mut [MigrationInventoryEntry]) {
             entry.selectable = false;
             entry.followed = false;
         }
+    }
+}
+
+fn asset_kind_order(kind: AssetKind) -> u8 {
+    match kind {
+        AssetKind::Skill => 0,
+        AssetKind::Rule => 1,
+        AssetKind::Mcp => 2,
+        AssetKind::Agent => 3,
+        AssetKind::Command => 4,
+        AssetKind::Prompt => 5,
+        AssetKind::Hook => 6,
     }
 }
 
@@ -505,9 +851,17 @@ mod tests {
     fn request(temp: &TempDir) -> InventoryRequest {
         let root = Utf8Path::from_path(temp.path()).unwrap();
         InventoryRequest {
-            asset_root: root.join(".ai-config"),
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Global,
+                asset_root: root.join(".ai-config"),
+            }],
             deploy_base: root.join("repo"),
+            scope: InventoryScope::Project,
         }
+    }
+
+    fn canonical_root(request: &InventoryRequest) -> &Utf8Path {
+        &request.canonical_layers[0].asset_root
     }
 
     #[cfg(unix)]
@@ -516,7 +870,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let request = request(&temp);
         write(
-            &request.asset_root.join("skills/demo/SKILL.md"),
+            &canonical_root(&request).join("skills/demo/SKILL.md"),
             "canonical skill\n",
         );
         let outside = Utf8Path::from_path(temp.path()).unwrap().join("outside");
@@ -551,7 +905,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let request = request(&temp);
         write(
-            &request.asset_root.join("skills/demo/SKILL.md"),
+            &canonical_root(&request).join("skills/demo/SKILL.md"),
             "canonical skill\n",
         );
         write(
@@ -586,7 +940,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let request = request(&temp);
         write(
-            &request.asset_root.join("skills/Demo/SKILL.md"),
+            &canonical_root(&request).join("skills/Demo/SKILL.md"),
             "canonical upper\n",
         );
         write(
@@ -601,5 +955,76 @@ mod tests {
         assert!(first.entries.iter().all(|entry| {
             entry.classification == InventoryClassification::CaseCollision && entry.blocking
         }));
+    }
+
+    #[test]
+    fn project_rule_uses_effective_project_layer_and_keeps_global_raw_source() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let global = root.join("global/.ai-config");
+        let project = root.join("project/.ai-config");
+        let request = InventoryRequest {
+            canonical_layers: vec![
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Global,
+                    asset_root: global.clone(),
+                },
+                CanonicalLayerRoot {
+                    layer: SourceLayer::Project,
+                    asset_root: project.clone(),
+                },
+            ],
+            deploy_base: root.join("project"),
+            scope: InventoryScope::Project,
+        };
+        write(&global.join("rules/shared.mdc"), "global rule\n");
+        write(&project.join("rules/shared.mdc"), "project rule\n");
+        write(
+            &request.deploy_base.join(".cursor/rules/shared.mdc"),
+            "project rule\n",
+        );
+
+        let result = inventory(&request).unwrap();
+        let raw = result
+            .entries
+            .iter()
+            .filter(|entry| entry.kind == AssetKind::Rule && entry.name == "shared")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            raw.len(),
+            3,
+            "both raw canonical layers plus target are retained"
+        );
+        let target = raw
+            .iter()
+            .find(|entry| entry.path.ends_with(".cursor/rules/shared.mdc"))
+            .unwrap();
+        assert_eq!(target.classification, InventoryClassification::Equivalent);
+        assert_eq!(target.source_layer, Some(SourceLayer::Project));
+        assert_eq!(
+            target.canonical_path,
+            Some(project.join("rules/shared.mdc"))
+        );
+        assert_eq!(
+            target.consumers,
+            vec![PlatformId::Cursor, PlatformId::Hermes]
+        );
+    }
+
+    #[test]
+    fn skill_and_rule_case_variants_do_not_cross_kind_collide() {
+        let temp = TempDir::new().unwrap();
+        let request = request(&temp);
+        write(
+            &canonical_root(&request).join("skills/Demo/SKILL.md"),
+            "skill\n",
+        );
+        write(&canonical_root(&request).join("rules/demo.mdc"), "rule\n");
+
+        let result = inventory(&request).unwrap();
+        assert!(result
+            .entries
+            .iter()
+            .all(|entry| { entry.classification == InventoryClassification::CanonicalSource }));
     }
 }

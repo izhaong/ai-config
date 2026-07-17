@@ -261,6 +261,7 @@ fn migration_inventory_classifies_allowlisted_legacy_external_and_unsafe_entries
     );
     let marker_entry = entry_named(&report, "marker-copy", ".codex/skills");
     assert_eq!(marker_entry["ownership_state"], "foreign");
+    assert_eq!(marker_entry["currently_consumed"], false);
     assert_eq!(marker_entry["owned"], false);
     assert_eq!(marker_entry["selectable"], false);
     assert_classification(
@@ -498,5 +499,278 @@ fn migration_inventory_is_strictly_read_only_and_deterministic() {
             && !fixture.home().join(".config/ai-config/backups").exists()
             && !fixture.home().join(".config/ai-config/state.db").exists(),
         "inventory must not create locks, backups, or state databases"
+    );
+}
+
+fn rules_inventory_output(home: &Path, root: &Path) -> std::process::Output {
+    let mut command = Command::cargo_bin(BIN).expect("CLI binary");
+    command
+        .env("HOME", home)
+        .env("USERPROFILE", home)
+        .env_remove("AI_CONFIG_ROOT")
+        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("HERMES_SKILLS_DIR")
+        .arg("--root")
+        .arg(root)
+        .args(["migrate", "inventory", "--json"])
+        .output()
+        .expect("run rules migration inventory")
+}
+
+fn rules_inventory(home: &Path, root: &Path) -> Value {
+    let output = rules_inventory_output(home, root);
+    assert!(
+        output.status.success(),
+        "rules inventory must succeed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    serde_json::from_slice(&output.stdout).expect("rules inventory JSON")
+}
+
+fn assert_rule_entry_source(entry: &Value, source_layer: &str, canonical_path: &Path, scope: &str) {
+    assert_eq!(entry["kind"], "rule", "entry={entry:?}");
+    assert_eq!(entry["source_layer"], source_layer, "entry={entry:?}");
+    assert_eq!(
+        entry["canonical_path"],
+        canonical_path.to_string_lossy().as_ref(),
+        "entry={entry:?}"
+    );
+    assert_eq!(entry["scope"], scope, "entry={entry:?}");
+}
+
+#[test]
+fn global_rules_inventory_respects_current_legacy_and_unsupported_platform_contracts() {
+    let home = TempDir::new().expect("temporary HOME");
+    let asset_root = home.path().join(".ai-config");
+    write(
+        &asset_root.join("skills/Demo/SKILL.md"),
+        "same spelling in another asset kind\n",
+    );
+    let lowercase_rule = asset_root.join("rules/demo.mdc");
+    write(&lowercase_rule, "rule names collide only within Rule\n");
+    let equal_source = asset_root.join("rules/equal.mdc");
+    let different_source = asset_root.join("rules/different.mdc");
+    let correct_source = asset_root.join("rules/correct.mdc");
+    let unknown_source = asset_root.join("rules/unknown.mdc");
+    let policy_source = asset_root.join("rules/policy.mdc");
+    write(&equal_source, "equal rule\n");
+    write(&different_source, "canonical different rule\n");
+    write(&correct_source, "correct linked rule\n");
+    write(&unknown_source, "canonical unknown rule\n");
+    write(&policy_source, "instruction rule, not execution policy\n");
+
+    write(&home.path().join(".claude/rules/equal.md"), "equal rule\n");
+    write(
+        &home.path().join(".claude/rules/different.md"),
+        "foreign different rule\n",
+    );
+    fs::create_dir_all(home.path().join(".claude/rules")).expect("create Claude rules root");
+    symlink(
+        &correct_source,
+        home.path().join(".claude/rules/correct.md"),
+    )
+    .expect("create correct Claude rule link");
+
+    let outside = TempDir::new().expect("unknown external owner");
+    let outside_rule = outside.path().join("unknown.md");
+    write(&outside_rule, "unknown external rule\n");
+    fs::set_permissions(&outside_rule, fs::Permissions::from_mode(0o000))
+        .expect("make unknown target unreadable");
+    symlink(&outside_rule, home.path().join(".claude/rules/unknown.md"))
+        .expect("create unknown Claude rule link");
+
+    write(
+        &home.path().join(".codex/rules/policy.rules"),
+        "allow_prefix(command = [\"git\", \"status\"])\n",
+    );
+    write(
+        &home.path().join(".cursor/rules/must-not-scan.mdc"),
+        "global Cursor rules have no supported file target\n",
+    );
+
+    let report = rules_inventory(home.path(), &asset_root);
+    let skill = entry_named(&report, "Demo", "/skills/");
+    let rule = entry_named(&report, "demo", "/rules/");
+    assert_ne!(skill["classification"], "case_collision");
+    assert_ne!(rule["classification"], "case_collision");
+    let equal = entry_named(&report, "equal", ".claude/rules");
+    assert_eq!(equal["classification"], "equivalent");
+    assert_eq!(equal["ownership_state"], "equivalent");
+    assert_eq!(equal["reason_code"], "unmarked_equal_copy");
+    assert_rule_entry_source(equal, "global", &equal_source, "global");
+
+    let different = entry_named(&report, "different", ".claude/rules");
+    assert_eq!(different["classification"], "foreign");
+    assert_eq!(different["ownership_state"], "foreign");
+    assert_eq!(different["reason_code"], "different_content");
+    assert_rule_entry_source(different, "global", &different_source, "global");
+
+    let correct = entry_named(&report, "correct", ".claude/rules");
+    assert_eq!(correct["classification"], "managed_link");
+    assert_eq!(correct["ownership_state"], "managed_link");
+    assert_eq!(correct["reason_code"], "canonical_symlink");
+    assert_eq!(correct["followed"], false);
+    assert_rule_entry_source(correct, "global", &correct_source, "global");
+
+    let unknown = entry_named(&report, "unknown", ".claude/rules");
+    assert_eq!(unknown["classification"], "unsafe_link");
+    assert_eq!(unknown["ownership_state"], "foreign");
+    assert_eq!(unknown["reason_code"], "unknown_root_link");
+    assert_eq!(unknown["content_digest"], Value::Null);
+    assert_eq!(unknown["followed"], false);
+    assert_eq!(unknown["owned"], false);
+    assert_eq!(unknown["selectable"], false);
+    assert_rule_entry_source(unknown, "global", &unknown_source, "global");
+
+    let policy = entry_named(&report, "policy", ".codex/rules");
+    assert_eq!(policy["classification"], "external_owned");
+    assert_eq!(policy["ownership_state"], "foreign");
+    assert_eq!(policy["provenance"], "platform_legacy");
+    assert_eq!(policy["reason_code"], "codex_execution_policy");
+    assert_eq!(policy["currently_consumed"], true);
+    assert_eq!(policy["owned"], false);
+    assert_eq!(policy["selectable"], false);
+    assert_eq!(policy["followed"], false);
+    assert_rule_entry_source(policy, "global", &policy_source, "global");
+
+    let entries = serde_json::to_string(&report["entries"]).expect("serialize rule entries");
+    assert!(
+        !entries.contains(".cursor/rules/must-not-scan.mdc"),
+        "global Cursor rules are unsupported and must not enter inventory"
+    );
+    assert_eq!(report["scope"], "global");
+}
+
+#[test]
+fn project_rules_inventory_uses_project_overlay_and_never_scans_home_platform_paths() {
+    let home = TempDir::new().expect("temporary HOME");
+    let repo = TempDir::new().expect("temporary project");
+    let global_source = home.path().join(".ai-config/rules/shared.mdc");
+    let global_only_source = home.path().join(".ai-config/rules/global-only.mdc");
+    let project_source = repo.path().join(".ai-config/rules/shared.mdc");
+    write(&global_source, "global shared rule\n");
+    write(&global_only_source, "global inherited rule\n");
+    write(&project_source, "project shared rule\n");
+
+    write(
+        &repo.path().join(".cursor/rules/shared.mdc"),
+        "project shared rule\n",
+    );
+    write(
+        &repo.path().join(".cursor/rules/global-only.mdc"),
+        "global inherited rule\n",
+    );
+    write(
+        &repo.path().join(".claude/rules/shared.md"),
+        "project shared rule\n",
+    );
+    write(
+        &repo.path().join(".codex/rules/project-policy.rules"),
+        "allow_prefix(command = [\"cargo\", \"test\"])\n",
+    );
+    write(
+        &repo
+            .path()
+            .join(".cc-switch/skills/project-external/SKILL.md"),
+        "project scope must not scan user-only external roots\n",
+    );
+    write(
+        &repo
+            .path()
+            .join(".codex/skills/.system/project-builtin/SKILL.md"),
+        "project scope must not scan user-only builtin roots\n",
+    );
+
+    write(
+        &home.path().join(".cursor/rules/shared.mdc"),
+        "HOME platform rule must not be scanned\n",
+    );
+    write(
+        &home.path().join(".claude/rules/shared.md"),
+        "HOME Claude rule must not be scanned\n",
+    );
+    write(
+        &home.path().join(".codex/rules/project-policy.rules"),
+        "HOME Codex policy must not be scanned\n",
+    );
+
+    let report = rules_inventory(home.path(), repo.path());
+    let cursor = entry_named(&report, "shared", ".cursor/rules");
+    assert_eq!(cursor["classification"], "equivalent");
+    assert_eq!(cursor["ownership_state"], "equivalent");
+    assert_eq!(
+        cursor["consumers"],
+        serde_json::json!(["cursor", "hermes"]),
+        "project Cursor rule target is shared with Hermes"
+    );
+    assert_rule_entry_source(cursor, "project", &project_source, "project");
+    let inherited = entry_named(&report, "global-only", ".cursor/rules");
+    assert_eq!(inherited["classification"], "equivalent");
+    assert_rule_entry_source(inherited, "global", &global_only_source, "project");
+
+    let claude = entry_named(&report, "shared", ".claude/rules");
+    assert_eq!(claude["classification"], "equivalent");
+    assert_eq!(claude["ownership_state"], "equivalent");
+    assert_eq!(claude["consumers"], serde_json::json!(["claude"]));
+    assert_rule_entry_source(claude, "project", &project_source, "project");
+
+    let policy = entry_named(&report, "project-policy", ".codex/rules");
+    assert_eq!(policy["classification"], "external_owned");
+    assert_eq!(policy["ownership_state"], "foreign");
+    assert_eq!(policy["reason_code"], "codex_execution_policy");
+    assert_eq!(policy["owned"], false);
+    assert_eq!(policy["selectable"], false);
+    assert_eq!(policy["scope"], "project");
+
+    for entry in report["entries"].as_array().expect("project entries") {
+        let Some(path) = entry["path"].as_str() else {
+            continue;
+        };
+        if path.contains("/.cursor/rules/")
+            || path.contains("/.claude/rules/")
+            || path.contains("/.codex/rules/")
+        {
+            assert!(
+                Path::new(path).starts_with(repo.path()),
+                "project inventory must not fall back to HOME platform paths: {entry:?}"
+            );
+        }
+    }
+    let serialized = serde_json::to_string(&report["entries"]).expect("serialize project entries");
+    assert!(!serialized.contains("project-external"));
+    assert!(!serialized.contains("project-builtin"));
+    assert_eq!(report["scope"], "project");
+    assert_eq!(
+        cursor["canonical_path"],
+        project_source.to_string_lossy().as_ref(),
+        "project same-name source must override the global source"
+    );
+    assert_ne!(
+        cursor["canonical_path"],
+        global_source.to_string_lossy().as_ref()
+    );
+    let canonical_shared = report["entries"]
+        .as_array()
+        .expect("project entries")
+        .iter()
+        .filter(|entry| {
+            entry["kind"] == "rule"
+                && entry["name"] == "shared"
+                && entry["provenance"] == "canonical"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        canonical_shared.len(),
+        2,
+        "raw inventory must retain both global and project canonical provenance: {report:?}"
+    );
+    let layers = canonical_shared
+        .iter()
+        .map(|entry| entry["source_layer"].as_str().unwrap_or_default())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        layers,
+        std::collections::BTreeSet::from(["global", "project"])
     );
 }
