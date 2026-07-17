@@ -61,3 +61,43 @@ fn legacy_mcp_platform_write_commands_refuse_without_touching_source_or_platform
         "legacy commands must not materialize platform mcp.json"
     );
 }
+
+#[test]
+fn legacy_mcp_secret_extraction_flags_do_not_bypass_reviewed_source_first_plans() {
+    let (home, root) = setup();
+    let legacy = root.path().join("legacy.json");
+    let sentinel = "legacy-secret-must-not-be-written";
+    fs::write(
+        &legacy,
+        format!(
+            r#"{{"mcpServers":{{"legacy":{{"command":"demo","env":{{"TOKEN":"{sentinel}"}}}}}}}}"#
+        ),
+    )
+    .expect("write legacy migration source");
+    let before = fs::read(&legacy).expect("read source before");
+
+    let assert = cmd(home.path(), root.path())
+        .env("AI_CONFIG_SECRETS_DIR", root.path().join("secret-store"))
+        .args([
+            "--json",
+            "mcp",
+            "migrate",
+            "legacy.json",
+            "--extract-secrets",
+            "--apply",
+        ])
+        .assert()
+        .failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8 stdout");
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
+
+    assert!(stdout.contains("source-first") || stderr.contains("source-first"));
+    assert!(!stdout.contains(sentinel) && !stderr.contains(sentinel));
+    assert_eq!(fs::read(&legacy).unwrap(), before);
+    assert!(!root.path().join("mcp/servers/legacy.json").exists());
+    assert!(!root.path().join("secret-store/secrets.env").exists());
+    assert!(!root
+        .path()
+        .join("legacy.json.ai-config-migrate-backup")
+        .exists());
+}

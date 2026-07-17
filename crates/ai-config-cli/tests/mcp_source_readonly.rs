@@ -205,7 +205,7 @@ fn mcp_add_refuses_literal_credentials_without_creating_a_source() {
 }
 
 #[test]
-fn mcp_migrate_extract_secrets_apply_backs_up_legacy_source_and_writes_only_references() {
+fn mcp_migrate_extract_secrets_apply_is_now_fail_closed_without_a_reviewed_plan() {
     let (home, root) = setup();
     let legacy = root.path().join("legacy.json");
     let secret_dir = root.path().join("secret-store");
@@ -239,11 +239,14 @@ fn mcp_migrate_extract_secrets_apply_backs_up_legacy_source_and_writes_only_refe
             "--apply",
         ])
         .assert()
-        .success();
+        .failure();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8 stdout");
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
     assert!(
-        !stdout.contains(secret) && !stdout.contains(header) && !stderr.contains(secret),
+        !stdout.contains(secret)
+            && !stdout.contains(header)
+            && !stderr.contains(secret)
+            && (stdout.contains("source-first") || stderr.contains("source-first")),
         "migration output must never expose literal credentials"
     );
 
@@ -252,55 +255,15 @@ fn mcp_migrate_extract_secrets_apply_backs_up_legacy_source_and_writes_only_refe
         legacy_before,
         "migration must keep the original legacy source"
     );
-    assert_eq!(
-        fs::read(root.path().join("legacy.json.ai-config-migrate-backup"))
-            .expect("read legacy backup"),
-        legacy_before,
-        "migration must make an immutable backup before introducing canonical source"
-    );
-
-    let canonical: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.path().join("mcp/servers/migrate-catalog.json"))
-            .expect("read canonical source"),
-    )
-    .expect("canonical source JSON");
-    assert_eq!(
-        canonical["config"]["env"]["CATALOG_TOKEN"],
-        "${CATALOG_TOKEN}"
-    );
-    assert_eq!(
-        canonical["config"]["headers"]["Authorization"],
-        "${MCP_MIGRATE_CATALOG_HEADER_AUTHORIZATION}"
-    );
-
-    let secret_path = secret_dir.join("secrets.env");
-    let pairs = ai_config_core::secrets::load_from(
-        camino::Utf8Path::from_path(&secret_path).expect("utf8 secret path"),
-    )
-    .expect("read generated secret store");
-    assert_eq!(
-        pairs,
-        vec![
-            ("CATALOG_TOKEN".to_owned(), secret.to_owned()),
-            (
-                "MCP_MIGRATE_CATALOG_HEADER_AUTHORIZATION".to_owned(),
-                header.to_owned(),
-            ),
-        ]
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            fs::metadata(&secret_path)
-                .expect("stat secret store")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600,
-            "secret store must be strict 0600"
-        );
-    }
+    assert!(!root
+        .path()
+        .join("legacy.json.ai-config-migrate-backup")
+        .exists());
+    assert!(!root
+        .path()
+        .join("mcp/servers/migrate-catalog.json")
+        .exists());
+    assert!(!secret_dir.join("secrets.env").exists());
 }
 
 #[test]
@@ -432,7 +395,7 @@ fn mcp_migrate_extract_secrets_apply_refuses_a_symlinked_secret_store() {
         .assert()
         .failure();
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).expect("utf8 stderr");
-    assert!(stderr.contains("secret store must not be a symlink"));
+    assert!(stderr.contains("source-first"));
     assert!(!stderr.contains("must-not-be-read"));
     assert_eq!(
         fs::read_to_string(&outside).expect("read outside secret store"),

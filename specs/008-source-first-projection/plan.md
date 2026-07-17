@@ -1043,6 +1043,16 @@ immutable read-only 模式，不建库、不迁移旧 schema、不跟随 ledger 
 Workspace migration/import、Codex/Claude/Hermes MCP normalize、字段级 normalized diff、顶层 `adopt`
 alias 与 MCP server surface 必须继续逐项 RED→GREEN，不能把当前安全切片视为完整 T010。
 
+**执行状态（2026-07-17，legacy MCP 写旁路止血 checkpoint）**：新增 CLI 回归证明历史
+`ai-config mcp migrate <container> --extract-secrets --apply` 在没有 reviewed plan/action ID 时会直接
+写 canonical source、secret store 与 legacy backup，首轮实际得到 exit 0 并创建三类文件。现已删除
+该 490 行 platform-to-source/secret-extraction 写实现；`mcp migrate --dry-run` 只保留 allowlisted
+root 下的只读 server-count 盘点，任何非 dry-run 组合（包括旧的双 flag）均 fail-closed，并引导到
+`ai-config import` / `migrate source-first`。既有正向 legacy 写测试改为更强的零写拒绝合同；最终
+legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI all-target strict clippy
+通过。T010.6 仍未完成：secret extraction 只有经过新计划、严格 secret store 与 apply-time 注入合同
+后才能重新提供；当前不保留任何可调用的旧写回退。
+
 - [x] **T010.1 Write failing inventory tests**：legacy marker copy、unmarked equal copy、different copy、correct/wrong/broken symlink、`.cc-switch` external_owned、plugin/builtin、case-only collision、dotfiles in digest、unknown-root link 不跟随；另补未知不可读 target lstat-only、external platform link 不获 ownership、builtin 不重复盘点。
 - [ ] **T010.2 Write failing migration/import/adopt E2E**：inventory no-write；plan deterministic；stale digest/action reject；未选择项零写入；不存在平台级/来源级 bulk takeover；Equivalent 逐 action-id 备份后 adopt；不同内容 foreign 直接 adopt 拒绝、必须先 import；`.cc-switch` 逐项选择；canonical-first then projection；transaction failure rollback；repeat plan noop；rollback refuses drifted post-state；import preview 显示 normalized diff、明确 destination source layer/absolute path、secret preflight 结果；foreign `AGENTS.md` 只有显式 import 后才进入 Prompt source 且平台原件不删除。
 - [x] **T010.3 Verify RED**：首轮 4 tests 编译并实际运行，均因顶层 `migrate` 不存在而失败；安全复审扩为 6 tests 后由最小 Skills inventory 实现转 GREEN。
