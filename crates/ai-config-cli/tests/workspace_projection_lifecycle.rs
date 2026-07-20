@@ -306,7 +306,9 @@ fn workspace_apply_uses_three_layer_overlay_for_each_member_without_writing_home
     workspace_report(&output.stdout);
 
     let assert_member_skill_link = |member: &str, skill: &str, source: &Path| {
-        let target = fixture.member(member).join(format!(".agents/skills/{skill}"));
+        let target = fixture
+            .member(member)
+            .join(format!(".agents/skills/{skill}"));
         assert_eq!(
             fs::read_link(&target).expect("projected skill must be a direct link"),
             source,
@@ -322,8 +324,16 @@ fn workspace_apply_uses_three_layer_overlay_for_each_member_without_writing_home
     );
     assert_member_skill_link("two", "shared", &workspace_assets.join("shared"));
     for member in ["one", "two"] {
-        assert_member_skill_link(member, "workspace-default", &workspace_assets.join("workspace-default"));
-        assert_member_skill_link(member, "global-default", &global_assets.join("global-default"));
+        assert_member_skill_link(
+            member,
+            "workspace-default",
+            &workspace_assets.join("workspace-default"),
+        );
+        assert_member_skill_link(
+            member,
+            "global-default",
+            &global_assets.join("global-default"),
+        );
     }
 
     assert_eq!(

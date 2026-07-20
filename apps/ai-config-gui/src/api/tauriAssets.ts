@@ -8,12 +8,78 @@ import type {
   Platform,
   PlatformAssetList,
   PlatformKindPath,
+  ProjectionApply,
+  ProjectionReview,
+  ImportApply,
+  ImportPlan,
   ProjectItem,
-  SyncConflictReport,
 } from "../types";
 
 export function fetchDoctor(): Promise<DoctorSummary> {
   return invoke<DoctorSummary>("cmd_doctor");
+}
+
+export function fetchProjectionPlan(
+  project: string,
+  retract = false,
+): Promise<ProjectionReview> {
+  return invoke<ProjectionReview>("cmd_projection_plan", { project, retract });
+}
+
+export function applyProjectionPlan(
+  project: string,
+  planDigest: string,
+): Promise<ProjectionApply> {
+  return invoke<ProjectionApply>("cmd_projection_apply", {
+    project,
+    planDigest,
+  });
+}
+
+export function retractProjectionPlan(
+  project: string,
+  planDigest: string,
+): Promise<ProjectionApply> {
+  return invoke<ProjectionApply>("cmd_projection_retract", {
+    project,
+    planDigest,
+  });
+}
+
+export function fetchImportToSourcePlan(
+  kind: AssetKind,
+  name: string,
+  project: string,
+  fromPlatform: DeployPlatform,
+  replace = false,
+): Promise<ImportPlan> {
+  return invoke<ImportPlan>("cmd_import_to_source_plan", {
+    kind,
+    name,
+    project,
+    fromPlatform,
+    replace,
+  });
+}
+
+export function applyImportToSourcePlan(
+  kind: AssetKind,
+  name: string,
+  project: string,
+  fromPlatform: DeployPlatform,
+  planDigest: string,
+  selectedActionIds: string[],
+  replace = false,
+): Promise<ImportApply> {
+  return invoke<ImportApply>("cmd_import_to_source_apply", {
+    kind,
+    name,
+    project,
+    fromPlatform,
+    replace,
+    planDigest,
+    selectedActionIds,
+  });
 }
 
 export function fetchProjectsList(): Promise<ProjectItem[]> {
@@ -89,68 +155,6 @@ export function retractSourceAsset(
   return invoke<string>(`cmd_${kind}_retract_source`, { name, project });
 }
 
-export function deployAssetFromPlatform(
-  kind: AssetKind,
-  name: string,
-  project: string,
-  from: DeployPlatform,
-  to: DeployPlatform,
-): Promise<string> {
-  return invoke<string>(`cmd_${kind}_deploy_from_platform`, {
-    name,
-    project,
-    from,
-    to,
-  });
-}
-
-export function deployAsset(
-  kind: AssetKind,
-  name: string,
-  project: string,
-  to: DeployPlatform,
-): Promise<string> {
-  return invoke<string>(`cmd_${kind}_deploy`, { name, project, to });
-}
-
-export function retractAsset(
-  kind: AssetKind,
-  name: string,
-  project: string,
-  from: Platform,
-): Promise<string> {
-  return invoke<string>(`cmd_${kind}_retract`, { name, project, from });
-}
-
-export function importAsset(
-  kind: AssetKind,
-  name: string,
-  project: string,
-  fromPlatform: Platform,
-): Promise<string> {
-  return invoke<string>(`cmd_${kind}_import`, {
-    name,
-    project,
-    fromPlatform,
-  });
-}
-
-export function toggleHookLifecycle(
-  name: string,
-  lifecycle: string,
-  enabled: boolean,
-  project: string,
-  platform: Platform,
-): Promise<string> {
-  return invoke<string>("cmd_hook_toggle_lifecycle", {
-    name,
-    lifecycle,
-    enabled,
-    project,
-    platform,
-  });
-}
-
 export function addSkillFromRemote(
   source: string,
   skillName: string | undefined,
@@ -167,38 +171,6 @@ export function addSkillFromRemote(
 
 export function revealPath(path: string): Promise<void> {
   return invoke("cmd_reveal_path", { path });
-}
-
-export function detectSyncConflict(
-  kind: AssetKind,
-  name: string,
-  project: string,
-  baselinePlatform: Platform,
-  targetPlatform: Platform,
-): Promise<SyncConflictReport | null> {
-  return invoke<SyncConflictReport | null>("cmd_detect_sync_conflict", {
-    kind,
-    name,
-    project,
-    baselinePlatform,
-    targetPlatform,
-  });
-}
-
-export function applySyncChoice(
-  kind: AssetKind,
-  name: string,
-  project: string,
-  sourcePlatform: Platform,
-  targetPlatform: Platform,
-): Promise<string> {
-  return invoke<string>("cmd_apply_sync_choice", {
-    kind,
-    name,
-    project,
-    sourcePlatform,
-    targetPlatform,
-  });
 }
 
 export async function pickProjectDirectory(

@@ -4,16 +4,14 @@ import { useTranslation } from "react-i18next";
 
 import {
   addSkillFromRemote,
-  applySyncChoice,
-  deployAsset,
-  deployAssetFromPlatform,
-  detectSyncConflict,
-  importAsset,
-  retractAsset,
+  applyImportToSourcePlan,
+  applyProjectionPlan,
+  fetchImportToSourcePlan,
+  fetchProjectionPlan,
   revealPath,
+  retractProjectionPlan,
   saveAsset,
   transferAssets,
-  toggleHookLifecycle,
 } from "../api/tauriAssets";
 import { PLATFORM_NAME } from "../platformIcons";
 import type { ConfirmRequest } from "./useConfirm";
@@ -25,16 +23,12 @@ import type {
   DeployPlatform,
   Platform,
   PlatformAssetEntry,
+  ImportPlan,
+  ProjectionReview,
   ProjectItem,
-  SyncConflictReport,
 } from "../types";
+import { hasSourceEntry, isSourcePlatform } from "../types";
 import {
-  canRemoveFromPlatform,
-  hasSourceEntry,
-  isSourcePlatform,
-} from "../types";
-import {
-  resolveBatchEntryPlatformAction,
   resolveBatchPlatformToggleMode,
   resolveEntryPlatformToggleAction,
   type EntryPlatformToggleAction,
@@ -44,18 +38,15 @@ import { canUpdateEntry, deployPlatformsForUpdate } from "../utils/entryUpdate";
 type Browser = ReturnType<typeof useAssetBrowser>;
 type Drawer = ReturnType<typeof useAssetDrawer>;
 
-const SYNC_CHECK_ACTIONS = new Set<EntryPlatformToggleAction>([
-  "deploy",
-  "import",
-  "platform_copy",
-]);
+interface PendingProjectionReview {
+  review: ProjectionReview;
+  retract: boolean;
+}
 
-interface PendingSyncConflict {
+interface PendingImportReview {
   entry: PlatformAssetEntry;
-  targetPlatform: Platform;
-  planned: EntryPlatformToggleAction;
-  report: SyncConflictReport;
-  defaultSource: Platform;
+  sourcePlatform: DeployPlatform;
+  plan: ImportPlan;
 }
 
 interface UseAssetOperationsOptions {
@@ -94,12 +85,9 @@ export function useAssetOperations({
   const { runDeleteEntries } = drawer;
   const kindLabel = t(`assetKind.${activeKind}`);
   const irreversibleHint = t("confirm.irreversible");
-  const [syncConflict, setSyncConflict] = useState<PendingSyncConflict | null>(
-    null,
-  );
-
-  const baselinePlatform = (): Platform =>
-    browsingSource ? "aiconfig" : activePlatform;
+  const [projectionReview, setProjectionReview] =
+    useState<PendingProjectionReview | null>(null);
+  const [importReview, setImportReview] = useState<PendingImportReview | null>(null);
 
   const toggleContext = useMemoizedFn(() => ({
     activePlatform,
@@ -107,6 +95,93 @@ export function useAssetOperations({
     issueKey: (plat: DeployPlatform, kind: AssetKind) =>
       issueMap.has(`${plat}:${kind}`),
   }));
+
+  const openProjectionReview = useMemoizedFn(async (retract: boolean) => {
+    setBusy(true);
+    try {
+      const review = await fetchProjectionPlan(activeProject, retract);
+      setProjectionReview({ review, retract });
+    } catch (e) {
+      showToast("err", t("projection.reviewFailed", { error: e }));
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  const dismissProjectionReview = useMemoizedFn(() => {
+    setProjectionReview(null);
+  });
+
+  const openImportReview = useMemoizedFn(
+    async (entry: PlatformAssetEntry, sourcePlatform: DeployPlatform) => {
+      setBusy(true);
+      try {
+        const plan = await fetchImportToSourcePlan(
+          entry.kind,
+          entry.name,
+          activeProject,
+          sourcePlatform,
+        );
+        setImportReview({ entry, sourcePlatform, plan });
+      } catch (e) {
+        showToast("err", t("projection.importFailed", { error: e }));
+      } finally {
+        setBusy(false);
+      }
+    },
+  );
+
+  const dismissImportReview = useMemoizedFn(() => setImportReview(null));
+
+  const confirmImportReview = useMemoizedFn(async () => {
+    if (!importReview) return;
+    const action = importReview.plan.actions[0];
+    if (!action) return;
+    setBusy(true);
+    try {
+      const report = await applyImportToSourcePlan(
+        importReview.entry.kind,
+        importReview.entry.name,
+        activeProject,
+        importReview.sourcePlatform,
+        importReview.plan.plan_digest,
+        [action.action_id],
+      );
+      setImportReview(null);
+      await refreshView(false);
+      showToast("ok", t("projection.imported", { count: report.applied }));
+    } catch (e) {
+      showToast("err", t("projection.importFailed", { error: e }));
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  const confirmProjectionReview = useMemoizedFn(async () => {
+    if (!projectionReview) return;
+    setBusy(true);
+    try {
+      const apply = projectionReview.retract
+        ? await retractProjectionPlan(
+            activeProject,
+            projectionReview.review.plan_digest,
+          )
+        : await applyProjectionPlan(
+            activeProject,
+            projectionReview.review.plan_digest,
+          );
+      setProjectionReview(null);
+      await refreshView(false);
+      showToast(
+        "ok",
+        t("projection.applied", { changed: apply.changed, unchanged: apply.unchanged }),
+      );
+    } catch (e) {
+      showToast("err", t("projection.applyFailed", { error: e }));
+    } finally {
+      setBusy(false);
+    }
+  });
 
   const runPlatformAction = useMemoizedFn(
     async (
@@ -129,90 +204,17 @@ export function useAssetOperations({
         }
       }
 
-      // MCP：每条 server 独立条目，retract 不会动源 / 其它 server
-      if (entry.kind === "mcp" && action === "retract") {
-        const message = await retractAsset(
-          entry.kind,
-          entry.name,
-          activeProject,
-          plat,
-        );
-        return { action, message };
-      }
-
       if (action === "import") {
         if (isSourcePlatform(activePlatform)) {
           return { action: "skip" };
         }
-        try {
-          const message = await importAsset(
-            entry.kind,
-            entry.name,
-            activeProject,
-            activePlatform,
-          );
-          return { action, message };
-        } catch (e) {
-          const msg = String(e);
-          if (msg.includes("源中已存在")) {
-            return {
-              action: "import",
-              message: t("platformView.importManaged"),
-            };
-          }
-          throw e;
-        }
+        await openImportReview(entry, activePlatform as DeployPlatform);
+        return { action: "skip" };
       }
 
-      if (action === "platform_copy") {
-        const message = await deployAssetFromPlatform(
-          entry.kind,
-          entry.name,
-          activeProject,
-          activePlatform as DeployPlatform,
-          plat as DeployPlatform,
-        );
-        return { action: "deploy", message };
-      }
-
-      const deployPlat = plat as DeployPlatform;
-      if (action === "retract") {
-        const message = await retractAsset(
-          entry.kind,
-          entry.name,
-          activeProject,
-          plat,
-        );
-        return { action, message };
-      }
-
-      if (
-        !browsingSource &&
-        !isSourcePlatform(activePlatform) &&
-        activePlatform === deployPlat &&
-        !hasSourceEntry(entry)
-      ) {
-        try {
-          await importAsset(
-            entry.kind,
-            entry.name,
-            activeProject,
-            activePlatform,
-          );
-        } catch (e) {
-          if (!String(e).includes("源中已存在")) {
-            throw e;
-          }
-        }
-      }
-
-      const message = await deployAsset(
-        entry.kind,
-        entry.name,
-        activeProject,
-        deployPlat,
-      );
-      return { action: "deploy", message };
+      // Projection writes are scope-level and digest-bound. Callers open the reviewed modal
+      // before reaching this per-entry import-only fallback.
+      return { action: "skip" };
     },
   );
 
@@ -275,36 +277,6 @@ export function useAssetOperations({
     },
   );
 
-  const dismissSyncConflict = useMemoizedFn(() => {
-    setSyncConflict(null);
-  });
-
-  const confirmSyncConflict = useMemoizedFn(
-    async (sourcePlatform: Platform) => {
-      if (!syncConflict) {
-        return;
-      }
-      const { entry, targetPlatform, planned } = syncConflict;
-      setBusy(true);
-      try {
-        const message = await applySyncChoice(
-          entry.kind,
-          entry.name,
-          activeProject,
-          sourcePlatform,
-          targetPlatform,
-        );
-        setSyncConflict(null);
-        await refreshView(false);
-        showToggleSuccessToast(planned, message);
-      } catch (e) {
-        showToggleErrorToast(planned, e);
-      } finally {
-        setBusy(false);
-      }
-    },
-  );
-
   const handlePlatformToggle = useMemoizedFn(
     (entry: PlatformAssetEntry, plat: Platform) => {
       const planned = resolveEntryPlatformToggleAction(
@@ -322,57 +294,11 @@ export function useAssetOperations({
         }
         return;
       }
-
-      void (async () => {
-        if (SYNC_CHECK_ACTIONS.has(planned)) {
-          try {
-            const report = await detectSyncConflict(
-              entry.kind,
-              entry.name,
-              activeProject,
-              baselinePlatform(),
-              plat,
-            );
-            if (report) {
-              setSyncConflict({
-                entry,
-                targetPlatform: plat,
-                planned,
-                report,
-                defaultSource: baselinePlatform(),
-              });
-              return;
-            }
-          } catch (e) {
-            showToast("err", t("syncConflict.detectFailed", { error: e }));
-            return;
-          }
-        }
-        await executePlatformToggle(entry, plat, planned);
-      })();
-    },
-  );
-
-  const deployEntryToPlatforms = useMemoizedFn(
-    async (
-      entry: PlatformAssetEntry,
-      platforms: DeployPlatform[],
-    ): Promise<{ ok: number; failed: number }> => {
-      let ok = 0;
-      let failed = 0;
-      const ctx = toggleContext();
-      for (const plat of platforms) {
-        if (ctx.issueKey(plat, entry.kind)) {
-          continue;
-        }
-        try {
-          await deployAsset(entry.kind, entry.name, activeProject, plat);
-          ok += 1;
-        } catch {
-          failed += 1;
-        }
+      if (planned === "deploy" || planned === "retract") {
+        void openProjectionReview(planned === "retract");
+        return;
       }
-      return { ok, failed };
+      void executePlatformToggle(entry, plat, planned);
     },
   );
 
@@ -385,22 +311,7 @@ export function useAssetOperations({
       return;
     }
 
-    void (async () => {
-      setBusy(true);
-      try {
-        const { ok, failed } = await deployEntryToPlatforms(entry, platforms);
-        await refreshView(false);
-        if (ok === 0 && failed > 0) {
-          showToast("err", t("toast.updateFailed", { count: failed }));
-        } else if (failed > 0) {
-          showToast("err", t("toast.updatePartial", { ok, failed }));
-        } else {
-          showToast("ok", t("toast.updatedCount", { count: ok }));
-        }
-      } finally {
-        setBusy(false);
-      }
-    })();
+    void openProjectionReview(false);
   });
 
   const batchUpdateEntries = useMemoizedFn(() => {
@@ -418,102 +329,8 @@ export function useAssetOperations({
       return;
     }
 
-    void (async () => {
-      setBusy(true);
-      let ok = 0;
-      let failed = 0;
-      try {
-        for (const entry of targets) {
-          const platforms = deployPlatformsForUpdate(entry).filter(
-            (plat) => !ctx.issueKey(plat, entry.kind),
-          );
-          const result = await deployEntryToPlatforms(entry, platforms);
-          ok += result.ok;
-          failed += result.failed;
-        }
-        await refreshView(false);
-        if (ok === 0 && failed > 0) {
-          showToast("err", t("toast.updateFailed", { count: failed }));
-        } else if (failed > 0) {
-          showToast("err", t("toast.updatePartial", { ok, failed }));
-        } else {
-          showToast("ok", t("toast.updatedCount", { count: ok }));
-        }
-      } finally {
-        setBusy(false);
-      }
-    })();
+    void openProjectionReview(false);
   });
-
-  const reportBatchToggleResults = useMemoizedFn(
-    (counts: Record<EntryPlatformToggleAction | "failed", number>) => {
-      const ok =
-        counts.deploy +
-        counts.retract +
-        counts.import +
-        counts.platform_copy +
-        counts.delete_source;
-      const failed = counts.failed;
-
-      if (ok === 0 && failed === 0) {
-        showToast("err", t("toast.batchNoOps"));
-        return;
-      }
-
-      if (failed > 0) {
-        if (ok === 0) {
-          showToast("err", t("toast.batchToggleAllFailed", { count: failed }));
-          return;
-        }
-        showToast(
-          "err",
-          t("toast.batchTogglePartial", {
-            ok,
-            failed,
-            deploy: counts.deploy,
-            retract: counts.retract,
-            import: counts.import,
-            deleted: counts.delete_source,
-          }),
-        );
-        return;
-      }
-
-      const kinds = [
-        counts.deploy > 0,
-        counts.retract > 0,
-        counts.import > 0,
-        counts.platform_copy > 0,
-        counts.delete_source > 0,
-      ].filter(Boolean).length;
-
-      if (kinds === 1) {
-        if (counts.retract > 0) {
-          showToast("ok", t("toast.batchRetracted", { count: counts.retract }));
-        } else if (counts.deploy > 0) {
-          showToast("ok", t("toast.batchDeployed", { count: counts.deploy }));
-        } else if (counts.import > 0) {
-          showToast("ok", t("toast.batchImported", { count: counts.import }));
-        } else if (counts.delete_source > 0) {
-          showToast(
-            "ok",
-            t("toast.deletedCount", { count: counts.delete_source }),
-          );
-        }
-        return;
-      }
-
-      showToast(
-        "ok",
-        t("toast.batchToggled", {
-          deploy: counts.deploy,
-          retract: counts.retract,
-          import: counts.import,
-          deleted: counts.delete_source,
-        }),
-      );
-    },
-  );
 
   const batchSyncToPlatform = useMemoizedFn(async (plat: Platform) => {
     if (selectedEntries.length === 0) {
@@ -539,50 +356,7 @@ export function useAssetOperations({
       return;
     }
 
-    setBusy(true);
-    const counts: Record<EntryPlatformToggleAction | "failed", number> = {
-      deploy: 0,
-      retract: 0,
-      import: 0,
-      platform_copy: 0,
-      delete_source: 0,
-      skip: 0,
-      unsupported: 0,
-      failed: 0,
-    };
-
-    try {
-      for (const entry of selectedEntries) {
-        const planned = resolveBatchEntryPlatformAction(
-          entry,
-          plat,
-          batchMode,
-          toggleContext(),
-        );
-        if (
-          planned === "skip" ||
-          planned === "unsupported" ||
-          planned === "delete_source"
-        ) {
-          counts.skip += 1;
-          continue;
-        }
-        try {
-          const result = await runPlatformAction(entry, plat, planned);
-          if (result.action === "skip" || result.action === "unsupported") {
-            counts[result.action] += 1;
-          } else {
-            counts[result.action] += 1;
-          }
-        } catch {
-          counts.failed += 1;
-        }
-      }
-      await refreshView(false);
-      reportBatchToggleResults(counts);
-    } finally {
-      setBusy(false);
-    }
+    void openProjectionReview(batchMode === "retract_all");
   });
 
   const runBatchDelete = useMemoizedFn(async () => {
@@ -591,26 +365,8 @@ export function useAssetOperations({
       if (browsingSource) {
         await runDeleteEntries(selectedEntries);
       } else if (!isSourcePlatform(activePlatform)) {
-        const plat = activePlatform as DeployPlatform;
-        let ok = 0;
-        for (const entry of selectedEntries) {
-          try {
-            if (canRemoveFromPlatform(entry.states[plat])) {
-              await retractAsset(entry.kind, entry.name, activeProject, plat);
-              ok += 1;
-            }
-          } catch (e) {
-            showToast("err", t("toast.deleteFailed", { errors: String(e) }));
-          }
-        }
-        clearSelection();
-        await refreshView(false);
-        if (ok > 0) {
-          showToast("ok", t("toast.batchRetracted", { count: ok }));
-        } else {
-          showToast("err", t("toast.batchNoOps"));
-        }
         dismissConfirm();
+        void openProjectionReview(true);
       }
     } finally {
       setBusy(false);
@@ -648,20 +404,8 @@ export function useAssetOperations({
         await runDeleteEntries([entry]);
         dismissConfirm();
       } else if (!isSourcePlatform(activePlatform)) {
-        const plat = activePlatform as DeployPlatform;
-        try {
-          if (canRemoveFromPlatform(entry.states[plat])) {
-            await retractAsset(entry.kind, entry.name, activeProject, plat);
-            await refreshView(false);
-            showToast("ok", t("toast.retractedCount", { count: 1 }));
-          } else {
-            showToast("err", t("toast.batchNoOps"));
-          }
-        } catch (e) {
-          showToast("err", t("toast.retractFailed", { error: e }));
-        } finally {
-          dismissConfirm();
-        }
+        dismissConfirm();
+        void openProjectionReview(true);
       }
     } finally {
       setBusy(false);
@@ -730,17 +474,11 @@ export function useAssetOperations({
     }
     setBusy(true);
     try {
-      // 非源视图时，先把当前平台上的选中项导入到当前项目源，再执行跨项目复制。
+      // 非源视图只允许先经 digest-bound 导入审阅写回 source，不能在复制操作中绕过审阅。
       if (!browsingSource && !isSourcePlatform(activePlatform)) {
-        for (const entry of selectedEntries) {
-          if (!hasSourceEntry(entry)) {
-            await importAsset(
-              entry.kind,
-              entry.name,
-              activeProject,
-              activePlatform,
-            );
-          }
+        if (selectedEntries.some((entry) => !hasSourceEntry(entry))) {
+          showToast("err", t("projection.importRequiredBeforeCopy"));
+          return;
         }
       }
 
@@ -840,34 +578,23 @@ export function useAssetOperations({
       plan: Array<{ lifecycle: string; enabled: boolean }>,
     ) => {
       if (entry.kind !== "hook" || plan.length === 0) return;
-      setBusy(true);
-      try {
-        let lastMsg = "";
-        for (const { lifecycle, enabled } of plan) {
-          lastMsg = await toggleHookLifecycle(
-            entry.name,
-            lifecycle,
-            enabled,
-            activeProject,
-            activePlatform,
-          );
-        }
-        showToast("ok", lastMsg);
-        await refreshView(false);
-      } catch (e) {
-        showToast("err", t("hookLifecycle.toggleFailed", { error: String(e) }));
-      } finally {
-        setBusy(false);
-      }
+      void entry;
+      void plan;
+      // Hook lifecycle belongs to the same source-owned projection contract;
+      // the review lists every affected hook before a write can occur.
+      await openProjectionReview(false);
     },
   );
 
   return {
     handlePlatformToggle,
     handleHookLifecyclePairToggle,
-    syncConflict,
-    dismissSyncConflict,
-    confirmSyncConflict,
+    projectionReview,
+    dismissProjectionReview,
+    confirmProjectionReview,
+    importReview,
+    dismissImportReview,
+    confirmImportReview,
     handleUpdateEntry,
     batchUpdateEntries,
     batchSyncToPlatform,

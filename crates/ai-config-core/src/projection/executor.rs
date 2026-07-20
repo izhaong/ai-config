@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_yaml::{Mapping, Value as YamlValue};
 
@@ -142,6 +142,8 @@ pub struct ApplyFailure {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ApplyReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<String>,
     pub changed: usize,
     pub unchanged: usize,
     pub skipped: usize,
@@ -171,6 +173,7 @@ impl ApplyReport {
             })
             .collect();
         Self {
+            transaction_id: None,
             changed: 0,
             unchanged: 0,
             skipped: 0,
@@ -334,12 +337,56 @@ struct SafeParent {
 
 /// The manifest deliberately has no asset body or rendered bytes. It is enough to audit a
 /// recovery: where the prior target was moved, plus its apply-time digest and mode.
-#[derive(Serialize)]
-struct BackupManifest<'a> {
-    target_path: &'a Utf8Path,
-    backup_path: &'a Utf8Path,
-    digest: Option<&'a str>,
+#[derive(Serialize, Deserialize)]
+struct BackupManifest {
+    target_path: Utf8PathBuf,
+    backup_path: Utf8PathBuf,
+    digest: Option<String>,
     mode: Option<u32>,
+}
+
+const DURABLE_ADOPTION_SCHEMA_VERSION: u16 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum DurableAdoptionStatus {
+    Applying,
+    Applied,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DurableAdoptionManifest {
+    schema_version: u16,
+    transaction_id: String,
+    deploy_base: Utf8PathBuf,
+    status: DurableAdoptionStatus,
+    actions: Vec<DurableAdoptionAction>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DurableAdoptionAction {
+    action_id: String,
+    projection_id: super::model::ProjectionId,
+    target_path: Utf8PathBuf,
+    source_path: Utf8PathBuf,
+    source_fingerprint: String,
+    before: super::model::PathFingerprint,
+    after: Option<super::model::PathFingerprint>,
+    backup_path: Option<Utf8PathBuf>,
+    expected_record: Option<ProjectionRecord>,
+}
+
+struct PreparedDurableAdoption {
+    manifest_path: Utf8PathBuf,
+    action_backup_root: Utf8PathBuf,
+    manifest: DurableAdoptionManifest,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProjectionRollbackReport {
+    pub transaction_id: String,
+    pub restored: usize,
 }
 
 /// A create-new lock deliberately fails closed. We do not infer that an existing lock is stale:
@@ -382,6 +429,22 @@ pub fn apply_projection_plan(
     context: &ExecutorContext<'_>,
     options: ApplyOptions,
 ) -> Result<ApplyReport, ProjectionApplyError> {
+    if !options.selected_action_ids.is_empty() {
+        return match apply_projection_plans_transactionally([(plan, options)], context) {
+            Ok(mut reports) => Ok(reports.remove(0)),
+            Err(mut failure) => {
+                let report = if failure.reports.is_empty() {
+                    ApplyReport::for_plan(plan)
+                } else {
+                    failure.reports.remove(0)
+                };
+                Err(ProjectionApplyError {
+                    error: failure.error,
+                    report: Box::new(report),
+                })
+            }
+        };
+    }
     if let Err(error) = fs::create_dir_all(context.deploy_base.as_std_path()) {
         return Err(preflight_failure(
             ApplyReport::for_plan(plan),
@@ -442,6 +505,7 @@ pub fn apply_projection_plans_transactionally<'plan>(
     plans: impl IntoIterator<Item = (&'plan ProjectionPlan, ApplyOptions)>,
     context: &ExecutorContext<'_>,
 ) -> Result<Vec<ApplyReport>, ProjectionTransactionError> {
+    let plans = plans.into_iter().collect::<Vec<_>>();
     fs::create_dir_all(context.deploy_base.as_std_path()).map_err(|error| {
         ProjectionTransactionError {
             error: CoreError::Io(error),
@@ -453,6 +517,18 @@ pub fn apply_projection_plans_transactionally<'plan>(
             error,
             reports: Vec::new(),
         })?;
+    let mut durable =
+        prepare_durable_adoption(&plans, context).map_err(|error| ProjectionTransactionError {
+            error,
+            reports: Vec::new(),
+        })?;
+    let durable_context = durable.as_ref().map(|prepared| ExecutorContext {
+        ledger: context.ledger,
+        deploy_base: context.deploy_base.clone(),
+        backup_root: prepared.action_backup_root.clone(),
+        mcp_secret_provider: context.mcp_secret_provider,
+    });
+    let execution_context = durable_context.as_ref().unwrap_or(context);
     let mut journal = TransactionJournal::default();
     let mut reports = Vec::new();
     let mut completed_undo_ranges = Vec::new();
@@ -460,14 +536,14 @@ pub fn apply_projection_plans_transactionally<'plan>(
 
     while let Some((plan, options)) = plans.next() {
         let undo_start = journal.undo.len();
-        match stage_projection_plan(plan, context, options, &mut journal) {
+        match stage_projection_plan(plan, execution_context, options, &mut journal) {
             Ok(report) => {
                 completed_undo_ranges.push((reports.len(), undo_start..journal.undo.len()));
                 reports.push(report);
             }
             Err(error) => {
                 let mut failed_report = *error.report;
-                let rollback_results = rollback(&journal.undo, context);
+                let rollback_results = rollback(&journal.undo, execution_context);
                 mark_completed_plan_rollbacks(
                     &mut reports,
                     &completed_undo_ranges,
@@ -482,6 +558,7 @@ pub fn apply_projection_plans_transactionally<'plan>(
                 );
                 reports.push(failed_report);
                 reports.extend(plans.map(|(remaining, _)| unapplied_report(remaining)));
+                mark_durable_adoption_rolled_back(durable.as_mut());
                 return Err(ProjectionTransactionError {
                     error: error.error,
                     reports,
@@ -490,16 +567,447 @@ pub fn apply_projection_plans_transactionally<'plan>(
         }
     }
     if let Err(error) = context.ledger.apply_batch(&journal.mutations) {
-        let rollback_results = rollback(&journal.undo, context);
+        let rollback_results = rollback(&journal.undo, execution_context);
         mark_completed_plan_rollbacks(
             &mut reports,
             &completed_undo_ranges,
             &journal.undo,
             &rollback_results,
         );
+        mark_durable_adoption_rolled_back(durable.as_mut());
         return Err(ProjectionTransactionError { error, reports });
     }
+    if let Some(prepared) = durable.as_mut() {
+        if let Err(error) = finalize_durable_adoption(prepared, &journal, context.ledger) {
+            let rollback_results = rollback(&journal.undo, execution_context);
+            mark_completed_plan_rollbacks(
+                &mut reports,
+                &completed_undo_ranges,
+                &journal.undo,
+                &rollback_results,
+            );
+            let removals = prepared
+                .manifest
+                .actions
+                .iter()
+                .cloned()
+                .map(|action| LedgerMutation::Remove(action.projection_id))
+                .collect::<Vec<_>>();
+            let ledger_rollback = context.ledger.apply_batch(&removals);
+            mark_durable_adoption_rolled_back(Some(prepared));
+            return Err(ProjectionTransactionError {
+                error: if ledger_rollback.is_ok() {
+                    error
+                } else {
+                    CoreError::ProjectionLedger(
+                        "durable adoption manifest failed and ownership rollback also failed"
+                            .to_owned(),
+                    )
+                },
+                reports,
+            });
+        }
+        for report in &mut reports {
+            report.transaction_id = Some(prepared.manifest.transaction_id.clone());
+        }
+    }
     Ok(reports)
+}
+
+fn prepare_durable_adoption(
+    plans: &[(&ProjectionPlan, ApplyOptions)],
+    context: &ExecutorContext<'_>,
+) -> Result<Option<PreparedDurableAdoption>, CoreError> {
+    let mut actions = Vec::new();
+    for (plan, options) in plans {
+        validate_selected_action_ids(plan, &options.selected_action_ids)?;
+        if options.selected_action_ids.is_empty() {
+            continue;
+        }
+        if plan.actions.iter().enumerate().any(|(index, action)| {
+            action.kind != ProjectionActionKind::AdoptEquivalent
+                || !options
+                    .selected_action_ids
+                    .contains(&plan.action_ids[index])
+        }) {
+            return Err(CoreError::InvalidPath(
+                "durable adoption plans may contain only explicitly selected AdoptEquivalent actions"
+                    .to_owned(),
+            ));
+        }
+        for (index, action) in plan.actions.iter().enumerate() {
+            let target = action.target.as_ref().ok_or_else(|| {
+                CoreError::InvalidPath("durable adoption action has no target".to_owned())
+            })?;
+            let source = action.members.first().ok_or_else(|| {
+                CoreError::InvalidPath("durable adoption action has no source member".to_owned())
+            })?;
+            let before = action.precondition.clone().ok_or_else(|| {
+                CoreError::InvalidPath("durable adoption action has no precondition".to_owned())
+            })?;
+            actions.push(DurableAdoptionAction {
+                action_id: plan.action_ids[index].clone(),
+                projection_id: direct_member_id(action)?,
+                target_path: target.path.clone(),
+                source_path: source.source.absolute_path.clone(),
+                source_fingerprint: source.source.fingerprint.clone(),
+                before,
+                after: None,
+                backup_path: None,
+                expected_record: None,
+            });
+        }
+    }
+    if actions.is_empty() {
+        return Ok(None);
+    }
+    let mut targets = BTreeSet::new();
+    if actions
+        .iter()
+        .any(|action| !targets.insert(action.target_path.clone()))
+    {
+        return Err(CoreError::InvalidPath(
+            "durable adoption contains duplicate targets".to_owned(),
+        ));
+    }
+    ensure_safe_backup_root(&context.backup_root, &actions[0].target_path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(
+            context.backup_root.as_std_path(),
+            fs::Permissions::from_mode(0o700),
+        )?;
+    }
+    for _ in 0..1_024 {
+        let transaction_id = format!("adopt-{:016x}", backup_nonce()?);
+        let manifest_path = context.backup_root.join(format!("{transaction_id}.json"));
+        let action_backup_root = context.backup_root.join(format!("{transaction_id}.d"));
+        match fs::create_dir(action_backup_root.as_std_path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(CoreError::Io(error)),
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                action_backup_root.as_std_path(),
+                fs::Permissions::from_mode(0o700),
+            )?;
+        }
+        let manifest = DurableAdoptionManifest {
+            schema_version: DURABLE_ADOPTION_SCHEMA_VERSION,
+            transaction_id,
+            deploy_base: context.deploy_base.clone(),
+            status: DurableAdoptionStatus::Applying,
+            actions: actions.clone(),
+        };
+        match write_durable_manifest_create(&manifest_path, &manifest) {
+            Ok(()) => {
+                sync_directory(&context.backup_root)?;
+                return Ok(Some(PreparedDurableAdoption {
+                    manifest_path,
+                    action_backup_root,
+                    manifest,
+                }));
+            }
+            Err(CoreError::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let _ = fs::remove_dir(action_backup_root.as_std_path());
+            }
+            Err(error) => {
+                let _ = fs::remove_dir(action_backup_root.as_std_path());
+                return Err(error);
+            }
+        }
+    }
+    Err(CoreError::InvalidPath(
+        "could not reserve a durable adoption transaction ID".to_owned(),
+    ))
+}
+
+fn finalize_durable_adoption(
+    prepared: &mut PreparedDurableAdoption,
+    journal: &TransactionJournal,
+    ledger: &dyn ProjectionLedger,
+) -> Result<(), CoreError> {
+    for action in &mut prepared.manifest.actions {
+        let backup = journal.undo.iter().find_map(|(_, undo)| match undo {
+            FileUndo::RestoreBackup {
+                target,
+                source,
+                backup,
+            } if target == &action.target_path && source == &action.source_path => {
+                Some(backup.clone())
+            }
+            _ => None,
+        });
+        let backup = backup.ok_or_else(|| {
+            CoreError::ProjectionLedger(
+                "durable adoption completed without its rollback backup".to_owned(),
+            )
+        })?;
+        let after = path_fingerprint(&action.target_path)?;
+        if after.entry_type != super::model::FingerprintType::Symlink
+            || after.link_target.as_ref() != Some(&action.source_path)
+        {
+            return Err(CoreError::InvalidPath(
+                "durable adoption post-state is not the expected canonical link".to_owned(),
+            ));
+        }
+        let record = ledger.get(&action.projection_id)?.ok_or_else(|| {
+            CoreError::ProjectionLedger(
+                "durable adoption ownership record was not committed".to_owned(),
+            )
+        })?;
+        if record.target_path != action.target_path || record.source_path != action.source_path {
+            return Err(CoreError::ProjectionLedger(
+                "durable adoption ownership record does not match its target".to_owned(),
+            ));
+        }
+        action.after = Some(after);
+        action.backup_path = Some(backup);
+        action.expected_record = Some(record);
+    }
+    prepared.manifest.status = DurableAdoptionStatus::Applied;
+    write_durable_manifest_atomic(&prepared.manifest_path, &prepared.manifest)
+}
+
+fn mark_durable_adoption_rolled_back(prepared: Option<&mut PreparedDurableAdoption>) {
+    if let Some(prepared) = prepared {
+        prepared.manifest.status = DurableAdoptionStatus::RolledBack;
+        let _ = write_durable_manifest_atomic(&prepared.manifest_path, &prepared.manifest);
+    }
+}
+
+fn write_durable_manifest_create(
+    path: &Utf8Path,
+    manifest: &DurableAdoptionManifest,
+) -> Result<(), CoreError> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path.as_std_path())?;
+    set_private_file_permissions(path)?;
+    serde_json::to_writer_pretty(&mut file, manifest)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn write_durable_manifest_atomic(
+    path: &Utf8Path,
+    manifest: &DurableAdoptionManifest,
+) -> Result<(), CoreError> {
+    let metadata = fs::symlink_metadata(path.as_std_path())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(CoreError::InvalidPath(
+            "durable adoption manifest became unsafe".to_owned(),
+        ));
+    }
+    let parent = path.parent().ok_or_else(|| {
+        CoreError::InvalidPath("durable adoption manifest has no parent".to_owned())
+    })?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent.as_std_path())?;
+    serde_json::to_writer_pretty(temporary.as_file_mut(), manifest)?;
+    temporary.as_file_mut().write_all(b"\n")?;
+    temporary.as_file_mut().sync_all()?;
+    let temporary_path = Utf8Path::from_path(temporary.path()).ok_or_else(|| {
+        CoreError::InvalidPath("durable adoption temporary path is not UTF-8".to_owned())
+    })?;
+    set_private_file_permissions(temporary_path)?;
+    temporary
+        .persist(path.as_std_path())
+        .map_err(|error| CoreError::Io(error.error))?;
+    sync_directory(parent)
+}
+
+fn sync_directory(path: &Utf8Path) -> Result<(), CoreError> {
+    fs::File::open(path.as_std_path())?.sync_all()?;
+    Ok(())
+}
+
+pub fn rollback_projection_transaction(
+    context: &ExecutorContext<'_>,
+    transaction_id: &str,
+) -> Result<ProjectionRollbackReport, CoreError> {
+    if !transaction_id.starts_with("adopt-")
+        || !transaction_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return Err(CoreError::InvalidPath(
+            "invalid durable adoption transaction ID".to_owned(),
+        ));
+    }
+    let _lock = ApplyLock::acquire(&context.deploy_base)?;
+    ensure_safe_backup_root(&context.backup_root, &context.deploy_base)?;
+    let manifest_path = context.backup_root.join(format!("{transaction_id}.json"));
+    let metadata = fs::symlink_metadata(manifest_path.as_std_path())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(CoreError::InvalidPath(
+            "durable adoption manifest is unsafe".to_owned(),
+        ));
+    }
+    let mut manifest: DurableAdoptionManifest =
+        serde_json::from_slice(&fs::read(manifest_path.as_std_path())?)?;
+    if manifest.schema_version != DURABLE_ADOPTION_SCHEMA_VERSION
+        || manifest.transaction_id != transaction_id
+        || manifest.deploy_base != context.deploy_base
+        || !matches!(
+            manifest.status,
+            DurableAdoptionStatus::Applying | DurableAdoptionStatus::Applied
+        )
+    {
+        return Err(CoreError::InvalidPath(
+            "durable adoption transaction is not rollback-ready".to_owned(),
+        ));
+    }
+    let action_backup_root = context.backup_root.join(format!("{transaction_id}.d"));
+    let backup_root_metadata = fs::symlink_metadata(action_backup_root.as_std_path())?;
+    if backup_root_metadata.file_type().is_symlink() || !backup_root_metadata.is_dir() {
+        return Err(CoreError::InvalidPath(
+            "durable adoption backup root is unsafe".to_owned(),
+        ));
+    }
+
+    let mut restore_actions = Vec::new();
+    let mut removals = Vec::new();
+    for action in &manifest.actions {
+        let safe_target = ensure_safe_target_path(&action.target_path, &context.deploy_base)?;
+        let target = path_fingerprint(&safe_target)?;
+        let record = context.ledger.get(&action.projection_id)?;
+        let backup = match action.backup_path.clone() {
+            Some(backup) => Some(backup),
+            None => find_durable_backup(&action_backup_root, action)?,
+        };
+        let backup = match backup {
+            Some(backup) => match fs::symlink_metadata(backup.as_std_path()) {
+                Ok(_) => {
+                    ensure_safe_durable_backup(&action_backup_root, &backup)?;
+                    Some(backup)
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(CoreError::Io(error)),
+            },
+            None => None,
+        };
+        let target_is_link = target.entry_type == super::model::FingerprintType::Symlink
+            && target.link_target.as_ref() == Some(&action.source_path);
+
+        match manifest.status {
+            DurableAdoptionStatus::Applied => {
+                let after = action.after.as_ref().ok_or_else(|| {
+                    CoreError::InvalidPath("durable adoption has no post-state".to_owned())
+                })?;
+                let backup = backup.ok_or_else(|| {
+                    CoreError::InvalidPath("durable adoption has no backup path".to_owned())
+                })?;
+                if target != *after
+                    || !target_is_link
+                    || path_fingerprint(&backup)? != action.before
+                    || !record
+                        .as_ref()
+                        .is_some_and(|record| durable_record_matches(record, action, &target))
+                {
+                    return Err(CoreError::InvalidPath(
+                        "durable adoption rollback refused target, backup, or ownership drift"
+                            .to_owned(),
+                    ));
+                }
+                restore_actions.push((action.clone(), safe_target, backup));
+                removals.push(LedgerMutation::Remove(action.projection_id.clone()));
+            }
+            DurableAdoptionStatus::Applying => match backup {
+                Some(backup) if path_fingerprint(&backup)? == action.before => {
+                    if target_is_link {
+                        if let Some(record) = record.as_ref() {
+                            if !durable_record_matches(record, action, &target) {
+                                return Err(CoreError::ProjectionLedger(
+                                    "durable adoption rollback refused ownership ledger drift"
+                                        .to_owned(),
+                                ));
+                            }
+                            removals.push(LedgerMutation::Remove(action.projection_id.clone()));
+                        }
+                        restore_actions.push((action.clone(), safe_target, backup));
+                    } else if target.entry_type == super::model::FingerprintType::Missing {
+                        if record.is_some() {
+                            return Err(CoreError::ProjectionLedger(
+                                "durable adoption has ownership without its canonical link"
+                                    .to_owned(),
+                            ));
+                        }
+                        restore_actions.push((action.clone(), safe_target, backup));
+                    } else {
+                        return Err(CoreError::InvalidPath(
+                            "durable adoption applying state has an unexpected target".to_owned(),
+                        ));
+                    }
+                }
+                None if target == action.before && record.is_none() => {}
+                None => {
+                    return Err(CoreError::InvalidPath(
+                        "durable adoption applying state is missing its recoverable backup"
+                            .to_owned(),
+                    ));
+                }
+                Some(_) => {
+                    return Err(CoreError::InvalidPath(
+                        "durable adoption applying state has a drifted backup".to_owned(),
+                    ));
+                }
+            },
+            DurableAdoptionStatus::RolledBack => unreachable!("validated above"),
+        }
+    }
+
+    let mut restored = Vec::new();
+    for (action, safe_target, backup) in restore_actions.iter().rev() {
+        let current = path_fingerprint(safe_target)?;
+        if current.entry_type == super::model::FingerprintType::Symlink {
+            if current.link_target.as_ref() != Some(&action.source_path) {
+                return Err(CoreError::InvalidPath(
+                    "durable adoption target changed during rollback".to_owned(),
+                ));
+            }
+            fs::remove_file(safe_target.as_std_path())?;
+        } else if current.entry_type != super::model::FingerprintType::Missing {
+            return Err(CoreError::InvalidPath(
+                "durable adoption target changed during rollback".to_owned(),
+            ));
+        }
+        if let Err(error) = fs::rename(backup.as_std_path(), safe_target.as_std_path()) {
+            let safe_parent = safe_target.parent().unwrap_or(&context.deploy_base);
+            let _ = create_sibling_symlink(&action.source_path, safe_target, safe_parent);
+            return Err(CoreError::Io(error));
+        }
+        restored.push((action.clone(), safe_target.clone(), backup.clone()));
+    }
+    if let Err(error) = context.ledger.apply_batch(&removals) {
+        let mut reapply_failed = false;
+        for (action, safe_target, backup) in restored.iter().rev() {
+            let safe_parent = safe_target.parent().unwrap_or(&context.deploy_base);
+            if fs::rename(safe_target.as_std_path(), backup.as_std_path()).is_err()
+                || create_sibling_symlink(&action.source_path, safe_target, safe_parent).is_err()
+            {
+                reapply_failed = true;
+            }
+        }
+        return Err(if reapply_failed {
+            CoreError::ProjectionLedger(
+                "ownership rollback failed and adopted links could not all be restored".to_owned(),
+            )
+        } else {
+            error
+        });
+    }
+    manifest.status = DurableAdoptionStatus::RolledBack;
+    write_durable_manifest_atomic(&manifest_path, &manifest)?;
+    Ok(ProjectionRollbackReport {
+        transaction_id: transaction_id.to_owned(),
+        restored: restored.len(),
+    })
 }
 
 fn unapplied_report(plan: &ProjectionPlan) -> ApplyReport {
@@ -2509,9 +3017,9 @@ fn write_backup_manifest(
         ));
     }
     let content = serde_json::to_vec_pretty(&BackupManifest {
-        target_path: target,
-        backup_path: backup,
-        digest: fingerprint.digest.as_deref(),
+        target_path: target.to_owned(),
+        backup_path: backup.to_owned(),
+        digest: fingerprint.digest.clone(),
         mode: fingerprint.mode,
     })?;
     let mut file = fs::OpenOptions::new()
@@ -2840,6 +3348,175 @@ fn ensure_target_is_allowed(target: &Utf8Path, deploy_base: &Utf8Path) -> Result
     Ok(())
 }
 
+fn ensure_safe_target_path(
+    target: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Result<Utf8PathBuf, CoreError> {
+    ensure_target_is_allowed(target, deploy_base)?;
+    let base = fs::canonicalize(deploy_base.as_std_path())?;
+    let base = Utf8PathBuf::from_path_buf(base)
+        .map_err(|path| CoreError::InvalidPath(path.to_string_lossy().into_owned()))?;
+    let parent = target.parent().ok_or_else(|| {
+        CoreError::InvalidPath("projection target has no parent directory".to_owned())
+    })?;
+    let relative = parent.strip_prefix(deploy_base).map_err(|_| {
+        CoreError::InvalidPath(
+            "projection parent is outside the allowlisted deploy root".to_owned(),
+        )
+    })?;
+    let mut cursor = base;
+    for component in relative.components() {
+        match component {
+            Utf8Component::Normal(name) => {
+                cursor.push(name);
+                let metadata = fs::symlink_metadata(cursor.as_std_path())?;
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(CoreError::InvalidPath(
+                        "projection parent is not a safe existing directory".to_owned(),
+                    ));
+                }
+            }
+            Utf8Component::CurDir => {}
+            Utf8Component::ParentDir | Utf8Component::Prefix(_) | Utf8Component::RootDir => {
+                return Err(CoreError::InvalidPath(
+                    "projection parent has an unsafe path component".to_owned(),
+                ));
+            }
+        }
+    }
+    let filename = target
+        .file_name()
+        .ok_or_else(|| CoreError::InvalidPath("projection target has no file name".to_owned()))?;
+    Ok(cursor.join(filename))
+}
+
+fn ensure_safe_durable_backup(
+    action_backup_root: &Utf8Path,
+    backup: &Utf8Path,
+) -> Result<(), CoreError> {
+    let root_metadata = fs::symlink_metadata(action_backup_root.as_std_path())?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(CoreError::InvalidPath(
+            "durable adoption backup root is unsafe".to_owned(),
+        ));
+    }
+    let relative = backup.strip_prefix(action_backup_root).map_err(|_| {
+        CoreError::InvalidPath("durable adoption backup escapes its transaction root".to_owned())
+    })?;
+    if relative.as_str().is_empty() {
+        return Err(CoreError::InvalidPath(
+            "durable adoption backup cannot be its transaction root".to_owned(),
+        ));
+    }
+    let root = fs::canonicalize(action_backup_root.as_std_path())?;
+    let mut cursor = Utf8PathBuf::from_path_buf(root)
+        .map_err(|path| CoreError::InvalidPath(path.to_string_lossy().into_owned()))?;
+    let component_count = relative.components().count();
+    for (index, component) in relative.components().enumerate() {
+        match component {
+            Utf8Component::Normal(name) => {
+                cursor.push(name);
+                let metadata = fs::symlink_metadata(cursor.as_std_path())?;
+                if metadata.file_type().is_symlink() {
+                    return Err(CoreError::InvalidPath(
+                        "durable adoption backup contains a symlink".to_owned(),
+                    ));
+                }
+                let is_final = index + 1 == component_count;
+                if (!is_final && !metadata.is_dir())
+                    || (is_final && !metadata.is_dir() && !metadata.is_file())
+                {
+                    return Err(CoreError::InvalidPath(
+                        "durable adoption backup has an unsafe entry type".to_owned(),
+                    ));
+                }
+            }
+            Utf8Component::CurDir => {}
+            Utf8Component::ParentDir | Utf8Component::Prefix(_) | Utf8Component::RootDir => {
+                return Err(CoreError::InvalidPath(
+                    "durable adoption backup has an unsafe path component".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn find_durable_backup(
+    action_backup_root: &Utf8Path,
+    action: &DurableAdoptionAction,
+) -> Result<Option<Utf8PathBuf>, CoreError> {
+    let root_metadata = fs::symlink_metadata(action_backup_root.as_std_path())?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(CoreError::InvalidPath(
+            "durable adoption backup root is unsafe".to_owned(),
+        ));
+    }
+    let mut matched = None;
+    for entry in fs::read_dir(action_backup_root.as_std_path())? {
+        let entry = entry?;
+        let path = Utf8PathBuf::from_path_buf(entry.path())
+            .map_err(|path| CoreError::InvalidPath(path.to_string_lossy().into_owned()))?;
+        if path.extension() != Some("json") || !path.as_str().ends_with(".manifest.json") {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(path.as_std_path())?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(CoreError::InvalidPath(
+                "durable adoption backup manifest is unsafe".to_owned(),
+            ));
+        }
+        let manifest: BackupManifest = serde_json::from_slice(&fs::read(path.as_std_path())?)?;
+        if manifest.target_path != action.target_path {
+            continue;
+        }
+        if manifest.digest != action.before.digest || manifest.mode != action.before.mode {
+            return Err(CoreError::InvalidPath(
+                "durable adoption backup manifest does not match its action".to_owned(),
+            ));
+        }
+        let candidate = manifest.backup_path;
+        let relative = candidate.strip_prefix(action_backup_root).map_err(|_| {
+            CoreError::InvalidPath(
+                "durable adoption backup manifest escapes its transaction root".to_owned(),
+            )
+        })?;
+        if relative.as_str().is_empty()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    Utf8Component::ParentDir | Utf8Component::Prefix(_)
+                )
+            })
+        {
+            return Err(CoreError::InvalidPath(
+                "durable adoption backup manifest has an unsafe path".to_owned(),
+            ));
+        }
+        if matched.replace(candidate).is_some() {
+            return Err(CoreError::InvalidPath(
+                "durable adoption found duplicate backups for one target".to_owned(),
+            ));
+        }
+    }
+    Ok(matched)
+}
+
+fn durable_record_matches(
+    record: &ProjectionRecord,
+    action: &DurableAdoptionAction,
+    target: &super::model::PathFingerprint,
+) -> bool {
+    record.id == action.projection_id
+        && record.mode == ProjectionMode::DirectLink
+        && record.source_path == action.source_path
+        && record.target_path == action.target_path
+        && record.source_fingerprint == action.source_fingerprint
+        && record.entry_key.is_none()
+        && record.entry_fingerprint.is_none()
+        && record.target_fingerprint == target.digest.as_deref().unwrap_or_default()
+}
+
 fn ensure_safe_target_parent(
     target: &Utf8Path,
     deploy_base: &Utf8Path,
@@ -2937,6 +3614,7 @@ mod tests {
     #[test]
     fn rollback_failure_is_not_overwritten_by_a_later_success_for_the_same_action() {
         let mut report = ApplyReport {
+            transaction_id: None,
             changed: 1,
             unchanged: 0,
             skipped: 0,

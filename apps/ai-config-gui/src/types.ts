@@ -5,6 +5,77 @@ export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
 export type DeployPlatform = Exclude<Platform, "aiconfig">;
 export type LinkState = "linked" | "synced" | "unlinked" | "broken" | "missing";
 
+/** Source-first planner ownership state. `synced` is deliberately absent: equal content alone
+ * never grants ownership or permission to retract. */
+export type ProjectionState =
+  | "missing"
+  | "managed_link"
+  | "managed_generated"
+  | "copied"
+  | "equivalent"
+  | "foreign"
+  | "conflict"
+  | "drifted"
+  | "unsupported";
+
+export interface ProjectionAction {
+  action_id: string;
+  kind: string;
+  state?: ProjectionState | "skipped";
+  reason_code: string;
+  target?: { path?: string } | null;
+  members: Array<{
+    source: { layer: string; absolute_path: string };
+  }>;
+  mcp_members: Array<{
+    name: string;
+    secret_keys: string[];
+    missing_secret_keys: string[];
+  }>;
+}
+
+export interface ProjectionReview {
+  schema_version: number;
+  plan_digest: string;
+  actions: ProjectionAction[];
+  blocking_reason: string | null;
+  ledger_status?: "ledger_unavailable";
+}
+
+export interface ProjectionApply {
+  changed: number;
+  unchanged: number;
+  skipped: number;
+  conflict: number;
+  failed: number;
+  rolled_back: number;
+  rollback_failed: number;
+  not_applied: number;
+}
+
+export interface ImportPlan {
+  schema_version: number;
+  plan_digest: string;
+  actions: Array<{
+    action_id: string;
+    kind: AssetKind;
+    name: string;
+    source_platform: DeployPlatform;
+    source_path: string;
+    destination_layer: string;
+    destination_path: string;
+    normalized_diff: { change: string };
+    secret_preflight: { status: "clear" | "blocked"; key_names: string[] };
+    blocking_reasons: string[];
+  }>;
+}
+
+export interface ImportApply {
+  transaction_id?: string | null;
+  applied: number;
+  skipped: number;
+}
+
 export type HookLifecycleGroup = "agent" | "tab" | "workspace";
 
 export interface HookLifecycleView {
@@ -47,15 +118,6 @@ export interface PlatformAssetVariant {
   content: string;
   content_summary: string;
   differs_from_baseline: boolean;
-}
-
-/** 跨平台同步冲突：目标已有同名但不同内容的副本 */
-export interface SyncConflictReport {
-  kind: AssetKind;
-  name: string;
-  baseline_platform: Platform;
-  target_platform: Platform;
-  variants: PlatformAssetVariant[];
 }
 
 export interface ProjectItem {
@@ -159,8 +221,7 @@ export function canDeploy(state: LinkState): boolean {
   return (
     state === "unlinked" ||
     state === "broken" ||
-    state === "missing" ||
-    state === "synced"
+    state === "missing"
   );
 }
 
@@ -168,14 +229,12 @@ export function canRetract(state: LinkState): boolean {
   return state === "linked";
 }
 
-/** 平台视图删除：可移除该平台上的副本（含 synced / 外部安装） */
-export function canRemoveFromPlatform(state: LinkState): boolean {
-  return (
-    state === "linked" ||
-    state === "synced" ||
-    state === "unlinked" ||
-    state === "broken"
-  );
+/** 平台视图删除：只有存在 ownership 证据的下发才可收回。 */
+export function canRemoveFromPlatform(
+  kind: AssetKind,
+  state: LinkState,
+): boolean {
+  return kind !== "mcp" && state === "linked";
 }
 
 export function isPlatformActive(state: LinkState): boolean {

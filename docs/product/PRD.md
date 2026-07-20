@@ -1,6 +1,6 @@
 # ai-config 桌面端 — 产品需求文档 (PRD)
 
-> 状态：**Approved v0.5** · 2026-06-21（五平台对等、GUI 硬拷贝下发、链接态 `synced`、平台 icon / 更新 / 删除语义）
+> 状态：**Approved v0.4.0** · 2026-07-20（source-first、digest-bound projection、foreign fail-closed）
 > 范围：本产品本身
 > 同级：`../../README.md` ·`../../AGENTS.md` ·`../../HERMES.md` ·`../../manifests/plugins.md`
 > 技术方案：`.claude/plans/ai-config/20260612_ai-config_rust-desktop.plan.md`
@@ -12,7 +12,7 @@
 **写一套（skills / rules / mcp / agents）→ 同步到多个 AI 编码平台。**
 
 - **写一套**：本工具在 **ai-config 平台目录**（`~/.ai-config/` 或 `<project>/.ai-config/`）维护 skills / rules / mcp / agents / commands
-- **同步到多个平台**：Cursor / Codex / Claude Code / Hermes — 各平台为**独立硬拷贝目录**，与 ai-config 平台**对等**（见 §3.5）
+- **投影到多个平台**：Cursor / Codex / Claude Code / Hermes 只消费 source 的逐项链接或受管生成物，不是事实源
 - **分层**：全局（user-global，`~/.ai-config/`）+ 项目（per-project，`<repo>/.ai-config/` 与全局**同目录结构**）
 
 ### 1.1 资产根目录同构（全局 ≡ 项目）
@@ -23,13 +23,13 @@
 ~/.ai-config/                    <repo>/.ai-config/
 ├── skills/<name>/SKILL.md       ├── skills/<name>/SKILL.md
 ├── rules/*.mdc                  ├── rules/*.mdc
-├── mcp.json                     ├── mcp.json
+├── mcp/servers/<name>.json      ├── mcp/servers/<name>.json
 └── agents/                      └── agents/
 ```
 
 - 选中 **user-global**：读 / 写 `~/.ai-config/` 下四类资产
 - 选中 **已注册项目**：读 / 写 `<repo>/.ai-config/` 下四类资产（与全局 merge 后展示；编辑落盘在项目树）
-- 注册项目时若 `<repo>/.ai-config/` 不存在，工具**自动创建**上述标准子目录与空 `mcp.json`
+- 注册项目时若 `<repo>/.ai-config/` 不存在，工具创建 source 目录；不创建平台配置副本
 
 ---
 
@@ -37,10 +37,10 @@
 
 | 资产       | 物理形态                                         | 一份"项"是什么                                                    | 平台消费形式（见 §3.4 作用域）                                                                                             |
 | ---------- | ------------------------------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **skills** | 目录（`SKILL.md` + 可选 scripts/assets/agents/） | 一个 skill = 一个目录                                             | **硬拷贝**到各平台 `skills/<name>/`（GUI / `asset_ops`）；守护进程批量 sync 可走 `link` 模块（遗留路径，逐步与硬拷贝对齐） |
-| **rules**  | 单文件                                           | 一条 rule = 一个 `.mdc` / `.md`                                   | 硬拷贝到平台 rules 目录                                                                                                    |
+| **skills** | 目录（`SKILL.md` + 可选 scripts/assets/agents/） | 一个 skill = 一个目录                                             | 逐项 direct link 或 external-directory projection |
+| **rules**  | 单文件                                           | 一条 rule = 一个 `.mdc` / `.md`                                   | 仅在有官方目标时 generated 或 direct link |
 | **mcp**    | 列表（一项一记录）                               | 一条 mcp server = 一条记录（name + command/args/env/url/headers） | 合并写入平台 `mcp.json` / Hermes `config.yaml`（一份输出）                                                                 |
-| **agents** | **目录或单文件**（按源形态）                     | 一个 agent / subagent = 一个目录或一个文件                        | 目录 / 单文件**硬拷贝**到平台 agents / subagents 目录                                                                      |
+| **agents** | **目录或单文件**（按源形态）                     | 一个 agent / subagent = 一个目录或一个文件                        | adapter 生成平台格式；不支持时明确阻止 |
 
 ### 2.1 MCP 逐项的关键设计
 
@@ -62,8 +62,7 @@
 
 用户**只**关心"我有几个 agent，每个 agent 叫什么、做什么、适用哪些平台"。平台目录叫什么、放哪、文件格式，**适配器**负责。
 
-- **目录型 agent**：源为目录时，下发**复制**整个目录到 `<deploy_base>/.X/agents/<name>/`（或 subagents）
-- **单文件 agent**：源为 `.md` / `.yaml` 等时，保留原扩展名**复制**到平台 agents 目录
+- agent 的平台格式由 adapter 在审阅计划中说明；foreign 目标永不覆盖或自动接管
 - **列表 description**：agent / rule 与 skill 一致，优先读 frontmatter `description`，回退 H1 标题
 
 ---
@@ -141,43 +140,9 @@
   - **Agents**：不下发（Hermes 用 `AGENTS.md` / `delegate_task`，无 `~/.hermes/agents`）。
   - **MCP**：始终 `~/.hermes/config.yaml` 的 `mcp_servers:`（见 [Hermes MCP 文档](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp)）。
 
-### 3.5 五平台对等 + GUI 下发语义（v0.5）
+### 3.5 Source-first GUI 与投影语义
 
-GUI 将 **ai-config** 与 4 个 IDE **并列**为 5 个平台；**不存在**「唯一总源、其它全是下发副本」的产品语义——`~/.ai-config/skills/<name>/` 是 **ai-config 平台目录**，与 `~/.cursor/skills/<name>/` 等**地位相同**。
-
-#### 3.5.1 硬拷贝与链接态
-
-| 机制                            | 说明                                                                                                     |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **下发**                        | `materialize::deploy` — 实体复制到目标平台目录，并写入 `.ai-config-deploy.json`（记录 canonical 源路径） |
-| **收回**                        | `materialize::retract` — **仅删除目标平台目录下副本**；不牵动其它平台                                    |
-| **linked**                      | 本工具下发或已纳管（有 marker 或 legacy symlink）                                                        |
-| **synced**                      | 目录存在、内容与 ai-config 或其它平台副本一致，但**无**本工具 marker（常见于 `npx skills add` 外部安装） |
-| **unlinked / broken / missing** | 未安装 / 断链 / 应对照源缺失                                                                             |
-
-各平台副本 **inode 独立**；修改或删除某一平台目录**不**自动影响其它平台。
-
-#### 3.5.2 平台 icon（单行 / 工具栏批量）
-
-| 条件                                      | 行为                                                                                                         |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 目标平台 **linked**                       | **收回**该平台目录副本                                                                                       |
-| 目标平台 **synced**                       | **覆盖下发**（写 marker，变为 linked）                                                                       |
-| 目标平台 **unlinked** 等                  | **下发** / **导入到 ai-config** / **跨平台硬拷贝**（见 `entryPlatformToggle`）                               |
-| **正在浏览的平台**（含 ai-config 源视图） | 列表中**对应平台 icon 禁用**（仍显示 linked / synced 等状态）；逻辑上收回为 skip                             |
-| ai-config icon + 未纳管                   | 从当前浏览平台 **import** 到 `~/.ai-config` 或项目 `.ai-config`                                              |
-| ai-config icon + 已 linked                | 在**非** ai-config 源视图 → 收回 **ai-config 平台目录**（`retract(..., AiConfig)`），**不**联动收回 IDE 平台 |
-
-#### 3.5.3 更新与删除（列表行右侧）
-
-| 控件                                | 行为                                                                                                       |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **更新**（↻，平台 icon 与删除之间） | 从 ai-config 平台副本 **重新 deploy** 到该条目所有已激活平台（linked + synced）；无 ai-config 副本时禁用   |
-| **删除**（🗑，二次点击 + 确认）     | **源视图**：`delete_source` — 删 ai-config 副本并尽力收回全部 IDE 平台；**平台视图**：仅从当前浏览平台收回 |
-
-#### 3.5.4 平台 skill 路径（上游）
-
-各 IDE 的 skill 下发目录以 [vercel-labs/skills](https://github.com/vercel-labs/skills) `src/agents.ts` 为上游参考；本仓快照见 `manifests/vercel-skills-agents.snapshot.json` 与 `docs/reference/vercel-skills-agent-paths.md`。ai-config 项目作用域与 `npx skills` 项目路径存在已知差异（Cursor/Codex 项目级 `.agents/skills`），见该文档。
+GUI 的 ai-config 视图是唯一可编辑 source。平台视图只读盘点外部资产，并可发起受 digest 与 selected action ID 约束的导入审阅。投影与回收均先显示 scope-level plan；仅 ledger 证明 owned 的 `managed_link` 或 `managed_generated` 可收回。`foreign`、`conflict`、`drifted` 一律 fail-closed，绝不提供平台到平台复制或整平台接管。
 
 ---
 

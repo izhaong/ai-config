@@ -131,7 +131,9 @@ impl AiConfigMcpServer {
         Parameters(params): Parameters<RootParam>,
     ) -> Result<Json<LifecycleReport>, McpError> {
         let root = self.root_for(params.root);
-        Ok(Json(agent_api::sync(&root, params.apply).map_err(Self::err)?))
+        Ok(Json(
+            agent_api::sync(&root, params.apply).map_err(Self::err)?,
+        ))
     }
 
     #[tool(description = "读取单条资产正文与元数据")]

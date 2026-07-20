@@ -33,6 +33,14 @@ describe("useAssetBrowser context reset", () => {
     cleanup();
   });
 
+  it("opens on the ai-config source platform by default", () => {
+    const { result } = renderHook(() =>
+      useAssetBrowser(browserOptions(vi.fn())),
+    );
+
+    expect(result.current.activePlatform).toBe("aiconfig");
+  });
+
   it("does not reset drawer when onContextReset callback identity changes", async () => {
     const reset = vi.fn();
     const { rerender } = renderHook(

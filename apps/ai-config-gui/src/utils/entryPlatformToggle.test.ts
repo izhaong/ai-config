@@ -116,17 +116,17 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("skip");
   });
 
-  it("mcp synced 态点击其它平台 icon 为收回而非再拷贝", () => {
+  it("mcp synced 态不隐式收回或接管", () => {
     expect(
       resolveEntryPlatformToggleAction(
         { ...entry({ hermes: "synced", claude: "linked" }), kind: "mcp" },
         "hermes",
         claudeView,
       ),
-    ).toBe("retract");
+    ).toBe("skip");
   });
 
-  it("mcp linked 态在源视图可收回其它 IDE 平台", () => {
+  it("mcp linked 态在源视图不触发必失败的收回", () => {
     expect(
       resolveEntryPlatformToggleAction(
         {
@@ -136,10 +136,10 @@ describe("resolveEntryPlatformToggleAction", () => {
         "cursor",
         sourceView,
       ),
-    ).toBe("retract");
+    ).toBe("skip");
   });
 
-  it("mcp 无源时从 Cursor 视图拷贝到 Codex", () => {
+  it("mcp 无源时从 Cursor 视图不复制到 Codex", () => {
     expect(
       resolveEntryPlatformToggleAction(
         {
@@ -149,7 +149,7 @@ describe("resolveEntryPlatformToggleAction", () => {
         "codex",
         cursorView,
       ),
-    ).toBe("platform_copy");
+    ).toBe("skip");
   });
 
   it("mcp 无源时从 Cursor 视图导入 ai-config", () => {
@@ -165,14 +165,24 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("import");
   });
 
-  it("skill synced 态点击其它平台仍为拷贝而非收回", () => {
+  it("skill synced 态点击其它平台不隐式拷贝", () => {
     expect(
       resolveEntryPlatformToggleAction(
         entry({ hermes: "synced", claude: "linked" }),
         "hermes",
         claudeView,
       ),
-    ).toBe("platform_copy");
+    ).toBe("skip");
+  });
+
+  it("平台视图不执行投影；只有源视图能打开 source-first 计划", () => {
+    expect(
+      resolveEntryPlatformToggleAction(
+        entry({ aiconfig: "linked", codex: "missing" }),
+        "codex",
+        cursorView,
+      ),
+    ).toBe("skip");
   });
 });
 
@@ -224,14 +234,14 @@ describe("resolveBatchPlatformToggleMode", () => {
     ).toBe("activate_all");
   });
 
-  it("全 mcp 且 synced → retract_all（含 synced 激活态）", () => {
+  it("全 mcp 且 synced 不生成 retract_all", () => {
     const rows = [
       { ...entry({ claude: "synced" }), kind: "mcp" as const },
       { ...entry({ claude: "synced" }), kind: "mcp" as const },
     ];
     expect(
       resolveBatchPlatformToggleMode(rows, "claude", "cursor", false),
-    ).toBe("retract_all");
+    ).toBe("activate_all");
   });
 });
 
@@ -314,7 +324,7 @@ describe("resolveBatchEntryPlatformAction", () => {
     ).toBe("skip");
   });
 
-  it("retract_all：mcp synced 在其它平台可批量收回", () => {
+  it("retract_all：mcp synced 在其它平台不触发收回", () => {
     const synced = { ...entry({ claude: "synced" }), kind: "mcp" as const };
     expect(
       resolveBatchEntryPlatformAction(
@@ -323,6 +333,6 @@ describe("resolveBatchEntryPlatformAction", () => {
         "retract_all",
         cursorView,
       ),
-    ).toBe("retract");
+    ).toBe("skip");
   });
 });

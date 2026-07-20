@@ -31,12 +31,12 @@ function entry(
 describe("canOpenEntry", () => {
   it("opens when platform_path exists (deploy view)", () => {
     const e = entry();
-    expect(canOpenEntry(e, "cursor")).toBe(true);
+    expect(canOpenEntry(e)).toBe(true);
   });
 
   it("opens when ai-config source is linked", () => {
     const e = entry({ states: ALL_STATES({ aiconfig: "linked" }) });
-    expect(canOpenEntry(e, "cursor")).toBe(true);
+    expect(canOpenEntry(e)).toBe(true);
   });
 
   it("opens mcp on ai-config source view", () => {
@@ -44,7 +44,7 @@ describe("canOpenEntry", () => {
       kind: "mcp",
       platform_path: "/home/.ai-config/mcp.json",
     });
-    expect(canOpenEntry(e, "aiconfig")).toBe(true);
+    expect(canOpenEntry(e)).toBe(true);
   });
 
   it("opens mcp from deploy platform when platform_path exists", () => {
@@ -53,12 +53,12 @@ describe("canOpenEntry", () => {
       platform_path: "/home/.cursor/mcp.json",
       states: ALL_STATES({ cursor: "synced" }),
     });
-    expect(canOpenEntry(e, "cursor")).toBe(true);
+    expect(canOpenEntry(e)).toBe(true);
   });
 
   it("does not open without platform_path", () => {
     const e = entry({ platform_path: "" });
-    expect(canOpenEntry(e, "cursor")).toBe(false);
+    expect(canOpenEntry(e)).toBe(false);
   });
 });
 

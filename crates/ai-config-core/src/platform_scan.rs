@@ -923,7 +923,13 @@ fn deploy_health_to_link_state(
     health: crate::materialize::DeployHealth,
 ) -> LinkState {
     match health {
-        crate::materialize::DeployHealth::Linked { .. } => LinkState::Linked,
+        crate::materialize::DeployHealth::Linked { .. } => {
+            if crate::materialize::is_managed_deploy(dest) {
+                LinkState::Linked
+            } else {
+                LinkState::Synced
+            }
+        }
         crate::materialize::DeployHealth::Broken => LinkState::Broken,
         crate::materialize::DeployHealth::Unlinked => {
             if fs::symlink_metadata(dest.as_std_path()).is_ok() {
@@ -1472,6 +1478,21 @@ mod tests {
     }
 
     #[test]
+    fn content_equal_unmanaged_copy_is_synced_not_linked() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(tmp.path()).unwrap();
+        let source = root.join(".ai-config/skills/demo/SKILL.md");
+        let target = root.join(".cursor/skills/demo/SKILL.md");
+        touch(&source, "# same\n");
+        touch(&target, "# same\n");
+
+        let state =
+            ide_asset_link_state(PlatformId::Cursor, AssetKind::Skill, "demo", &source, root);
+
+        assert_eq!(state, LinkState::Synced);
+    }
+
+    #[test]
     fn scan_platform_skills_follows_symlink_dirs() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(tmp.path()).unwrap();
@@ -1608,8 +1629,8 @@ mod tests {
         assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
         assert_eq!(
             states.get(&PlatformId::Claude),
-            Some(&LinkState::Linked),
-            "从 Claude 导入后在 ai-config 视图应显示 Claude 已同步"
+            Some(&LinkState::Synced),
+            "导入后保留的 Claude 原件无 ownership 证据，只能显示为 synced"
         );
     }
 

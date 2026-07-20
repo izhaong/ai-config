@@ -567,11 +567,17 @@ mod tests {
         let shared_target = plan
             .actions
             .iter()
-            .find(|action| action.target.as_ref().is_some_and(|target| {
-                target.path == repo.join(".agents/skills/review")
-            }))
+            .find(|action| {
+                action
+                    .target
+                    .as_ref()
+                    .is_some_and(|target| target.path == repo.join(".agents/skills/review"))
+            })
             .unwrap();
-        assert!(matches!(shared_target.kind, ProjectionActionKind::ReportOnly));
+        assert!(matches!(
+            shared_target.kind,
+            ProjectionActionKind::ReportOnly
+        ));
         assert_eq!(shared_target.state.as_deref(), Some("foreign"));
         assert_eq!(shared_target.members[0].source.layer, SourceLayer::Project);
         assert_eq!(directory_digest(&root).unwrap(), before);
@@ -627,7 +633,7 @@ mod tests {
 
     #[test]
     fn compute_for_project_create_dest_under_repo_root() {
-        let _env_guard = HermesEnvGuard::unset();
+        let _env_guard = crate::test_env::EnvGuard::unset("HERMES_SKILLS_DIR");
 
         let (_tmp, default, repo) = make_project_with_default();
         let project = Project {
@@ -646,26 +652,6 @@ mod tests {
                     dest.starts_with(&repo),
                     "dest {dest} 应在项目根 {repo} 下(非 $HOME；Hermes skills 例外)"
                 );
-            }
-        }
-    }
-
-    /// 设/恢复 `HERMES_SKILLS_DIR` env,避免被其它并行测试污染本测试断言。
-    struct HermesEnvGuard {
-        prev: Option<String>,
-    }
-    impl HermesEnvGuard {
-        fn unset() -> Self {
-            let prev = std::env::var("HERMES_SKILLS_DIR").ok();
-            std::env::remove_var("HERMES_SKILLS_DIR");
-            Self { prev }
-        }
-    }
-    impl Drop for HermesEnvGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => std::env::set_var("HERMES_SKILLS_DIR", v),
-                None => std::env::remove_var("HERMES_SKILLS_DIR"),
             }
         }
     }

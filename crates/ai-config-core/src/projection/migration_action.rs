@@ -16,6 +16,8 @@ use tempfile::{Builder, NamedTempFile};
 
 use crate::error::CoreError;
 use crate::model::{AssetKind, PlatformId};
+use crate::paths::{self, SyncRoots};
+use crate::platform;
 use crate::projection::fingerprint::{path_content_digest, path_fingerprint};
 use crate::projection::mcp::source::load_mcp_definition_at;
 use crate::projection::model::{FingerprintType, PathFingerprint, SourceLayer};
@@ -33,6 +35,94 @@ pub struct ImportRequest {
     pub destination_layer: SourceLayer,
     pub destination_asset_root: Utf8PathBuf,
     pub replace: bool,
+}
+
+/// Resolves one explicit platform item into the canonical source layer for the supplied scope.
+/// It is pure path selection: callers still must build a reviewed plan and bind apply to its
+/// digest plus action ID before any source file can be written.
+pub fn import_request_for_sync_roots(
+    kind: AssetKind,
+    name: &str,
+    source_platform: PlatformId,
+    roots: &SyncRoots,
+    replace: bool,
+) -> Result<ImportRequest, CoreError> {
+    let (destination_layer, destination_asset_root) =
+        if paths::is_project_deploy_base(&roots.deploy_base) {
+            (SourceLayer::Project, roots.asset_root.clone())
+        } else {
+            (SourceLayer::Global, roots.asset_root.clone())
+        };
+    let (source_path, approved_source_root) = import_source_location(
+        kind,
+        name,
+        source_platform,
+        &roots.deploy_base,
+        &roots.asset_root,
+        destination_layer,
+    )?;
+    Ok(ImportRequest {
+        kind,
+        name: name.to_owned(),
+        source_platform,
+        source_path,
+        approved_source_root,
+        destination_layer,
+        destination_asset_root,
+        replace,
+    })
+}
+
+fn import_source_location(
+    kind: AssetKind,
+    name: &str,
+    source_platform: PlatformId,
+    deploy_base: &Utf8Path,
+    asset_root: &Utf8Path,
+    destination_layer: SourceLayer,
+) -> Result<(Utf8PathBuf, Utf8PathBuf), CoreError> {
+    if kind == AssetKind::Prompt {
+        if source_platform != PlatformId::Codex || destination_layer != SourceLayer::Project {
+            return Err(CoreError::NotImplemented(
+                "prompt import currently supports only codex AGENTS into a project source layer",
+            ));
+        }
+        return Ok((deploy_base.join("AGENTS.md"), deploy_base.to_path_buf()));
+    }
+    if kind == AssetKind::Mcp && source_platform != PlatformId::Cursor {
+        return Err(CoreError::NotImplemented(
+            "MCP import currently supports only Cursor JSON containers",
+        ));
+    }
+    let platform_path = platform::kind_asset_path(source_platform, kind, deploy_base, asset_root)
+        .ok_or(CoreError::NotImplemented(
+        "this platform and asset kind do not have a lossless import mapping",
+    ))?;
+    if kind == AssetKind::Mcp {
+        let approved_root = platform_path.parent().ok_or_else(|| {
+            CoreError::InvalidPath("platform MCP path has no approved parent".to_owned())
+        })?;
+        let approved_root = approved_root.to_path_buf();
+        return Ok((platform_path, approved_root));
+    }
+    let source_path = match kind {
+        AssetKind::Skill => platform_path.join(name),
+        AssetKind::Rule => {
+            let extension = match source_platform {
+                PlatformId::Cursor | PlatformId::Hermes => "mdc",
+                PlatformId::Claude => "md",
+                PlatformId::AiConfig | PlatformId::Codex => {
+                    return Err(CoreError::NotImplemented(
+                        "this platform rule format has no lossless import mapping",
+                    ))
+                }
+            };
+            platform_path.join(format!("{name}.{extension}"))
+        }
+        AssetKind::Agent | AssetKind::Command => platform_path.join(format!("{name}.md")),
+        AssetKind::Mcp | AssetKind::Prompt | AssetKind::Hook => unreachable!("handled above"),
+    };
+    Ok((source_path, platform_path))
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

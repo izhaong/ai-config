@@ -213,9 +213,7 @@ pub fn retract_linked_to(dest: &Utf8Path, expected_src: &Utf8Path) -> Result<(),
         let expected = canonical_src(expected_src);
         return match link::check(dest, &expected) {
             link::LinkHealth::Linked { .. } => link::unlink(dest),
-            link::LinkHealth::WrongSource { actual, .. }
-                if canonical_src(&actual) == expected =>
-            {
+            link::LinkHealth::WrongSource { actual, .. } if canonical_src(&actual) == expected => {
                 link::unlink(dest)
             }
             link::LinkHealth::Broken { .. }

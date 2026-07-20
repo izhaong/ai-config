@@ -105,6 +105,13 @@ impl Fixture {
         }
         command.output().expect("run migration apply")
     }
+
+    fn migration_rollback(&self, transaction_id: &str) -> std::process::Output {
+        self.command()
+            .args(["migrate", "rollback", transaction_id])
+            .output()
+            .expect("run migration rollback")
+    }
 }
 
 fn write(path: &Path, content: &str) {
@@ -374,6 +381,156 @@ fn migration_apply_rejects_stale_digest_and_unknown_action_id_without_writing() 
         changed_snapshot,
         "unknown action rejection must be zero-write"
     );
+}
+
+#[test]
+fn migration_adoption_returns_one_transaction_and_rollback_restores_all_original_targets() {
+    let fixture = Fixture::new();
+    let alpha_source = fixture.canonical_skill("alpha", "canonical alpha\n");
+    let beta_source = fixture.canonical_skill("beta", "canonical beta\n");
+    let alpha_target = fixture.platform_skill_copy("alpha", "canonical alpha\n");
+    let beta_target = fixture.platform_skill_copy("beta", "canonical beta\n");
+    let alpha_before = tree_snapshot(&alpha_target);
+    let beta_before = tree_snapshot(&beta_target);
+
+    let plan = fixture.migration_plan();
+    let alpha_action = action_id_for(&plan, "alpha");
+    let beta_action = action_id_for(&plan, "beta");
+    let applied = fixture.migration_source_first(&plan, &[&alpha_action, &beta_action], true);
+    assert!(
+        applied.status.success(),
+        "two reviewed equivalent actions must apply atomically: stdout={} stderr={}",
+        String::from_utf8_lossy(&applied.stdout),
+        String::from_utf8_lossy(&applied.stderr),
+    );
+    let report: Value = serde_json::from_slice(&applied.stdout).expect("adoption apply JSON");
+    let transaction_id = report["transaction_id"]
+        .as_str()
+        .expect("adoption apply must return one durable transaction_id");
+    assert!(
+        transaction_id.starts_with("adopt-"),
+        "adoption transaction must be distinctly addressable: {report:?}"
+    );
+    assert_eq!(
+        fs::read_link(&alpha_target).expect("alpha became managed link"),
+        alpha_source
+    );
+    assert_eq!(
+        fs::read_link(&beta_target).expect("beta became managed link"),
+        beta_source
+    );
+
+    let rollback = fixture.migration_rollback(transaction_id);
+    assert!(
+        rollback.status.success(),
+        "rollback must restore every selected adoption: stdout={} stderr={}",
+        String::from_utf8_lossy(&rollback.stdout),
+        String::from_utf8_lossy(&rollback.stderr),
+    );
+    assert_eq!(tree_snapshot(&alpha_target), alpha_before);
+    assert_eq!(tree_snapshot(&beta_target), beta_before);
+
+    let after_rollback = fixture.migration_plan();
+    for name in ["alpha", "beta"] {
+        let action = after_rollback["actions"]
+            .as_array()
+            .expect("plan actions")
+            .iter()
+            .find(|action| {
+                action["members"].as_array().is_some_and(|members| {
+                    members.iter().any(|member| member["id"]["name"] == name)
+                })
+            })
+            .unwrap_or_else(|| panic!("rollback plan missing {name:?}: {after_rollback:?}"));
+        assert_eq!(
+            action["kind"], "adopt_equivalent",
+            "rollback must revoke managed-ledger ownership and return {name:?} to an explicit equivalent adoption candidate: {action:?}"
+        );
+    }
+}
+
+#[test]
+fn migration_adoption_rollback_refuses_one_drift_without_touching_other_selected_targets() {
+    let fixture = Fixture::new();
+    fixture.canonical_skill("drifted", "canonical drifted\n");
+    fixture.canonical_skill("untouched", "canonical untouched\n");
+    let drifted_target = fixture.platform_skill_copy("drifted", "canonical drifted\n");
+    let untouched_target = fixture.platform_skill_copy("untouched", "canonical untouched\n");
+    let plan = fixture.migration_plan();
+    let drifted_action = action_id_for(&plan, "drifted");
+    let untouched_action = action_id_for(&plan, "untouched");
+    let applied =
+        fixture.migration_source_first(&plan, &[&drifted_action, &untouched_action], true);
+    assert!(applied.status.success());
+    let report: Value = serde_json::from_slice(&applied.stdout).expect("adoption apply JSON");
+    let transaction_id = report["transaction_id"]
+        .as_str()
+        .expect("adoption apply must return a transaction_id");
+
+    fs::remove_file(&drifted_target).expect("replace managed link with user drift");
+    write(
+        &drifted_target.join("SKILL.md"),
+        "user changed this target after adoption\n",
+    );
+    let untouched_before_rollback = tree_snapshot(&untouched_target);
+
+    let rollback = fixture.migration_rollback(transaction_id);
+    assert!(
+        !rollback.status.success(),
+        "one drifted adopted target must fail the entire rollback: stdout={} stderr={}",
+        String::from_utf8_lossy(&rollback.stdout),
+        String::from_utf8_lossy(&rollback.stderr),
+    );
+    assert_eq!(
+        tree_snapshot(&untouched_target),
+        untouched_before_rollback,
+        "rollback must preflight every selected target and leave non-drifted siblings untouched when any target drifted"
+    );
+    assert_eq!(
+        fs::read(drifted_target.join("SKILL.md")).unwrap(),
+        b"user changed this target after adoption\n"
+    );
+}
+
+#[test]
+fn migration_adoption_plan_only_stale_and_blocking_paths_never_create_a_transaction() {
+    let plan_only = Fixture::new();
+    plan_only.canonical_skill("review", "canonical review\n");
+    plan_only.platform_skill_copy("review", "canonical review\n");
+    let reviewed = plan_only.migration_plan();
+    let review_action = action_id_for(&reviewed, "review");
+    let before_plan_only = tree_snapshot(plan_only.home());
+    let dry_run = plan_only.migration_source_first(&reviewed, &[&review_action], false);
+    assert!(dry_run.status.success());
+    let dry_run_report: Value = serde_json::from_slice(&dry_run.stdout).expect("dry-run JSON");
+    assert!(
+        dry_run_report.get("transaction_id").is_none(),
+        "plan-only adoption must not reserve a durable transaction: {dry_run_report:?}"
+    );
+    assert_eq!(tree_snapshot(plan_only.home()), before_plan_only);
+
+    let stale = Fixture::new();
+    stale.canonical_skill("review", "canonical review\n");
+    let stale_target = stale.platform_skill_copy("review", "canonical review\n");
+    let reviewed = stale.migration_plan();
+    let stale_action = action_id_for(&reviewed, "review");
+    write(&stale_target.join("SKILL.md"), "changed after review\n");
+    let before_stale = tree_snapshot(stale.home());
+    let stale_apply = stale.migration_source_first(&reviewed, &[&stale_action], true);
+    assert!(!stale_apply.status.success());
+    assert_eq!(tree_snapshot(stale.home()), before_stale);
+
+    let blocking = Fixture::new();
+    blocking.canonical_skill("selected", "canonical selected\n");
+    blocking.platform_skill_copy("selected", "canonical selected\n");
+    blocking.canonical_skill("foreign", "canonical foreign\n");
+    blocking.platform_skill_copy("foreign", "different platform content\n");
+    let reviewed = blocking.migration_plan();
+    let selected_action = action_id_for(&reviewed, "selected");
+    let before_blocking = tree_snapshot(blocking.home());
+    let blocking_apply = blocking.migration_source_first(&reviewed, &[&selected_action], true);
+    assert!(!blocking_apply.status.success());
+    assert_eq!(tree_snapshot(blocking.home()), before_blocking);
 }
 
 struct ProjectFixture {

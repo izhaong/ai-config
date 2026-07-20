@@ -91,7 +91,10 @@ pub fn retract_all_platforms_best_effort(
 fn remove_platform_copy_best_effort(dest: &Utf8Path, expected_src: &Utf8Path) {
     if let Ok(metadata) = std::fs::symlink_metadata(dest.as_std_path()) {
         if metadata.file_type().is_symlink() {
-            if matches!(link::check(dest, expected_src), link::LinkHealth::Linked { .. }) {
+            if matches!(
+                link::check(dest, expected_src),
+                link::LinkHealth::Linked { .. }
+            ) {
                 let _ = link::unlink(dest);
             }
             return;
@@ -114,7 +117,11 @@ mod tests {
         let asset_root = root.join(".ai-config");
         let source = asset_root.join("skills/demo/SKILL.md");
         fs::create_dir_all(source.parent().unwrap().as_std_path()).unwrap();
-        fs::write(source.as_std_path(), "---\nname: demo\n---\nmanaged source\n").unwrap();
+        fs::write(
+            source.as_std_path(),
+            "---\nname: demo\n---\nmanaged source\n",
+        )
+        .unwrap();
 
         let dest = asset_dest_for_at_base(
             crate::model::PlatformId::Cursor,
@@ -127,13 +134,7 @@ mod tests {
         fs::create_dir_all(dest.as_std_path()).unwrap();
         fs::write(dest.join("SKILL.md").as_std_path(), "third-party copy\n").unwrap();
 
-        retract_all_platforms_best_effort(
-            &asset_root,
-            &asset_root,
-            root,
-            AssetKind::Skill,
-            "demo",
-        );
+        retract_all_platforms_best_effort(&asset_root, &asset_root, root, AssetKind::Skill, "demo");
 
         assert!(
             dest.join("SKILL.md").exists(),
@@ -149,11 +150,19 @@ mod tests {
         let asset_root = root.join(".ai-config");
         let source = asset_root.join("skills/demo/SKILL.md");
         fs::create_dir_all(source.parent().unwrap().as_std_path()).unwrap();
-        fs::write(source.as_std_path(), "---\nname: demo\n---\nmanaged source\n").unwrap();
+        fs::write(
+            source.as_std_path(),
+            "---\nname: demo\n---\nmanaged source\n",
+        )
+        .unwrap();
 
         let foreign_source = root.join("third-party/demo");
         fs::create_dir_all(foreign_source.as_std_path()).unwrap();
-        fs::write(foreign_source.join("SKILL.md").as_std_path(), "third-party source\n").unwrap();
+        fs::write(
+            foreign_source.join("SKILL.md").as_std_path(),
+            "third-party source\n",
+        )
+        .unwrap();
 
         let dest = asset_dest_for_at_base(
             crate::model::PlatformId::Cursor,
@@ -166,13 +175,7 @@ mod tests {
         fs::create_dir_all(dest.parent().unwrap().as_std_path()).unwrap();
         std::os::unix::fs::symlink(foreign_source.as_std_path(), dest.as_std_path()).unwrap();
 
-        retract_all_platforms_best_effort(
-            &asset_root,
-            &asset_root,
-            root,
-            AssetKind::Skill,
-            "demo",
-        );
+        retract_all_platforms_best_effort(&asset_root, &asset_root, root, AssetKind::Skill, "demo");
 
         assert!(
             std::fs::symlink_metadata(dest.as_std_path()).is_ok(),
@@ -200,13 +203,7 @@ mod tests {
         )
         .unwrap();
 
-        retract_all_platforms_best_effort(
-            &asset_root,
-            &asset_root,
-            root,
-            AssetKind::Mcp,
-            "demo",
-        );
+        retract_all_platforms_best_effort(&asset_root, &asset_root, root, AssetKind::Mcp, "demo");
 
         let after: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(platform_mcp.as_std_path()).unwrap()).unwrap();

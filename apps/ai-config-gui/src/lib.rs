@@ -2,20 +2,13 @@
 //!
 //! Phase 3 W9:核心业务接入。
 //!
-//! ## 暴露给前端的 Tauri command(14 个)
+//! ## 暴露给前端的 Tauri command
 //!
 //! | Command | 入参 | 出参 | 走 core/store 路径 |
 //! |---|---|---|---|
 //! | `cmd_doctor` | — | `DoctorSummary` | (占位,W10 接真值) |
 //! | `cmd_list` | `project?` | `AssetList` | `source::scan_project_root`(项目) / 全局根 |
-//! | `cmd_skill_deploy` | `name, project, to` | `String` | `materialize::deploy`（实体硬拷贝） |
-//! | `cmd_skill_retract` | `name, project, from` | `String` | `materialize::retract` |
-//! | `cmd_rule_deploy` | 同上 | `String` | `materialize::deploy` |
-//! | `cmd_rule_retract` | 同上 | `String` | `materialize::retract` |
-//! | `cmd_mcp_deploy` | 同上 | `String` | `mcp_json::upsert_server_on_platform` |
-//! | `cmd_mcp_retract` | 同上 | `String` | `mcp_json::remove_server_on_platform` |
-//! | `cmd_agent_deploy` | 同上 | `String` | `materialize::deploy` |
-//! | `cmd_agent_retract` | 同上 | `String` | `materialize::retract` |
+//! | `cmd_projection_plan` | `project?, retract?` | `ProjectionReview` | core source-first 只读 planner |
 //! | `cmd_projects_list` | — | `Vec<Project>` | `Store::projects().list()` |
 //! | `cmd_projects_add` | `name, root_path` | `Project` | `Store::projects().add()` |
 //! | `cmd_projects_remove` | `name` | `()` | `Store::projects().remove()` |
@@ -41,7 +34,6 @@ use ai_config_core::error::CoreError;
 use ai_config_core::git::{self, GitEnsureOutcome, GitRepoStatus, GitSyncConfig, GitSyncOutcome};
 use ai_config_core::hook;
 use ai_config_core::hook_adapter;
-use ai_config_core::hook_lifecycle;
 use ai_config_core::materialize;
 use ai_config_core::mcp_json;
 use ai_config_core::model::{AssetKind, PlatformId, Project};
@@ -50,7 +42,6 @@ use ai_config_core::platform;
 use ai_config_core::platform_scan::{self, LinkState, PlatformAssetEntry, PlatformAssetList};
 use ai_config_core::source;
 use ai_config_core::sync::{agent_link_src, asset_dest_for_at_base};
-use ai_config_core::sync_conflict::SyncConflictReport;
 use ai_config_core::template::McpSyncState;
 use ai_config_store::Store;
 use ai_config_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
@@ -181,6 +172,102 @@ async fn cmd_doctor(state: State<'_, AppState>) -> Result<DoctorSummary, String>
             .collect(),
         exit_code: report.exit_code,
     })
+}
+
+/// Source-first GUI writes begin with this read-only review. A later command binds apply to the
+/// returned digest and explicit action IDs; this command never opens a writable ledger.
+#[tauri::command]
+async fn cmd_projection_plan(
+    state: State<'_, AppState>,
+    project: Option<String>,
+    retract: Option<bool>,
+) -> Result<command_bridge::ProjectionReview, String> {
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::projection_plan(
+        default_root,
+        asset_root,
+        deploy_base,
+        retract.unwrap_or(false),
+    )
+    .await
+}
+
+/// Applies a fresh source-first review only when it exactly matches the digest the user saw.
+#[tauri::command]
+async fn cmd_projection_apply(
+    state: State<'_, AppState>,
+    project: Option<String>,
+    plan_digest: String,
+) -> Result<command_bridge::ProjectionApply, String> {
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::projection_apply(default_root, asset_root, deploy_base, false, plan_digest)
+        .await
+}
+
+/// Retracts only source-first managed projections bound to the reviewed uninstall digest.
+#[tauri::command]
+async fn cmd_projection_retract(
+    state: State<'_, AppState>,
+    project: Option<String>,
+    plan_digest: String,
+) -> Result<command_bridge::ProjectionApply, String> {
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::projection_apply(default_root, asset_root, deploy_base, true, plan_digest).await
+}
+
+/// Reviews one explicit platform-to-source import. The plan never includes platform file bodies.
+#[tauri::command]
+async fn cmd_import_to_source_plan(
+    state: State<'_, AppState>,
+    kind: String,
+    name: String,
+    project: Option<String>,
+    from_platform: String,
+    replace: Option<bool>,
+) -> Result<ai_config_core::projection::migration_action::ImportPlan, String> {
+    let kind = parse_kind(&kind)?;
+    let source_platform = parse_deploy_plat(&from_platform)?;
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::import_to_source_plan(
+        default_root,
+        asset_root,
+        deploy_base,
+        kind,
+        name,
+        source_platform,
+        replace.unwrap_or(false),
+    )
+    .await
+}
+
+/// Applies only action IDs from the exact reviewed import plan.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn cmd_import_to_source_apply(
+    state: State<'_, AppState>,
+    kind: String,
+    name: String,
+    project: Option<String>,
+    from_platform: String,
+    replace: Option<bool>,
+    plan_digest: String,
+    selected_action_ids: Vec<String>,
+) -> Result<ai_config_core::projection::migration_action::ImportApplyReport, String> {
+    let kind = parse_kind(&kind)?;
+    let source_platform = parse_deploy_plat(&from_platform)?;
+    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
+    command_bridge::import_to_source_apply(
+        default_root,
+        asset_root,
+        deploy_base,
+        kind,
+        name,
+        source_platform,
+        replace.unwrap_or(false),
+        plan_digest,
+        selected_action_ids,
+    )
+    .await
 }
 
 fn platform_label(p: PlatformId) -> &'static str {
@@ -420,35 +507,6 @@ fn parse_kind(s: &str) -> Result<AssetKind, String> {
     asset_scope::parse_asset_kind(s).map_err(|e| e.to_string())
 }
 
-/// 从平台导入 skill 到 ai-config 源。
-#[tauri::command]
-async fn cmd_skill_import(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from_platform: String,
-) -> Result<String, String> {
-    let plat = parse_plat(&from_platform)?;
-    if plat == PlatformId::AiConfig {
-        return Err("不能从 ai-config 源导入到自身".into());
-    }
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let name_for_msg = name.clone();
-    let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_skill_from_platform(
-            &name,
-            plat,
-            &default_root,
-            &asset_root,
-            &deploy_base,
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| e.to_string())?;
-    Ok(format!("skill `{name_for_msg}` 已导入到 {dest}"))
-}
-
 /// 通过 `npx skills add` 从远程仓库安装 skill 到当前浏览平台。
 #[tauri::command]
 async fn cmd_skill_add(
@@ -533,151 +591,6 @@ async fn cmd_marketplace_list_skills(
     .map_err(|e| format!("spawn_blocking join: {e}"))?
 }
 
-#[tauri::command]
-async fn cmd_rule_import(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from_platform: String,
-) -> Result<String, String> {
-    let plat = parse_plat(&from_platform)?;
-    if plat == PlatformId::AiConfig {
-        return Err("不能从 ai-config 源导入到自身".into());
-    }
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let name_for_msg = name.clone();
-    let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_rule_from_platform(
-            &name,
-            plat,
-            &default_root,
-            &asset_root,
-            &deploy_base,
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| e.to_string())?;
-    Ok(format!("rule `{name_for_msg}` 已导入到 {dest}"))
-}
-
-#[tauri::command]
-async fn cmd_agent_import(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from_platform: String,
-) -> Result<String, String> {
-    let plat = parse_plat(&from_platform)?;
-    if plat == PlatformId::AiConfig {
-        return Err("不能从 ai-config 源导入到自身".into());
-    }
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let name_for_msg = name.clone();
-    let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_agent_from_platform(
-            &name,
-            plat,
-            &default_root,
-            &asset_root,
-            &deploy_base,
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| e.to_string())?;
-    Ok(format!("agent `{name_for_msg}` 已导入到 {dest}"))
-}
-
-#[tauri::command]
-async fn cmd_mcp_import(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from_platform: String,
-) -> Result<String, String> {
-    let plat = parse_plat(&from_platform)?;
-    if plat == PlatformId::AiConfig {
-        return Err("不能从 ai-config 源导入到自身".into());
-    }
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let name_for_msg = name.clone();
-    let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_mcp_from_platform(
-            &name,
-            plat,
-            &default_root,
-            &asset_root,
-            &deploy_base,
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| e.to_string())?;
-    Ok(format!("mcp `{name_for_msg}` 已导入到 {dest}"))
-}
-
-#[tauri::command]
-async fn cmd_hook_import(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from_platform: String,
-) -> Result<String, String> {
-    let plat = parse_plat(&from_platform)?;
-    if plat == PlatformId::AiConfig {
-        return Err("不能从 ai-config 源导入到自身".into());
-    }
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let name_for_msg = name.clone();
-    let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_hook_from_platform(
-            &name,
-            plat,
-            &default_root,
-            &asset_root,
-            &deploy_base,
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| e.to_string())?;
-    Ok(format!("hook `{name_for_msg}` 已导入到 {dest}"))
-}
-
-#[tauri::command]
-async fn cmd_hook_toggle_lifecycle(
-    state: State<'_, AppState>,
-    name: String,
-    lifecycle: String,
-    enabled: bool,
-    project: Option<String>,
-    platform: String,
-) -> Result<String, String> {
-    let browse_plat = parse_plat(&platform)?;
-    let (_default_root, asset_root, deploy_base) =
-        resolve_scope(&state, project.as_deref()).await?;
-    let name_for_msg = name.clone();
-    let lifecycle_for_msg = lifecycle.clone();
-    tokio::task::spawn_blocking(move || {
-        hook_lifecycle::toggle_lifecycle(
-            &asset_root,
-            &deploy_base,
-            browse_plat,
-            &name,
-            &lifecycle,
-            enabled,
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| e.to_string())?;
-    let action = if enabled { "启用" } else { "关闭" };
-    Ok(format!(
-        "hook `{name_for_msg}` 已{action}生命周期 `{lifecycle_for_msg}`"
-    ))
-}
-
 /// 从平台已下发路径只读预览（无 ai-config 源时供详情抽屉使用）。
 #[tauri::command]
 async fn cmd_read_platform_asset(
@@ -687,58 +600,6 @@ async fn cmd_read_platform_asset(
 ) -> Result<AssetFileDetail, String> {
     let kind = parse_kind(&kind)?;
     command_bridge::read_platform_preview(kind, path, name).await
-}
-
-/// 检测跨平台同步是否会覆盖不同内容（基准 = 左侧当前浏览平台）。
-#[tauri::command]
-async fn cmd_detect_sync_conflict(
-    state: State<'_, AppState>,
-    kind: String,
-    name: String,
-    project: Option<String>,
-    baseline_platform: String,
-    target_platform: String,
-) -> Result<Option<SyncConflictReport>, String> {
-    let kind = parse_kind(&kind)?;
-    let baseline = parse_plat(&baseline_platform)?;
-    let target = parse_plat(&target_platform)?;
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    command_bridge::detect_sync_conflict(
-        default_root,
-        asset_root,
-        deploy_base,
-        kind,
-        name,
-        baseline,
-        target,
-    )
-    .await
-}
-
-/// 按用户所选来源平台执行同步（覆盖目标平台）。
-#[tauri::command]
-async fn cmd_apply_sync_choice(
-    state: State<'_, AppState>,
-    kind: String,
-    name: String,
-    project: Option<String>,
-    source_platform: String,
-    target_platform: String,
-) -> Result<String, String> {
-    let kind = parse_kind(&kind)?;
-    let source = parse_plat(&source_platform)?;
-    let target = parse_plat(&target_platform)?;
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    command_bridge::apply_sync_choice(
-        default_root,
-        asset_root,
-        deploy_base,
-        kind,
-        name,
-        source,
-        target,
-    )
-    .await
 }
 
 /// 单条 MCP server 是否已与平台 `mcp.json` 中同名 key 一致。
@@ -863,57 +724,7 @@ fn compute_dest(
     asset_dest_for_at_base(plat, kind, name, src, deploy_base)
 }
 
-// ── Tauri command:单条资产 deploy / retract / CRUD（core::asset_ops）────────
-
-macro_rules! asset_deploy_cmd {
-    ($fn:ident, $kind:expr) => {
-        #[tauri::command]
-        async fn $fn(
-            state: State<'_, AppState>,
-            name: String,
-            project: Option<String>,
-            to: String,
-        ) -> Result<String, String> {
-            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
-            let plat = parse_deploy_plat(&to)?;
-            command_bridge::deploy(dr, ar, db, $kind, name, plat).await
-        }
-    };
-}
-
-macro_rules! asset_deploy_from_platform_cmd {
-    ($fn:ident, $kind:expr) => {
-        #[tauri::command]
-        async fn $fn(
-            state: State<'_, AppState>,
-            name: String,
-            project: Option<String>,
-            from: String,
-            to: String,
-        ) -> Result<String, String> {
-            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
-            let from_plat = parse_deploy_plat(&from)?;
-            let to_plat = parse_deploy_plat(&to)?;
-            command_bridge::deploy_from_platform(dr, ar, db, $kind, name, from_plat, to_plat).await
-        }
-    };
-}
-
-macro_rules! asset_retract_cmd {
-    ($fn:ident, $kind:expr) => {
-        #[tauri::command]
-        async fn $fn(
-            state: State<'_, AppState>,
-            name: String,
-            project: Option<String>,
-            from: String,
-        ) -> Result<String, String> {
-            let (dr, ar, db) = resolve_scope(&state, project.as_deref()).await?;
-            let plat = platform::parse_platform_str(&from).map_err(|e| e.to_string())?;
-            command_bridge::retract(dr, ar, db, $kind, name, plat).await
-        }
-    };
-}
+// ── Tauri command:源资产 CRUD（投影由 source-first CLI 生命周期执行）────────
 
 macro_rules! asset_get_cmd {
     ($fn:ident, $kind:expr) => {
@@ -972,81 +783,35 @@ macro_rules! asset_delete_cmd {
     };
 }
 
-asset_deploy_cmd!(cmd_skill_deploy, AssetKind::Skill);
-asset_deploy_from_platform_cmd!(cmd_skill_deploy_from_platform, AssetKind::Skill);
 asset_get_cmd!(cmd_skill_get, AssetKind::Skill);
 asset_save_cmd!(cmd_skill_save, AssetKind::Skill);
 asset_delete_cmd!(cmd_skill_delete, AssetKind::Skill);
 asset_retract_source_cmd!(cmd_skill_retract_source, AssetKind::Skill);
-asset_retract_cmd!(cmd_skill_retract, AssetKind::Skill);
 
-asset_deploy_cmd!(cmd_rule_deploy, AssetKind::Rule);
-asset_deploy_from_platform_cmd!(cmd_rule_deploy_from_platform, AssetKind::Rule);
 asset_get_cmd!(cmd_rule_get, AssetKind::Rule);
 asset_save_cmd!(cmd_rule_save, AssetKind::Rule);
 asset_delete_cmd!(cmd_rule_delete, AssetKind::Rule);
 asset_retract_source_cmd!(cmd_rule_retract_source, AssetKind::Rule);
-asset_retract_cmd!(cmd_rule_retract, AssetKind::Rule);
 
-asset_deploy_cmd!(cmd_command_deploy, AssetKind::Command);
-asset_deploy_from_platform_cmd!(cmd_command_deploy_from_platform, AssetKind::Command);
 asset_get_cmd!(cmd_command_get, AssetKind::Command);
 asset_save_cmd!(cmd_command_save, AssetKind::Command);
 asset_delete_cmd!(cmd_command_delete, AssetKind::Command);
 asset_retract_source_cmd!(cmd_command_retract_source, AssetKind::Command);
-asset_retract_cmd!(cmd_command_retract, AssetKind::Command);
 
-asset_deploy_cmd!(cmd_mcp_deploy, AssetKind::Mcp);
-asset_deploy_from_platform_cmd!(cmd_mcp_deploy_from_platform, AssetKind::Mcp);
 asset_get_cmd!(cmd_mcp_get, AssetKind::Mcp);
 asset_save_cmd!(cmd_mcp_save, AssetKind::Mcp);
 asset_delete_cmd!(cmd_mcp_delete, AssetKind::Mcp);
 asset_retract_source_cmd!(cmd_mcp_retract_source, AssetKind::Mcp);
-asset_retract_cmd!(cmd_mcp_retract, AssetKind::Mcp);
 
-asset_deploy_cmd!(cmd_agent_deploy, AssetKind::Agent);
-asset_deploy_from_platform_cmd!(cmd_agent_deploy_from_platform, AssetKind::Agent);
 asset_get_cmd!(cmd_agent_get, AssetKind::Agent);
 asset_save_cmd!(cmd_agent_save, AssetKind::Agent);
 asset_delete_cmd!(cmd_agent_delete, AssetKind::Agent);
 asset_retract_source_cmd!(cmd_agent_retract_source, AssetKind::Agent);
-asset_retract_cmd!(cmd_agent_retract, AssetKind::Agent);
 
-asset_deploy_cmd!(cmd_hook_deploy, AssetKind::Hook);
-asset_deploy_from_platform_cmd!(cmd_hook_deploy_from_platform, AssetKind::Hook);
 asset_get_cmd!(cmd_hook_get, AssetKind::Hook);
 asset_save_cmd!(cmd_hook_save, AssetKind::Hook);
 asset_delete_cmd!(cmd_hook_delete, AssetKind::Hook);
 asset_retract_source_cmd!(cmd_hook_retract_source, AssetKind::Hook);
-asset_retract_cmd!(cmd_hook_retract, AssetKind::Hook);
-
-#[tauri::command]
-async fn cmd_command_import(
-    state: State<'_, AppState>,
-    name: String,
-    project: Option<String>,
-    from_platform: String,
-) -> Result<String, String> {
-    let plat = parse_plat(&from_platform)?;
-    if plat == PlatformId::AiConfig {
-        return Err("不能从 ai-config 源导入到自身".into());
-    }
-    let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let name_for_msg = name.clone();
-    let dest = tokio::task::spawn_blocking(move || {
-        platform_scan::import_command_from_platform(
-            &name,
-            plat,
-            &default_root,
-            &asset_root,
-            &deploy_base,
-        )
-    })
-    .await
-    .map_err(|e| format!("spawn_blocking join: {e}"))?
-    .map_err(|e| e.to_string())?;
-    Ok(format!("command `{name_for_msg}` 已导入到 {dest}"))
-}
 
 #[tauri::command]
 async fn cmd_projects_list(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
@@ -1510,68 +1275,46 @@ pub fn run() {
         .manage(AppState::new().expect("AppState::new"))
         .invoke_handler(tauri::generate_handler![
             cmd_doctor,
+            cmd_projection_plan,
+            cmd_projection_apply,
+            cmd_projection_retract,
+            cmd_import_to_source_plan,
+            cmd_import_to_source_apply,
             cmd_list,
             cmd_list_platform,
             cmd_platform_kind_paths,
-            cmd_skill_import,
             cmd_skill_add,
             cmd_skill_add_batch,
             cmd_marketplace_list_skills,
-            cmd_rule_import,
-            cmd_command_import,
-            cmd_agent_import,
-            cmd_mcp_import,
-            cmd_hook_import,
-            cmd_hook_toggle_lifecycle,
             cmd_skill_get,
             cmd_skill_save,
             cmd_skill_delete,
             cmd_skill_retract_source,
-            cmd_skill_deploy,
-            cmd_skill_deploy_from_platform,
-            cmd_skill_retract,
             cmd_rule_get,
             cmd_rule_save,
             cmd_rule_delete,
             cmd_rule_retract_source,
-            cmd_rule_deploy,
-            cmd_rule_deploy_from_platform,
-            cmd_rule_retract,
             cmd_command_get,
             cmd_command_save,
             cmd_command_delete,
             cmd_command_retract_source,
-            cmd_command_deploy,
-            cmd_command_deploy_from_platform,
-            cmd_command_retract,
             cmd_mcp_get,
             cmd_mcp_save,
             cmd_mcp_delete,
             cmd_mcp_retract_source,
-            cmd_mcp_deploy,
-            cmd_mcp_deploy_from_platform,
-            cmd_mcp_retract,
             cmd_agent_get,
             cmd_agent_save,
             cmd_agent_delete,
             cmd_agent_retract_source,
-            cmd_agent_deploy,
-            cmd_agent_deploy_from_platform,
-            cmd_agent_retract,
             cmd_hook_get,
             cmd_hook_save,
             cmd_hook_delete,
             cmd_hook_retract_source,
-            cmd_hook_deploy,
-            cmd_hook_deploy_from_platform,
-            cmd_hook_retract,
             cmd_projects_list,
             cmd_projects_add,
             cmd_projects_remove,
             cmd_reveal_path,
             cmd_read_platform_asset,
-            cmd_detect_sync_conflict,
-            cmd_apply_sync_choice,
             cmd_assets_transfer,
             cmd_git_bootstrap,
             cmd_git_status,

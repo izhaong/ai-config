@@ -3,8 +3,8 @@ use std::fs;
 use ai_config_core::error::CoreError;
 use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::projection::executor::{
-    apply_projection_plan, apply_projection_plans_transactionally, ApplyActionStatus, ApplyOptions,
-    ExecutorContext,
+    apply_projection_plan, apply_projection_plans_transactionally, rollback_projection_transaction,
+    ApplyActionStatus, ApplyOptions, ExecutorContext,
 };
 use ai_config_core::projection::fingerprint::path_content_digest;
 use ai_config_core::projection::ledger::MemoryProjectionLedger;
@@ -720,25 +720,20 @@ fn selected_equivalent_adoption_moves_the_old_target_to_backup_before_linking() 
     .unwrap();
 
     assert_eq!(report.changed, 1);
+    let transaction_id = report
+        .transaction_id
+        .as_deref()
+        .expect("the public single-plan API must not bypass durable adoption");
+    assert!(
+        backup_root.join(format!("{transaction_id}.json")).is_file(),
+        "selected adoption must always leave one durable transaction manifest"
+    );
     assert_eq!(
         fs::read_link(target.as_std_path()).unwrap(),
         asset.source_path
     );
     assert!(backup_root.exists());
     assert!(backup_root.read_dir().unwrap().next().is_some());
-    let manifest = fs::read_dir(backup_root.as_std_path())
-        .unwrap()
-        .map(Result::unwrap)
-        .find(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".manifest.json")
-        })
-        .expect("adoption must leave a backup manifest");
-    let manifest = fs::read_to_string(manifest.path()).unwrap();
-    assert!(manifest.contains(".agents/skills/review"));
-    assert!(!manifest.contains("canonical skill"));
     use std::os::unix::fs::PermissionsExt;
     assert_eq!(
         fs::metadata(backup_root.as_std_path())
@@ -802,7 +797,7 @@ fn selected_equivalent_adoption_rejects_a_symlinked_backup_root_without_writing_
 
 #[cfg(unix)]
 #[test]
-fn selected_equivalent_adoption_never_replaces_a_preexisting_backup_or_manifest() {
+fn selected_equivalent_adoption_ignores_preexisting_legacy_backup_slots() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
     let asset = skill(root, "review");
@@ -833,27 +828,8 @@ fn selected_equivalent_adoption_never_replaces_a_preexisting_backup_or_manifest(
     )
     .unwrap();
 
-    let first_backup = fs::read_dir(backup_root.as_std_path())
-        .unwrap()
-        .map(Result::unwrap)
-        .find(|entry| {
-            !entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".manifest.json")
-        })
-        .unwrap()
-        .file_name()
-        .to_string_lossy()
-        .into_owned();
-    let first_sequence = first_backup
-        .split_once('-')
-        .unwrap()
-        .0
-        .parse::<u64>()
-        .unwrap();
     let mut preserved = Vec::new();
-    for sequence in first_sequence + 1..=first_sequence + 1_024 {
+    for sequence in 0..1_024 {
         let backup = backup_root.join(format!("{sequence}-review"));
         let manifest = backup.with_extension("manifest.json");
         let backup_contents = format!("backup-{sequence}");
@@ -897,17 +873,13 @@ fn selected_equivalent_adoption_never_replaces_a_preexisting_backup_or_manifest(
             manifest_contents
         );
     }
-    if result.is_err() {
-        assert!(fs::symlink_metadata(second_target.as_std_path())
-            .unwrap()
-            .file_type()
-            .is_dir());
-    }
+    result.unwrap();
+    assert!(fs::read_link(second_target.as_std_path()).is_ok());
 }
 
 #[cfg(unix)]
 #[test]
-fn selected_equivalent_adoption_never_follows_a_preexisting_manifest_temp_symlink() {
+fn selected_equivalent_adoption_ignores_unrelated_legacy_manifest_temp_symlinks() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
     let asset = skill(root, "review");
@@ -945,11 +917,8 @@ fn selected_equivalent_adoption_never_follows_a_preexisting_manifest_temp_symlin
         fs::read_to_string(outside.as_std_path()).unwrap(),
         "outside data"
     );
-    assert!(result.is_err());
-    assert!(fs::symlink_metadata(target.as_std_path())
-        .unwrap()
-        .file_type()
-        .is_dir());
+    result.unwrap();
+    assert!(fs::read_link(target.as_std_path()).is_ok());
 }
 
 #[cfg(unix)]
@@ -1385,4 +1354,481 @@ fn ledger_failure_restores_the_old_copied_target_during_a_copy_refresh() {
         fs::read_to_string(target.as_std_path()).unwrap(),
         "canonical skill"
     );
+}
+
+// T010.6 — an explicitly selected equivalent adoption is a user-visible migration, not an
+// ephemeral executor detail.  The public transaction ID lets CLI/MCP expose one reviewed
+// rollback handle for the whole selected slice.
+#[cfg(unix)]
+fn two_equivalent_adoption_request(root: &Utf8Path) -> ProjectionRequest {
+    let review = skill(root, "review");
+    let audit = skill(root, "audit");
+    let deploy_base = root.join("deploy");
+    for name in ["review", "audit"] {
+        let target = deploy_base.join(".agents/skills").join(name);
+        fs::create_dir_all(target.as_std_path()).unwrap();
+        fs::write(target.join("SKILL.md").as_std_path(), "canonical skill").unwrap();
+    }
+    ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/durable-adoption".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base,
+        assets: vec![review, audit],
+        platforms: vec![PlatformId::Cursor],
+    }
+}
+
+#[cfg(unix)]
+fn durable_adoption_targets(request: &ProjectionRequest) -> [camino::Utf8PathBuf; 2] {
+    [
+        request.deploy_base.join(".agents/skills/review"),
+        request.deploy_base.join(".agents/skills/audit"),
+    ]
+}
+
+#[cfg(unix)]
+fn assert_no_durable_transaction_is_reported_as_applied(root: &Utf8Path) {
+    fn visit(path: &Utf8Path, manifests: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(path.as_std_path()) else {
+            return;
+        };
+        for entry in entries.map(Result::unwrap) {
+            let path = camino::Utf8PathBuf::from_path_buf(entry.path()).unwrap();
+            let metadata = fs::symlink_metadata(path.as_std_path()).unwrap();
+            if metadata.is_dir() {
+                visit(&path, manifests);
+            } else if path.extension() == Some("json") {
+                manifests.push(fs::read_to_string(path.as_std_path()).unwrap());
+            }
+        }
+    }
+
+    let mut manifests = Vec::new();
+    visit(root, &mut manifests);
+    assert!(manifests.into_iter().all(|manifest| {
+        !manifest
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>()
+            .contains("\"status\":\"applied\"")
+    }));
+}
+
+#[cfg(unix)]
+fn first_backup_skill_file(backup_root: &Utf8Path) -> camino::Utf8PathBuf {
+    fn visit(path: &Utf8Path) -> Option<camino::Utf8PathBuf> {
+        let entries = fs::read_dir(path.as_std_path()).ok()?;
+        for entry in entries.flatten() {
+            let path = camino::Utf8PathBuf::from_path_buf(entry.path()).ok()?;
+            let metadata = fs::symlink_metadata(path.as_std_path()).ok()?;
+            if metadata.is_dir() {
+                if let Some(file) = visit(&path) {
+                    return Some(file);
+                }
+            } else if path.file_name() == Some("SKILL.md") {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    visit(backup_root).expect("durable adoption must retain a private old-target backup")
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_equivalent_adoptions_share_one_durable_transaction_manifest_and_id() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    assert_eq!(plan.actions.len(), 2);
+    assert!(plan
+        .actions
+        .iter()
+        .all(|action| action.kind == ProjectionActionKind::AdoptEquivalent));
+
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root.clone()),
+    )
+    .unwrap();
+
+    let transaction_id = reports[0]
+        .transaction_id
+        .clone()
+        .expect("a successful selected adoption must expose a durable transaction ID");
+    assert!(!transaction_id.is_empty());
+    let manifest = backup_root.join(format!("{transaction_id}.json"));
+    let manifest = fs::read_to_string(manifest.as_std_path())
+        .expect("all selected adoption actions must share one durable manifest");
+    assert!(manifest.contains(".agents/skills/review"));
+    assert!(manifest.contains(".agents/skills/audit"));
+    for target in durable_adoption_targets(&request) {
+        assert!(fs::symlink_metadata(target.as_std_path())
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_restores_every_original_target_and_revokes_ownership() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root.clone());
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+
+    let rollback = rollback_projection_transaction(&context, &transaction_id).unwrap();
+
+    assert_eq!(rollback.restored, 2);
+    for target in durable_adoption_targets(&request) {
+        assert!(fs::symlink_metadata(target.as_std_path()).unwrap().is_dir());
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md").as_std_path()).unwrap(),
+            "canonical skill"
+        );
+    }
+    for action in &plan.actions {
+        assert_eq!(ledger.get(&action.members[0].id).unwrap(), None);
+    }
+    let manifest = fs::read_to_string(
+        backup_root
+            .join(format!("{transaction_id}.json"))
+            .as_std_path(),
+    )
+    .unwrap();
+    assert!(manifest.contains("\"status\": \"rolled_back\""));
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_recovers_a_commit_before_the_applied_status_was_persisted() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root.clone());
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+    let manifest_path = backup_root.join(format!("{transaction_id}.json"));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(manifest_path.as_std_path()).unwrap()).unwrap();
+    manifest["status"] = serde_json::Value::String("applying".to_owned());
+    fs::write(
+        manifest_path.as_std_path(),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let rollback = rollback_projection_transaction(&context, &transaction_id).unwrap();
+
+    assert_eq!(rollback.restored, 2);
+    for target in durable_adoption_targets(&request) {
+        assert!(fs::symlink_metadata(target.as_std_path()).unwrap().is_dir());
+    }
+    for action in &plan.actions {
+        assert_eq!(ledger.get(&action.members[0].id).unwrap(), None);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_recovers_applying_manifest_before_final_fingerprint_is_persisted() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root.clone());
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+    let manifest_path = backup_root.join(format!("{transaction_id}.json"));
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(manifest_path.as_std_path()).unwrap()).unwrap();
+    manifest["status"] = serde_json::Value::String("applying".to_owned());
+    for action in manifest["actions"].as_array_mut().unwrap() {
+        action["after"] = serde_json::Value::Null;
+        action["backup_path"] = serde_json::Value::Null;
+        action["expected_record"] = serde_json::Value::Null;
+    }
+    fs::write(
+        manifest_path.as_std_path(),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let rollback = rollback_projection_transaction(&context, &transaction_id).unwrap();
+
+    assert_eq!(rollback.restored, 2);
+    for target in durable_adoption_targets(&request) {
+        assert!(fs::symlink_metadata(target.as_std_path()).unwrap().is_dir());
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md").as_std_path()).unwrap(),
+            "canonical skill"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_refuses_a_symlinked_target_parent_without_writing_outside() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root);
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+    let agents_parent = request.deploy_base.join(".agents");
+    let original_parent = request.deploy_base.join(".agents-after-adoption");
+    fs::rename(agents_parent.as_std_path(), original_parent.as_std_path()).unwrap();
+    let outside = root.join("outside");
+    fs::create_dir_all(outside.join("skills").as_std_path()).unwrap();
+    for action in &plan.actions {
+        let name = action.members[0].id.name.as_str();
+        std::os::unix::fs::symlink(
+            action.members[0].source.absolute_path.as_std_path(),
+            outside.join("skills").join(name).as_std_path(),
+        )
+        .unwrap();
+    }
+    std::os::unix::fs::symlink(outside.as_std_path(), agents_parent.as_std_path()).unwrap();
+    let before = ["review", "audit"]
+        .map(|name| fs::read_link(outside.join("skills").join(name).as_std_path()).unwrap());
+
+    assert!(rollback_projection_transaction(&context, &transaction_id).is_err());
+    assert_eq!(
+        ["review", "audit"].map(|name| {
+            fs::read_link(outside.join("skills").join(name).as_std_path()).unwrap()
+        }),
+        before,
+        "a symlinked target ancestor must make rollback fail closed before any write"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn selected_equivalent_adoption_ledger_batch_failure_restores_every_target_and_never_leaves_applied_transaction(
+) {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = FailingLedger;
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+
+    let failure = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root.clone()),
+    )
+    .unwrap_err();
+
+    assert_eq!(failure.reports.len(), 1);
+    assert_eq!(failure.reports[0].rolled_back, 2);
+    for target in durable_adoption_targets(&request) {
+        assert!(fs::symlink_metadata(target.as_std_path()).unwrap().is_dir());
+        assert_eq!(
+            fs::read_to_string(target.join("SKILL.md").as_std_path()).unwrap(),
+            "canonical skill"
+        );
+    }
+    assert_no_durable_transaction_is_reported_as_applied(&backup_root);
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_refuses_target_drift_without_touching_any_member() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root);
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+    let [review, audit] = durable_adoption_targets(&request);
+    fs::remove_file(review.as_std_path()).unwrap();
+    fs::write(review.as_std_path(), "user drift").unwrap();
+
+    assert!(rollback_projection_transaction(&context, &transaction_id).is_err());
+    assert_eq!(
+        fs::read_to_string(review.as_std_path()).unwrap(),
+        "user drift"
+    );
+    assert!(fs::symlink_metadata(audit.as_std_path())
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_refuses_backup_drift_without_touching_any_member() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root.clone());
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+    let backup = first_backup_skill_file(&backup_root);
+    fs::write(backup.as_std_path(), "backup drift").unwrap();
+    let targets = durable_adoption_targets(&request);
+
+    assert!(rollback_projection_transaction(&context, &transaction_id).is_err());
+    assert_eq!(
+        fs::read_to_string(backup.as_std_path()).unwrap(),
+        "backup drift"
+    );
+    for target in targets {
+        assert!(fs::symlink_metadata(target.as_std_path())
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_refuses_a_symlinked_backup_without_touching_any_member() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root.clone());
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+    let backup_file = first_backup_skill_file(&backup_root);
+    let backup_payload = backup_file.parent().unwrap().to_owned();
+    let outside = root.join("outside-backup");
+    fs::rename(backup_payload.as_std_path(), outside.as_std_path()).unwrap();
+    std::os::unix::fs::symlink(outside.as_std_path(), backup_payload.as_std_path()).unwrap();
+    let targets = durable_adoption_targets(&request);
+
+    assert!(rollback_projection_transaction(&context, &transaction_id).is_err());
+    assert_eq!(
+        fs::read_to_string(outside.join("SKILL.md").as_std_path()).unwrap(),
+        "canonical skill"
+    );
+    for target in targets {
+        assert!(fs::symlink_metadata(target.as_std_path())
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_adoption_rollback_refuses_ledger_drift_without_touching_any_member() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let request = two_equivalent_adoption_request(root);
+    let backup_root = root.join("backups");
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    let context = ExecutorContext::new(&ledger, request.deploy_base.clone(), backup_root);
+    let reports = apply_projection_plans_transactionally(
+        [(
+            &plan,
+            ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+        )],
+        &context,
+    )
+    .unwrap();
+    let transaction_id = reports[0].transaction_id.clone().unwrap();
+    let drifted_id = plan.actions[0].members[0].id.clone();
+    let original = ledger.get(&drifted_id).unwrap().unwrap();
+    let drifted = ProjectionRecord {
+        target_fingerprint: "user-changed-ledger".to_owned(),
+        ..original
+    };
+    ledger
+        .apply_batch(&[LedgerMutation::Upsert(drifted.clone())])
+        .unwrap();
+    let targets = durable_adoption_targets(&request);
+
+    assert!(rollback_projection_transaction(&context, &transaction_id).is_err());
+    assert_eq!(ledger.get(&drifted_id).unwrap(), Some(drifted));
+    for target in targets {
+        assert!(fs::symlink_metadata(target.as_std_path())
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
 }

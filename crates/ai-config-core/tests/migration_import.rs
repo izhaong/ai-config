@@ -3,10 +3,12 @@
 use std::fs;
 
 use ai_config_core::model::{AssetKind, PlatformId};
+use ai_config_core::paths::SyncRoots;
 use ai_config_core::projection::fingerprint::path_fingerprint;
 use ai_config_core::projection::migration_action::{
-    apply_import_plan, build_import_plan, rollback_import_transaction, ImportActionKind,
-    ImportApplyOptions, ImportRequest, ImportSecretStatus, RollbackStatus,
+    apply_import_plan, build_import_plan, import_request_for_sync_roots,
+    rollback_import_transaction, ImportActionKind, ImportApplyOptions, ImportRequest,
+    ImportSecretStatus, RollbackStatus,
 };
 use ai_config_core::projection::model::SourceLayer;
 use camino::Utf8Path;
@@ -32,6 +34,35 @@ fn prompt_request(root: &Utf8Path, replace: bool) -> ImportRequest {
         destination_asset_root: root.join("repo/.ai-config"),
         replace,
     }
+}
+
+#[test]
+fn scope_import_request_uses_only_the_current_platform_target_and_canonical_layer() {
+    let temp = TempDir::new().unwrap();
+    let root = utf8(temp.path());
+    let roots = SyncRoots {
+        repo_root: root.join("repo"),
+        asset_root: root.join("repo/.ai-config"),
+        global_default: root.join("global/.ai-config"),
+        deploy_base: root.join("repo"),
+    };
+
+    let request = import_request_for_sync_roots(
+        AssetKind::Skill,
+        "review",
+        PlatformId::Cursor,
+        &roots,
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(request.source_path, root.join("repo/.cursor/skills/review"));
+    assert_eq!(
+        request.approved_source_root,
+        root.join("repo/.cursor/skills")
+    );
+    assert_eq!(request.destination_layer, SourceLayer::Project);
+    assert_eq!(request.destination_asset_root, root.join("repo/.ai-config"));
 }
 
 #[test]

@@ -167,10 +167,28 @@ pub fn run_import(
     }
 }
 
-/// Rollback is deliberately a migration subcommand because the import manifest lives in the
-/// migration transaction root. A drift report is useful JSON, but it remains a non-successful
-/// outcome and core has already made no writes in that case.
+/// Rollback routes the distinct import and adoption transaction namespaces to their core-owned
+/// recovery logic. Both paths preflight the complete transaction before changing any target.
 pub fn run_rollback(mode: OutputMode, default_root: &Utf8Path, transaction_id: &str) -> ExitCode {
+    if transaction_id.starts_with("adopt-") {
+        return match projection::rollback_reviewed_migration(default_root, transaction_id) {
+            Ok(report) => {
+                if mode.is_json() {
+                    emit_json(mode, &report);
+                } else if mode.is_human() {
+                    emit_line(
+                        mode,
+                        format!(
+                            "migration rollback {}: {} restored",
+                            report.transaction_id, report.restored
+                        ),
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => migration_error(mode, error),
+        };
+    }
     match rollback_import_transaction(
         &transaction_root(default_root),
         transaction_id,
@@ -329,8 +347,8 @@ pub fn run_source_first(
                 emit_line(
                     mode,
                     format!(
-                        "migration source-first: {} selected actions adopted",
-                        summary.changed
+                        "migration source-first: {} selected actions adopted; transaction {}",
+                        summary.apply.changed, summary.transaction_id
                     ),
                 );
             }

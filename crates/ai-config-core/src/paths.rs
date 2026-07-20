@@ -408,10 +408,7 @@ pub fn discover_global_asset_root() -> Utf8PathBuf {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    static HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn ensure_creates_standard_subdirs() {
@@ -499,11 +496,10 @@ mod tests {
     fn init_uses_ai_config_root_override() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        std::env::set_var("AI_CONFIG_ROOT", root.as_str());
+        let _root_guard = crate::test_env::EnvGuard::set("AI_CONFIG_ROOT", root.as_str());
         let got = init_user_asset_root().unwrap();
         assert_eq!(got, root);
         assert!(root.join("skills").is_dir());
-        std::env::remove_var("AI_CONFIG_ROOT");
     }
 
     #[test]
@@ -560,12 +556,12 @@ mod tests {
 
     #[test]
     fn resolve_sync_roots_project_repo() {
-        let _lock = HOME_TEST_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let prev = std::env::var("HOME").ok();
-        std::env::set_var("HOME", home.as_str());
-        std::env::remove_var("AI_CONFIG_ROOT");
+        let _env_guard = crate::test_env::EnvGuard::set_many(&[
+            ("HOME", Some(home.as_str())),
+            ("AI_CONFIG_ROOT", None),
+        ]);
         fs::create_dir_all(home.join(".ai-config/skills")).unwrap();
         let repo = home.join("myproj");
         fs::create_dir_all(repo.join(".ai-config/skills")).unwrap();
@@ -575,21 +571,16 @@ mod tests {
         assert_eq!(roots.deploy_base, repo);
         assert_ne!(roots.global_default, roots.asset_root);
         assert!(roots.global_default.ends_with(".ai-config"));
-        if let Some(p) = prev {
-            std::env::set_var("HOME", p);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 
     #[test]
     fn resolve_sync_roots_global_asset_root() {
-        let _lock = HOME_TEST_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let prev = std::env::var("HOME").ok();
-        std::env::set_var("HOME", home.as_str());
-        std::env::remove_var("AI_CONFIG_ROOT");
+        let _env_guard = crate::test_env::EnvGuard::set_many(&[
+            ("HOME", Some(home.as_str())),
+            ("AI_CONFIG_ROOT", None),
+        ]);
         let asset = home.join(".ai-config");
         fs::create_dir_all(asset.join("skills/foo")).unwrap();
         let roots = resolve_sync_roots(&asset);
@@ -597,23 +588,18 @@ mod tests {
         assert_eq!(roots.asset_root, asset);
         assert_eq!(roots.global_default, asset);
         assert_eq!(roots.deploy_base, home);
-        if let Some(p) = prev {
-            std::env::set_var("HOME", p);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 
     #[test]
     fn resolve_sync_roots_does_not_initialize_global_asset_root() {
-        let _lock = HOME_TEST_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let home = Utf8PathBuf::from_path_buf(tmp.path().join("home")).unwrap();
         let repo = Utf8PathBuf::from_path_buf(tmp.path().join("repo")).unwrap();
         fs::create_dir_all(repo.as_std_path()).unwrap();
-        let prev = std::env::var("HOME").ok();
-        std::env::set_var("HOME", home.as_str());
-        std::env::remove_var("AI_CONFIG_ROOT");
+        let _env_guard = crate::test_env::EnvGuard::set_many(&[
+            ("HOME", Some(home.as_str())),
+            ("AI_CONFIG_ROOT", None),
+        ]);
 
         let _ = resolve_sync_roots(&repo);
 
@@ -621,10 +607,5 @@ mod tests {
             !home.join(".ai-config").exists(),
             "scope resolution is read-only and must not seed the global asset root"
         );
-        if let Some(p) = prev {
-            std::env::set_var("HOME", p);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 }

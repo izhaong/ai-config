@@ -1096,9 +1096,9 @@ legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI al
 - Create: `crates/ai-config-cli/tests/repository_hygiene.rs`
 - Delete after zero references: `materialize.rs`, `sync_conflict.rs`, legacy MCP paths/functions, obsolete path-independence logic
 
-- [ ] **T012.1 Write failing hygiene tests**：`git ls-files` fixture 禁止 platform skill/prompt regular copies、generated configs 和 machine absolute paths；canonical project assets 必须唯一；root AGENTS 只能是指向 `.ai-config/prompts/AGENTS.md` 的 tracked symlink（或经明确豁免的最小 bootstrap）；tracked MCP fixture 仅 placeholders。
-- [ ] **T012.2 Verify RED**：`cargo test -p ai-config-cli --test repository_hygiene`，预期当前四套 tracked copies 与绝对路径导致失败。
-- [ ] **T012.3 Dogfood source-first layout**：保留 `.ai-config` canonical；完整入口正文迁入 `.ai-config/prompts/AGENTS.md`，根 AGENTS 使用 ProjectEntry link；平台 projection 改为本地生成并 gitignored。
+- [x] **T012.1 Write failing hygiene tests**：`git ls-files` fixture 禁止 platform skill/prompt regular copies、generated configs 和 machine absolute paths；canonical project assets 必须唯一；root AGENTS 只能是指向 `.ai-config/prompts/AGENTS.md` 的 tracked symlink（或经明确豁免的最小 bootstrap）；tracked MCP fixture 仅 placeholders。
+- [x] **T012.2 Verify RED**：`cargo test -p ai-config-cli --test repository_hygiene`，预期当前四套 tracked copies 与绝对路径导致失败。
+- [x] **T012.3 Dogfood source-first layout**：保留 `.ai-config` canonical；完整入口正文迁入 `.ai-config/prompts/AGENTS.md`，根 AGENTS 使用 ProjectEntry link；平台 projection 改为本地生成并 gitignored。
 - [ ] **T012.4 Remove legacy production paths**：`rg` 确认无调用后删除 materialize、peer-copy、doctor materialize、旧 MCP whole-file deploy/retract；legacy inventory reader 保留一个发布周期且严格只读。
 - [ ] **T012.5 Rewrite product truth**：PRD 明确唯一源/单向 projection；ARCHITECTURE 只保留 planner/executor；DESIGN 更新状态/按钮；constitution 把“直接覆盖不备份”改为“foreign fail-closed + generated transaction backup”。
 - [ ] **T012.6 Verify no contradictory terms**：运行 `rg -n "五平台对等|独立硬拷贝|deploy_from_platform|materialize::deploy|\.codex/mcp\.json|\.claude/mcp\.json" README.md docs crates apps`；除 migration/history 章节外预期零命中。

@@ -47,3 +47,17 @@ apps/ai-config-gui/e2e/output/
 
 # Hook 本地测试状态
 **/.test-state/
+
+# Source-first dogfood: platform projections are generated locally, never tracked as source.
+.cursor/agents/
+.cursor/commands/
+.cursor/hooks/
+.cursor/hooks.json
+.cursor/rules/
+.cursor/skills/
+.codex/hooks/
+.codex/hooks.json
+.codex/skills/
+.claude/hooks/
+.claude/settings.json
+.claude/skills/

@@ -10,8 +10,9 @@ use ai_config_core::error::{exit_code, CoreError};
 use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::paths::{self, SyncRoots};
 use ai_config_core::projection::executor::{
-    apply_projection_plans_transactionally, ApplyOptions, ApplyReport, ExecutorContext,
-    McpSecretProvider, ProjectionTransactionError,
+    apply_projection_plans_transactionally, rollback_projection_transaction, ApplyOptions,
+    ApplyReport, ExecutorContext, McpSecretProvider, ProjectionRollbackReport,
+    ProjectionTransactionError,
 };
 use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
 use ai_config_core::projection::mcp::source::resolve_effective_mcp_definitions;
@@ -58,6 +59,13 @@ pub struct ApplySummary {
     pub not_applied: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mcp_skipped_members: Vec<McpSkippedMemberSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MigrationAdoptionReport {
+    pub transaction_id: String,
+    #[serde(flatten)]
+    pub apply: ApplySummary,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -372,7 +380,7 @@ pub(crate) fn apply_reviewed_migration(
     default_root: &Utf8Path,
     reviewed_digest: &str,
     selected: &BTreeSet<String>,
-) -> Result<ApplySummary, CoreError> {
+) -> Result<MigrationAdoptionReport, CoreError> {
     let roots = paths::resolve_sync_roots(default_root);
     let ledger_path = roots
         .deploy_base
@@ -388,6 +396,31 @@ pub(crate) fn apply_reviewed_migration(
         .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
     apply_selected_adoptions(&bundle, &store.projections(), &roots, &secrets, selected)
         .map_err(|error| error.error)
+}
+
+pub(crate) fn rollback_reviewed_migration(
+    default_root: &Utf8Path,
+    transaction_id: &str,
+) -> Result<ProjectionRollbackReport, CoreError> {
+    let roots = paths::resolve_sync_roots(default_root);
+    let ledger_path = roots
+        .deploy_base
+        .join(".ai-config/projection-ledger.sqlite");
+    let metadata = std::fs::symlink_metadata(ledger_path.as_std_path())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(CoreError::ProjectionLedger(
+            "durable adoption rollback requires a direct existing ownership ledger".to_owned(),
+        ));
+    }
+    let store = Store::open_at(ledger_path.as_std_path())
+        .map_err(|error| CoreError::ProjectionLedger(error.to_string()))?;
+    let ledger = store.projections();
+    let context = ExecutorContext::new(
+        &ledger,
+        roots.deploy_base.clone(),
+        roots.deploy_base.join(".ai-config/projection-backups"),
+    );
+    rollback_projection_transaction(&context, transaction_id)
 }
 
 fn execute_workspace(
@@ -787,9 +820,8 @@ fn public_actions_with_ids(plans: &[ProjectionPlan]) -> Result<Vec<serde_json::V
                 "action_id".to_owned(),
                 serde_json::Value::String(action_id.clone()),
             );
-            // A direct foreign target must go through the explicit import workflow. The generic
-            // planner's conflict wording is correct for normal sync, while this reviewed
-            // migration surface needs to make that next safe step explicit.
+            // Keep the CLI's workspace-overlay planner aligned with the core facade's public
+            // contract: a foreign direct target must be reviewed through import, never adopted.
             if action.kind == ProjectionActionKind::ReportOnly
                 && action.state.as_deref() == Some("foreign")
                 && !action.members.is_empty()
@@ -932,7 +964,7 @@ fn apply_selected_adoptions(
     roots: &SyncRoots,
     secrets: &LifecycleMcpSecrets,
     selected: &BTreeSet<String>,
-) -> Result<ApplySummary, ProjectionTransactionError> {
+) -> Result<MigrationAdoptionReport, ProjectionTransactionError> {
     let plans = bundle
         .plans
         .iter()
@@ -976,7 +1008,24 @@ fn apply_selected_adoptions(
         }),
         &context,
     )?;
-    Ok(summarize_apply_reports(reports))
+    let transaction_ids = reports
+        .iter()
+        .filter_map(|report| report.transaction_id.clone())
+        .collect::<BTreeSet<_>>();
+    let transaction_id = if transaction_ids.len() == 1 {
+        transaction_ids.into_iter().next().expect("checked length")
+    } else {
+        return Err(ProjectionTransactionError {
+            error: CoreError::ProjectionLedger(
+                "selected adoption did not produce one durable transaction ID".to_owned(),
+            ),
+            reports,
+        });
+    };
+    Ok(MigrationAdoptionReport {
+        transaction_id,
+        apply: summarize_apply_reports(reports),
+    })
 }
 
 fn summarize_apply_reports(reports: Vec<ApplyReport>) -> ApplySummary {

@@ -1,8 +1,8 @@
 # Hermes 入口（ai-config 工具仓）
 
-**Rules 单一源**：`~/.ai-config/rules/*.mdc`（与 Cursor / Codex 同源，经 `ai-config install` 链到各 IDE）。
+**Rules 单一源**：本仓使用 `.ai-config/rules/*.mdc`；用户级资产使用 `~/.ai-config/rules/*.mdc`。平台目录由 source-first projection 生成，绝不作为正文副本提交。
 
-在 **ai-config 目录**内改工具代码时，业务规则仍可读 `~/.ai-config/rules/`。
+在 **ai-config 目录**内改工具代码时，先读项目 `.ai-config/rules/`。
 
 | 规则             | 路径（用户目录）                                |
 | ---------------- | ----------------------------------------------- |

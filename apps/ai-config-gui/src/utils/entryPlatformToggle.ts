@@ -12,16 +12,12 @@ import {
   isPlatformActive,
   isSourcePlatform,
 } from "../types";
-import {
-  aggregateManagedPlatformState,
-  aggregatePlatformState,
-} from "./aggregatePlatformState";
+import { aggregateManagedPlatformState } from "./aggregatePlatformState";
 
 export type EntryPlatformToggleAction =
   | "deploy"
   | "retract"
   | "import"
-  | "platform_copy"
   | "delete_source"
   | "skip"
   | "unsupported";
@@ -39,9 +35,12 @@ function isBrowsingDeployPlatform(ctx: EntryPlatformToggleContext): boolean {
   return !ctx.browsingSource && !isSourcePlatform(ctx.activePlatform);
 }
 
-/** MCP 与其它资产：已激活（linked / synced）均可点击收回 */
+/** MCP 没有 per-server ownership 证据，不能触发收回。 */
 function canRetractEntry(entry: PlatformAssetEntry, state: LinkState): boolean {
-  if (entry.kind === "mcp" || entry.kind === "hook") {
+  if (entry.kind === "mcp") {
+    return false;
+  }
+  if (entry.kind === "hook") {
     return isPlatformActive(state);
   }
   return canRetract(state);
@@ -82,10 +81,7 @@ export function resolveBatchPlatformToggleMode(
   if (browsingSource && activePlatform === "aiconfig" && plat === "aiconfig") {
     return "activate_all";
   }
-  const agg =
-    entries.length > 0 && entries.every((e) => e.kind === "mcp")
-      ? aggregatePlatformState(entries, plat)
-      : aggregateManagedPlatformState(entries, plat);
+  const agg = aggregateManagedPlatformState(entries, plat);
   return agg === "all" ? "retract_all" : "activate_all";
 }
 
@@ -125,6 +121,12 @@ export function resolveEntryPlatformToggleAction(
     return "skip";
   }
 
+  // Platform views are inventory/import surfaces only. Projection and retraction are always
+  // scope-level, digest-bound operations opened from the canonical source view.
+  if (!ctx.browsingSource) {
+    return "skip";
+  }
+
   const state = entry.states[deployPlat];
   if (canRetractEntry(entry, state)) {
     return "retract";
@@ -149,10 +151,6 @@ export function resolveEntryPlatformToggleAction(
     return "deploy";
   }
 
-  if (isBrowsingDeployPlatform(ctx)) {
-    return "platform_copy";
-  }
-
   return "skip";
 }
 
@@ -174,9 +172,5 @@ export function resolveBatchEntryPlatformAction(
   if (mode === "retract_all") {
     return single === "retract" ? single : "skip";
   }
-  return single === "deploy" ||
-    single === "import" ||
-    single === "platform_copy"
-    ? single
-    : "skip";
+  return single === "deploy" || single === "import" ? single : "skip";
 }
