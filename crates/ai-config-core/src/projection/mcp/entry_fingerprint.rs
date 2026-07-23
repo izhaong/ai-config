@@ -46,10 +46,33 @@ pub fn inspect_codex_mcp_entries(existing: &str) -> Result<Vec<McpEntryFingerpri
 
     let mut entries = Vec::with_capacity(servers.len());
     for (name, config) in servers {
-        let config = toml_to_json(config)?;
+        let mut config = toml_to_json(config)?;
+        if let Some(config) = config.as_object_mut() {
+            config.remove("type");
+        }
         entries.push(fingerprint_entry(name, config)?);
     }
     Ok(sorted_entries(entries))
+}
+
+/// Read one named Codex MCP table as normalized JSON without exposing the surrounding config.
+pub(crate) fn codex_mcp_entry(
+    existing: &str,
+    name: &str,
+) -> Result<Option<serde_json::Value>, CoreError> {
+    let root: toml::Value = existing
+        .parse()
+        .map_err(|_| inspection_error("Codex MCP TOML syntax is invalid"))?;
+    let root = root
+        .as_table()
+        .ok_or_else(|| inspection_error("Codex MCP TOML must have a table root"))?;
+    let Some(servers) = root.get("mcp_servers") else {
+        return Ok(None);
+    };
+    let servers = servers
+        .as_table()
+        .ok_or_else(|| inspection_error("mcp_servers must be a TOML table"))?;
+    servers.get(name).map(toml_to_json).transpose()
 }
 
 /// Inspect Hermes' `mcp_servers` mapping without reading or writing a target file.
@@ -122,6 +145,12 @@ fn fingerprint_entry(
         name: name.to_owned(),
         digest: hex::encode(hasher.finalize()),
     })
+}
+
+/// Fingerprint a canonical per-server config using the same semantic encoding as platform
+/// container inspection. The server name is intentionally excluded from the digest.
+pub(crate) fn fingerprint_mcp_config(config: serde_json::Value) -> Result<String, CoreError> {
+    Ok(fingerprint_entry("canonical", config)?.digest)
 }
 
 fn sorted_entries(mut entries: Vec<McpEntryFingerprint>) -> Vec<McpEntryFingerprint> {

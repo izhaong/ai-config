@@ -932,11 +932,6 @@ fn validate_migration_review(
             "source-first migration requires at least one selected action ID".to_owned(),
         ));
     }
-    if let Some(reason) = blocking_reason(bundle) {
-        return Err(CoreError::InvalidPath(format!(
-            "source-first migration cannot apply while the reviewed plan contains a blocking action: {reason}"
-        )));
-    }
     for selected_id in selected {
         let candidate = bundle.plans.iter().find_map(|plan| {
             plan.action_ids

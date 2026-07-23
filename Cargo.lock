@@ -134,6 +134,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-config-gui-bin"
+version = "0.4.0"
+dependencies = [
+ "ai-config-gui",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "ai-config-store"
 version = "0.4.0"
 dependencies = [

@@ -285,7 +285,7 @@ fn migration_apply_changes_only_the_explicitly_selected_equivalent_action() {
 }
 
 #[test]
-fn migration_apply_is_zero_write_when_any_sibling_action_is_blocking() {
+fn migration_apply_is_scoped_to_selected_equivalent_action_despite_blocking_sibling() {
     let fixture = Fixture::new();
     fixture.canonical_skill("selected", "canonical selected\n");
     fixture.platform_skill_copy("selected", "canonical selected\n");
@@ -294,20 +294,22 @@ fn migration_apply_is_zero_write_when_any_sibling_action_is_blocking() {
 
     let plan = fixture.migration_plan();
     let selected_action = action_id_for(&plan, "selected");
-    let before = tree_snapshot(fixture.home());
+    let foreign_target = fixture.home().join(".agents/skills/foreign");
+    let foreign_before = tree_snapshot(&foreign_target);
     let output = fixture.migration_source_first(&plan, &[&selected_action], true);
 
     assert!(
-        !output.status.success(),
-        "a blocking sibling must reject the whole reviewed transaction: stdout={} stderr={}",
+        output.status.success(),
+        "an unrelated blocking sibling must not reject the selected reviewed action: stdout={} stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
     assert_eq!(
-        tree_snapshot(fixture.home()),
-        before,
-        "a blocking sibling must keep every selected and unselected target unchanged"
+        tree_snapshot(&foreign_target),
+        foreign_before,
+        "the unselected blocking sibling must remain unchanged"
     );
+    assert!(fixture.home().join(".agents/skills/selected").is_symlink());
 }
 
 #[test]
@@ -493,7 +495,8 @@ fn migration_adoption_rollback_refuses_one_drift_without_touching_other_selected
 }
 
 #[test]
-fn migration_adoption_plan_only_stale_and_blocking_paths_never_create_a_transaction() {
+fn migration_adoption_plan_only_and_stale_paths_are_read_only_while_unrelated_blockers_are_ignored()
+{
     let plan_only = Fixture::new();
     plan_only.canonical_skill("review", "canonical review\n");
     plan_only.platform_skill_copy("review", "canonical review\n");
@@ -527,10 +530,19 @@ fn migration_adoption_plan_only_stale_and_blocking_paths_never_create_a_transact
     blocking.platform_skill_copy("foreign", "different platform content\n");
     let reviewed = blocking.migration_plan();
     let selected_action = action_id_for(&reviewed, "selected");
-    let before_blocking = tree_snapshot(blocking.home());
+    let foreign_before = tree_snapshot(&blocking.home().join(".agents/skills/foreign"));
     let blocking_apply = blocking.migration_source_first(&reviewed, &[&selected_action], true);
-    assert!(!blocking_apply.status.success());
-    assert_eq!(tree_snapshot(blocking.home()), before_blocking);
+    assert!(
+        blocking_apply.status.success(),
+        "an unrelated foreign action must not block an explicitly selected equivalent adoption: stdout={} stderr={}",
+        String::from_utf8_lossy(&blocking_apply.stdout),
+        String::from_utf8_lossy(&blocking_apply.stderr),
+    );
+    assert_eq!(
+        tree_snapshot(&blocking.home().join(".agents/skills/foreign")),
+        foreign_before,
+        "unselected foreign targets must remain untouched"
+    );
 }
 
 struct ProjectFixture {
@@ -596,6 +608,93 @@ impl ProjectFixture {
             .output()
             .expect("apply prompt import")
     }
+
+    fn mcp_import_plan(&self, name: &str) -> std::process::Output {
+        self.command()
+            .args(["import", "mcp", name, "--from", "codex", "--to", "project"])
+            .output()
+            .expect("plan Codex MCP import")
+    }
+
+    fn apply_mcp_import(&self, name: &str, plan: &Value) -> std::process::Output {
+        let mut reviewed = tempfile::NamedTempFile::new().expect("reviewed MCP import plan");
+        serde_json::to_writer(&mut reviewed, plan).expect("serialize MCP import plan");
+        reviewed.flush().expect("flush MCP import plan");
+        self.command()
+            .args([
+                "import", "mcp", name, "--from", "codex", "--to", "project", "--plan",
+            ])
+            .arg(reviewed.path())
+            .arg("--apply")
+            .output()
+            .expect("apply Codex MCP import")
+    }
+}
+
+#[test]
+fn codex_mcp_import_is_reviewed_reversible_and_preserves_the_platform_target() {
+    let fixture = ProjectFixture::new();
+    let target = fixture.project.join(".codex/config.toml");
+    write(
+        &target,
+        r#"model = "gpt-test"
+
+[mcp_servers.gitea]
+url = "https://mcp.example.test/mcp"
+bearer_token_env_var = "PROJECT_GITEA_TOKEN"
+"#,
+    );
+    let before = fs::read(&target).unwrap();
+
+    let planned = fixture.mcp_import_plan("gitea");
+    assert!(
+        planned.status.success(),
+        "Codex MCP import plan failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&planned.stdout),
+        String::from_utf8_lossy(&planned.stderr),
+    );
+    let plan: Value = serde_json::from_slice(&planned.stdout).unwrap();
+    assert_eq!(plan["actions"][0]["kind"], "mcp");
+    assert_eq!(plan["actions"][0]["source_platform"], "codex");
+    assert_eq!(fs::read(&target).unwrap(), before);
+
+    let applied = fixture.apply_mcp_import("gitea", &plan);
+    assert!(
+        applied.status.success(),
+        "Codex MCP import apply failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&applied.stdout),
+        String::from_utf8_lossy(&applied.stderr),
+    );
+    let report: Value = serde_json::from_slice(&applied.stdout).unwrap();
+    let transaction_id = report["transaction_id"].as_str().unwrap();
+    let canonical = fixture.project.join(".ai-config/mcp/servers/gitea.json");
+    let canonical_json: Value = serde_json::from_slice(&fs::read(&canonical).unwrap()).unwrap();
+    assert_eq!(canonical_json["targets"], serde_json::json!(["codex"]));
+    assert_eq!(
+        canonical_json["config"]["bearer_token_env_var"],
+        "PROJECT_GITEA_TOKEN"
+    );
+    assert_eq!(fs::read(&target).unwrap(), before);
+    assert!(report["projection_plan"]["actions"]
+        .as_array()
+        .is_some_and(|actions| actions.iter().any(|action| {
+            action["kind"] == "adopt_equivalent"
+                && action["reason_code"] == "equivalent_mcp_entries_unmanaged"
+        })));
+
+    let rolled_back = fixture
+        .command()
+        .args(["migrate", "rollback", transaction_id])
+        .output()
+        .expect("rollback Codex MCP import");
+    assert!(
+        rolled_back.status.success(),
+        "Codex MCP rollback failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&rolled_back.stdout),
+        String::from_utf8_lossy(&rolled_back.stderr),
+    );
+    assert!(!canonical.exists());
+    assert_eq!(fs::read(&target).unwrap(), before);
 }
 
 #[test]

@@ -16,10 +16,10 @@ use crate::model::{AssetKind, PlatformId};
 use super::fingerprint::path_fingerprint;
 use super::ledger::ProjectionLedger;
 use super::mcp::entry_fingerprint::{
-    inspect_codex_mcp_entries, inspect_cursor_mcp_entries, inspect_hermes_mcp_entries,
-    McpEntryFingerprint,
+    fingerprint_mcp_config, inspect_codex_mcp_entries, inspect_cursor_mcp_entries,
+    inspect_hermes_mcp_entries, McpEntryFingerprint,
 };
-use super::mcp::source::EffectiveMcpDefinition;
+use super::mcp::source::{load_mcp_definition_at, EffectiveMcpDefinition};
 use super::model::{
     DeploymentScope, EffectiveAsset, PathFingerprint, ProjectionId, ProjectionMode,
     ProjectionRecord, ProjectionState, ProjectionSurface, ProjectionTarget, SourceRef,
@@ -547,6 +547,23 @@ pub fn build_projection_plan(
                 (
                     ProjectionOperation::Retract | ProjectionOperation::Uninstall,
                     _,
+                    GeneratedOwnership::Equivalent,
+                ) => ProjectionAction {
+                    kind: ProjectionActionKind::ReportOnly,
+                    target: Some(batch.target),
+                    precondition: Some(precondition),
+                    ownership_fingerprint: None,
+                    generated_renderer: Some(batch.renderer),
+                    members: batch.members,
+                    mcp_members: batch.mcp_members,
+                    consumers: batch.consumers,
+                    state: Some("foreign".to_owned()),
+                    reason_code: "generated_retract_ownership_unproven".to_owned(),
+                    reason: "generated retract requires matching ledger ownership".to_owned(),
+                },
+                (
+                    ProjectionOperation::Retract | ProjectionOperation::Uninstall,
+                    _,
                     GeneratedOwnership::Foreign,
                 ) => ProjectionAction {
                     kind: ProjectionActionKind::ReportOnly,
@@ -647,7 +664,11 @@ pub fn build_projection_plan(
                     reason_code: "generated_target_drifted".to_owned(),
                     reason: "generated container changed after its recorded projection".to_owned(),
                 },
-                (ProjectionOperation::Sync, _, GeneratedOwnership::Foreign) => ProjectionAction {
+                (
+                    ProjectionOperation::Sync,
+                    _,
+                    GeneratedOwnership::Foreign | GeneratedOwnership::Equivalent,
+                ) => ProjectionAction {
                     kind: ProjectionActionKind::ReportOnly,
                     target: Some(batch.target),
                     precondition: Some(precondition),
@@ -846,12 +867,43 @@ pub fn build_mcp_projection_plan(
         batch
             .mcp_members
             .sort_by_key(|member| projection_id_key(&member.id));
-        actions.push(plan_mcp_generated_batch(
-            request,
-            &batch,
-            &mut warnings,
-            context,
-        )?);
+        if request.operation == ProjectionOperation::Sync {
+            let mut remaining = batch.clone_without_members();
+            for member in &batch.mcp_members {
+                let candidate = batch.clone_with_members(vec![member.clone()]);
+                if mcp_generated_batch_ownership(
+                    &candidate,
+                    &path_fingerprint(&candidate.target.path)?,
+                    &mut warnings,
+                    context,
+                ) == GeneratedOwnership::Equivalent
+                {
+                    actions.push(plan_mcp_generated_batch(
+                        request,
+                        &candidate,
+                        &mut warnings,
+                        context,
+                    )?);
+                } else {
+                    remaining.mcp_members.push(member.clone());
+                }
+            }
+            if !remaining.mcp_members.is_empty() {
+                actions.push(plan_mcp_generated_batch(
+                    request,
+                    &remaining,
+                    &mut warnings,
+                    context,
+                )?);
+            }
+        } else {
+            actions.push(plan_mcp_generated_batch(
+                request,
+                &batch,
+                &mut warnings,
+                context,
+            )?);
+        }
     }
     finish_plan(request, actions, warnings)
 }
@@ -1461,6 +1513,12 @@ fn plan_mcp_generated_batch(
             "generated_source_changed",
             "canonical source changed since the recorded projection",
         ),
+        (ProjectionOperation::Sync, _, GeneratedOwnership::Equivalent) => (
+            ProjectionActionKind::AdoptEquivalent,
+            Some("equivalent"),
+            "equivalent_mcp_entries_unmanaged",
+            "all unmanaged MCP entries are semantically equivalent to canonical sources",
+        ),
         (ProjectionOperation::Sync, _, GeneratedOwnership::Missing) => (
             ProjectionActionKind::UpsertGeneratedBatch,
             Some("missing"),
@@ -1490,6 +1548,12 @@ fn plan_mcp_generated_batch(
             Some("foreign"),
             "generated_ownership_unproven",
             "MCP generated entries require matching entry-level ledger proof",
+        ),
+        (_, _, GeneratedOwnership::Equivalent) => (
+            ProjectionActionKind::ReportOnly,
+            Some("foreign"),
+            "generated_ownership_unproven",
+            "equivalent MCP entries require explicit adoption before non-sync operations",
         ),
         (_, _, GeneratedOwnership::Missing) => (
             ProjectionActionKind::ReportOnly,
@@ -1575,6 +1639,27 @@ struct GeneratedBatch {
     members: Vec<ProjectionMember>,
     mcp_members: Vec<McpProjectionMember>,
     renderer_conflict: bool,
+}
+
+impl GeneratedBatch {
+    fn clone_without_members(&self) -> Self {
+        Self {
+            target: self.target.clone(),
+            mode: self.mode,
+            renderer: self.renderer,
+            consumers: self.consumers.clone(),
+            members: Vec::new(),
+            mcp_members: Vec::new(),
+            renderer_conflict: self.renderer_conflict,
+        }
+    }
+
+    fn clone_with_members(&self, mcp_members: Vec<McpProjectionMember>) -> Self {
+        Self {
+            mcp_members,
+            ..self.clone_without_members()
+        }
+    }
 }
 
 fn register_generated_member(
@@ -2052,6 +2137,7 @@ fn copied_ownership(
 enum GeneratedOwnership {
     Managed,
     SourceChanged,
+    Equivalent,
     Missing,
     Drifted,
     Foreign,
@@ -2204,13 +2290,22 @@ fn mcp_generated_batch_ownership(
     };
     let mut source_changed = false;
     let mut entry_missing = false;
+    let mut unowned_equivalent = false;
     for member in &batch.mcp_members {
         let Some(entry) = entries.iter().find(|entry| entry.name == member.name) else {
             entry_missing = true;
             continue;
         };
         let Some(record) = ledger_record(context, &member.id, warnings) else {
-            return GeneratedOwnership::Foreign;
+            let expected = load_mcp_definition_at(&member.source.absolute_path)
+                .and_then(|definition| fingerprint_mcp_config(definition.server.config));
+            match expected {
+                Ok(expected) if expected == entry.digest => {
+                    unowned_equivalent = true;
+                    continue;
+                }
+                _ => return GeneratedOwnership::Foreign,
+            }
         };
         if record.mode != batch.mode
             || record.target_path != batch.target.path
@@ -2233,6 +2328,8 @@ fn mcp_generated_batch_ownership(
         GeneratedOwnership::SourceChanged
     } else if entry_missing {
         GeneratedOwnership::Missing
+    } else if unowned_equivalent {
+        GeneratedOwnership::Equivalent
     } else {
         GeneratedOwnership::Managed
     }

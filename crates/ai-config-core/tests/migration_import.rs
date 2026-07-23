@@ -36,6 +36,19 @@ fn prompt_request(root: &Utf8Path, replace: bool) -> ImportRequest {
     }
 }
 
+fn codex_mcp_request(root: &Utf8Path, name: &str, replace: bool) -> ImportRequest {
+    ImportRequest {
+        kind: AssetKind::Mcp,
+        name: name.to_owned(),
+        source_platform: PlatformId::Codex,
+        source_path: root.join("repo/.codex/config.toml"),
+        approved_source_root: root.join("repo/.codex"),
+        destination_layer: SourceLayer::Project,
+        destination_asset_root: root.join("repo/.ai-config"),
+        replace,
+    }
+}
+
 #[test]
 fn scope_import_request_uses_only_the_current_platform_target_and_canonical_layer() {
     let temp = TempDir::new().unwrap();
@@ -231,6 +244,126 @@ fn mcp_literal_secret_preflight_blocks_apply_without_serializing_the_value() {
     )
     .is_err());
     assert!(!root.join("repo/.ai-config/mcp/servers/demo.json").exists());
+}
+
+#[test]
+fn codex_mcp_env_indirection_imports_without_secret_values_or_target_writes() {
+    let temp = TempDir::new().unwrap();
+    let root = utf8(temp.path());
+    let source = root.join("repo/.codex/config.toml");
+    write(
+        &source,
+        r#"# preserved comment
+[mcp_servers.gitea]
+type = "http"
+url = "https://gitea.example/mcp"
+bearer_token_env_var = "PROJECT_GITEA_TOKEN"
+http_headers = { Accept = "application/json, text/event-stream", Content-Type = "application/json" }
+
+[mcp_servers.jenkins]
+url = "https://jenkins.example/mcp"
+env_http_headers = { Authorization = "PROJECT_JENKINS_AUTHORIZATION" }
+http_headers = { Accept = "application/json", Content-Type = "application/json" }
+"#,
+    );
+    let before = fs::read(&source).unwrap();
+    let requests = [
+        codex_mcp_request(root, "gitea", false),
+        codex_mcp_request(root, "jenkins", false),
+    ];
+
+    let plan = build_import_plan(&requests).unwrap();
+
+    assert_eq!(plan.actions.len(), 2);
+    assert!(plan
+        .actions
+        .iter()
+        .all(|action| action.secret_preflight.status == ImportSecretStatus::Clear));
+    let selected = plan
+        .actions
+        .iter()
+        .map(|action| action.action_id.clone())
+        .collect::<Vec<_>>();
+    apply_import_plan(
+        &plan,
+        &ImportApplyOptions::new(&plan.plan_digest, selected),
+        &root.join("transactions"),
+    )
+    .unwrap();
+
+    assert_eq!(fs::read(&source).unwrap(), before);
+    let gitea: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("repo/.ai-config/mcp/servers/gitea.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(gitea["targets"], serde_json::json!(["codex"]));
+    assert_eq!(gitea["transport"], "http");
+    assert_eq!(
+        gitea["config"]["bearer_token_env_var"],
+        "PROJECT_GITEA_TOKEN"
+    );
+    assert!(gitea["config"].get("type").is_none());
+    let jenkins: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("repo/.ai-config/mcp/servers/jenkins.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        jenkins["config"]["env_http_headers"]["Authorization"],
+        "PROJECT_JENKINS_AUTHORIZATION"
+    );
+}
+
+#[test]
+fn codex_mcp_literal_authorization_blocks_import_without_leaking_the_value() {
+    let temp = TempDir::new().unwrap();
+    let root = utf8(temp.path());
+    let sentinel = "Bearer MUST-NOT-LEAK-CODEX-AUTH";
+    write(
+        &root.join("repo/.codex/config.toml"),
+        &format!(
+            r#"[mcp_servers.gitea]
+url = "https://gitea.example/mcp"
+http_headers = {{ Authorization = "{sentinel}" }}
+"#
+        ),
+    );
+
+    let plan = build_import_plan(&[codex_mcp_request(root, "gitea", false)]).unwrap();
+    let serialized = serde_json::to_string(&plan).unwrap();
+
+    assert_eq!(
+        plan.actions[0].secret_preflight.status,
+        ImportSecretStatus::Blocked
+    );
+    assert!(plan.actions[0]
+        .secret_preflight
+        .key_names
+        .contains(&"Authorization".to_owned()));
+    assert!(!serialized.contains(sentinel));
+    assert!(apply_import_plan(
+        &plan,
+        &ImportApplyOptions::new(&plan.plan_digest, [plan.actions[0].action_id.clone()]),
+        &root.join("transactions"),
+    )
+    .is_err());
+    assert!(!root.join("repo/.ai-config/mcp/servers/gitea.json").exists());
+}
+
+#[test]
+fn codex_mcp_missing_named_entry_is_read_only_error() {
+    let temp = TempDir::new().unwrap();
+    let root = utf8(temp.path());
+    let source = root.join("repo/.codex/config.toml");
+    write(&source, "[mcp_servers.present]\ncommand = \"present\"\n");
+    let before = fs::read(&source).unwrap();
+
+    let result = build_import_plan(&[codex_mcp_request(root, "missing", false)]);
+
+    assert!(result.is_err());
+    assert_eq!(fs::read(&source).unwrap(), before);
+    assert!(!root
+        .join("repo/.ai-config/mcp/servers/missing.json")
+        .exists());
 }
 
 #[test]

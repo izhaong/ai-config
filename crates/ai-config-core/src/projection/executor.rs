@@ -24,8 +24,8 @@ use super::ledger::ProjectionLedger;
 use super::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
 use super::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
 use super::mcp::entry_fingerprint::{
-    inspect_codex_mcp_entries, inspect_cursor_mcp_entries, inspect_hermes_mcp_entries,
-    McpEntryFingerprint,
+    fingerprint_mcp_config, inspect_codex_mcp_entries, inspect_cursor_mcp_entries,
+    inspect_hermes_mcp_entries, McpEntryFingerprint,
 };
 use super::mcp::hermes_yaml::{render_hermes_mcp_yaml, YamlServerIntent};
 use super::mcp::source::load_mcp_definition_at;
@@ -345,7 +345,8 @@ struct BackupManifest {
     mode: Option<u32>,
 }
 
-const DURABLE_ADOPTION_SCHEMA_VERSION: u16 = 1;
+const DURABLE_ADOPTION_SCHEMA_VERSION: u16 = 2;
+const LEGACY_DURABLE_ADOPTION_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -368,6 +369,8 @@ struct DurableAdoptionManifest {
 struct DurableAdoptionAction {
     action_id: String,
     projection_id: super::model::ProjectionId,
+    #[serde(default)]
+    ledger_only: bool,
     target_path: Utf8PathBuf,
     source_path: Utf8PathBuf,
     source_fingerprint: String,
@@ -636,6 +639,29 @@ fn prepare_durable_adoption(
             ));
         }
         for (index, action) in plan.actions.iter().enumerate() {
+            if action.members.is_empty() && !action.mcp_members.is_empty() {
+                let target = action.target.as_ref().ok_or_else(|| {
+                    CoreError::InvalidPath("durable MCP adoption has no target".to_owned())
+                })?;
+                let before = action.precondition.clone().ok_or_else(|| {
+                    CoreError::InvalidPath("durable MCP adoption has no precondition".to_owned())
+                })?;
+                for member in &action.mcp_members {
+                    actions.push(DurableAdoptionAction {
+                        action_id: plan.action_ids[index].clone(),
+                        projection_id: member.id.clone(),
+                        ledger_only: true,
+                        target_path: target.path.clone(),
+                        source_path: member.source.absolute_path.clone(),
+                        source_fingerprint: member.source.fingerprint.clone(),
+                        before: before.clone(),
+                        after: None,
+                        backup_path: None,
+                        expected_record: None,
+                    });
+                }
+                continue;
+            }
             let target = action.target.as_ref().ok_or_else(|| {
                 CoreError::InvalidPath("durable adoption action has no target".to_owned())
             })?;
@@ -648,6 +674,7 @@ fn prepare_durable_adoption(
             actions.push(DurableAdoptionAction {
                 action_id: plan.action_ids[index].clone(),
                 projection_id: direct_member_id(action)?,
+                ledger_only: false,
                 target_path: target.path.clone(),
                 source_path: source.source.absolute_path.clone(),
                 source_fingerprint: source.source.fingerprint.clone(),
@@ -664,6 +691,7 @@ fn prepare_durable_adoption(
     let mut targets = BTreeSet::new();
     if actions
         .iter()
+        .filter(|action| !action.ledger_only)
         .any(|action| !targets.insert(action.target_path.clone()))
     {
         return Err(CoreError::InvalidPath(
@@ -732,6 +760,33 @@ fn finalize_durable_adoption(
     ledger: &dyn ProjectionLedger,
 ) -> Result<(), CoreError> {
     for action in &mut prepared.manifest.actions {
+        if action.ledger_only {
+            let after = path_fingerprint(&action.target_path)?;
+            if after != action.before {
+                return Err(CoreError::InvalidPath(
+                    "ledger-only MCP adoption changed its platform target".to_owned(),
+                ));
+            }
+            let record = ledger.get(&action.projection_id)?.ok_or_else(|| {
+                CoreError::ProjectionLedger(
+                    "durable MCP adoption ownership record was not committed".to_owned(),
+                )
+            })?;
+            if record.target_path != action.target_path
+                || record.source_path != action.source_path
+                || record.source_fingerprint != action.source_fingerprint
+                || record.entry_key.is_none()
+                || record.entry_fingerprint.is_none()
+                || record.target_fingerprint != after.digest.as_deref().unwrap_or_default()
+            {
+                return Err(CoreError::ProjectionLedger(
+                    "durable MCP adoption ownership record does not match its target".to_owned(),
+                ));
+            }
+            action.after = Some(after);
+            action.expected_record = Some(record);
+            continue;
+        }
         let backup = journal.undo.iter().find_map(|(_, undo)| match undo {
             FileUndo::RestoreBackup {
                 target,
@@ -851,8 +906,10 @@ pub fn rollback_projection_transaction(
     }
     let mut manifest: DurableAdoptionManifest =
         serde_json::from_slice(&fs::read(manifest_path.as_std_path())?)?;
-    if manifest.schema_version != DURABLE_ADOPTION_SCHEMA_VERSION
-        || manifest.transaction_id != transaction_id
+    if !matches!(
+        manifest.schema_version,
+        LEGACY_DURABLE_ADOPTION_SCHEMA_VERSION | DURABLE_ADOPTION_SCHEMA_VERSION
+    ) || manifest.transaction_id != transaction_id
         || manifest.deploy_base != context.deploy_base
         || !matches!(
             manifest.status,
@@ -877,6 +934,40 @@ pub fn rollback_projection_transaction(
         let safe_target = ensure_safe_target_path(&action.target_path, &context.deploy_base)?;
         let target = path_fingerprint(&safe_target)?;
         let record = context.ledger.get(&action.projection_id)?;
+        if action.ledger_only {
+            match manifest.status {
+                DurableAdoptionStatus::Applied => {
+                    let after = action.after.as_ref().ok_or_else(|| {
+                        CoreError::InvalidPath("durable MCP adoption has no post-state".to_owned())
+                    })?;
+                    if target != *after || action.expected_record.as_ref() != record.as_ref() {
+                        return Err(CoreError::InvalidPath(
+                            "durable MCP adoption rollback refused target or ownership drift"
+                                .to_owned(),
+                        ));
+                    }
+                    removals.push(LedgerMutation::Remove(action.projection_id.clone()));
+                }
+                DurableAdoptionStatus::Applying => {
+                    if target != action.before {
+                        return Err(CoreError::InvalidPath(
+                            "durable MCP adoption applying state has target drift".to_owned(),
+                        ));
+                    }
+                    if let Some(record) = record.as_ref() {
+                        if !durable_ledger_only_record_matches(record, action, &target) {
+                            return Err(CoreError::ProjectionLedger(
+                                "durable MCP adoption rollback refused ownership ledger drift"
+                                    .to_owned(),
+                            ));
+                        }
+                        removals.push(LedgerMutation::Remove(action.projection_id.clone()));
+                    }
+                }
+                DurableAdoptionStatus::RolledBack => unreachable!("validated above"),
+            }
+            continue;
+        }
         let backup = match action.backup_path.clone() {
             Some(backup) => Some(backup),
             None => find_durable_backup(&action_backup_root, action)?,
@@ -1006,7 +1097,7 @@ pub fn rollback_projection_transaction(
     write_durable_manifest_atomic(&manifest_path, &manifest)?;
     Ok(ProjectionRollbackReport {
         transaction_id: transaction_id.to_owned(),
-        restored: restored.len(),
+        restored: removals.len(),
     })
 }
 
@@ -1187,19 +1278,26 @@ fn stage_projection_plan(
                     .selected_action_ids
                     .contains(&plan.action_ids[index])
                 {
-                    apply_adopt_equivalent(action, context).and_then(|adopted| {
-                        journal.mutations.push(direct_record_mutation(action)?);
-                        journal.undo.push((
-                            index,
-                            FileUndo::RestoreBackup {
-                                target: adopted.0,
-                                source: adopted.1,
-                                backup: adopted.2,
-                            },
-                        ));
-                        report.set_status(index, ApplyActionStatus::Applied);
-                        Ok(())
-                    })
+                    if action.members.is_empty() && !action.mcp_members.is_empty() {
+                        apply_mcp_equivalent_adoption(action, context).map(|mutations| {
+                            journal.mutations.extend(mutations);
+                            report.set_status(index, ApplyActionStatus::Applied);
+                        })
+                    } else {
+                        apply_adopt_equivalent(action, context).and_then(|adopted| {
+                            journal.mutations.push(direct_record_mutation(action)?);
+                            journal.undo.push((
+                                index,
+                                FileUndo::RestoreBackup {
+                                    target: adopted.0,
+                                    source: adopted.1,
+                                    backup: adopted.2,
+                                },
+                            ));
+                            report.set_status(index, ApplyActionStatus::Applied);
+                            Ok(())
+                        })
+                    }
                 } else {
                     report.set_status(index, ApplyActionStatus::Skipped);
                     Ok(())
@@ -1292,6 +1390,77 @@ fn stage_projection_plan(
     }
     report.recount();
     Ok(report)
+}
+
+/// Adopt semantically equivalent named MCP entries by recording ownership only. Unlike direct
+/// asset adoption, the platform container remains a regular file and its bytes are untouched.
+fn apply_mcp_equivalent_adoption(
+    action: &ProjectionAction,
+    context: &ExecutorContext<'_>,
+) -> Result<Vec<LedgerMutation>, CoreError> {
+    let renderer = action
+        .generated_renderer
+        .ok_or_else(|| CoreError::InvalidPath("MCP adoption has no renderer".to_owned()))?;
+    let mode = mcp_projection_mode(renderer)?;
+    let target = action
+        .target
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("MCP adoption has no target".to_owned()))?;
+    let expected = action
+        .precondition
+        .as_ref()
+        .ok_or_else(|| CoreError::InvalidPath("MCP adoption has no precondition".to_owned()))?;
+    ensure_target_is_allowed(&target.path, &context.deploy_base)?;
+    let actual = path_fingerprint(&target.path)?;
+    if &actual != expected || actual.entry_type != super::model::FingerprintType::File {
+        return Err(CoreError::InvalidPath(
+            "MCP adoption target changed after the plan was created".to_owned(),
+        ));
+    }
+    let target_digest = actual
+        .digest
+        .ok_or_else(|| CoreError::InvalidPath("MCP adoption target has no digest".to_owned()))?;
+    let entries = inspect_mcp_entries(renderer, &fs::read_to_string(target.path.as_std_path())?)?
+        .into_iter()
+        .map(|entry| (entry.name, entry.digest))
+        .collect::<BTreeMap<_, _>>();
+
+    action
+        .mcp_members
+        .iter()
+        .map(|member| {
+            if path_content_digest(&member.source.absolute_path)? != member.source.fingerprint {
+                return Err(CoreError::InvalidPath(
+                    "canonical source changed after the plan was created".to_owned(),
+                ));
+            }
+            let definition = load_mcp_definition_at(&member.source.absolute_path)?;
+            if definition.server.name != member.name {
+                return Err(CoreError::InvalidPath(
+                    "canonical MCP source no longer matches the planned server name".to_owned(),
+                ));
+            }
+            let entry_fingerprint = entries.get(&member.name).cloned().ok_or_else(|| {
+                CoreError::InvalidPath("planned equivalent MCP entry is missing".to_owned())
+            })?;
+            if fingerprint_mcp_config(definition.server.config)? != entry_fingerprint {
+                return Err(CoreError::InvalidPath(
+                    "planned MCP entry is no longer equivalent to canonical source".to_owned(),
+                ));
+            }
+            Ok(LedgerMutation::Upsert(ProjectionRecord {
+                id: member.id.clone(),
+                mode,
+                source_path: member.source.absolute_path.clone(),
+                target_path: target.path.clone(),
+                entry_key: Some(member.entry_key.clone()),
+                source_fingerprint: member.source.fingerprint.clone(),
+                entry_fingerprint: Some(entry_fingerprint),
+                target_fingerprint: target_digest.clone(),
+                applied_at: Utc::now(),
+            }))
+        })
+        .collect()
 }
 
 fn preflight_failure(
@@ -3507,13 +3676,35 @@ fn durable_record_matches(
     action: &DurableAdoptionAction,
     target: &super::model::PathFingerprint,
 ) -> bool {
-    record.id == action.projection_id
+    !action.ledger_only
+        && record.id == action.projection_id
         && record.mode == ProjectionMode::DirectLink
         && record.source_path == action.source_path
         && record.target_path == action.target_path
         && record.source_fingerprint == action.source_fingerprint
         && record.entry_key.is_none()
         && record.entry_fingerprint.is_none()
+        && record.target_fingerprint == target.digest.as_deref().unwrap_or_default()
+}
+
+fn durable_ledger_only_record_matches(
+    record: &ProjectionRecord,
+    action: &DurableAdoptionAction,
+    target: &super::model::PathFingerprint,
+) -> bool {
+    action.ledger_only
+        && record.id == action.projection_id
+        && matches!(
+            record.mode,
+            ProjectionMode::GeneratedJson
+                | ProjectionMode::GeneratedToml
+                | ProjectionMode::GeneratedYaml
+        )
+        && record.source_path == action.source_path
+        && record.target_path == action.target_path
+        && record.source_fingerprint == action.source_fingerprint
+        && record.entry_key.is_some()
+        && record.entry_fingerprint.is_some()
         && record.target_fingerprint == target.digest.as_deref().unwrap_or_default()
 }
 

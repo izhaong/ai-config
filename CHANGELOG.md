@@ -11,11 +11,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **source-first 投影审阅**：core 提供跨 transport 的只读 projection review，输出稳定 action ID 与 plan digest，不包含资产正文或 secret 值。
+- **Codex MCP source-first 导入**：CLI 与 GUI 可从项目 `.codex/config.toml` 按 named server 导入 canonical source，保留 bearer/header 环境变量引用与相对命令参数，不写入真实 secret。
 
 ### Fixed
 
 - **durable adoption 崩溃恢复**：在目标已移入备份或已创建链接、但最终 transaction manifest 尚未落盘时，rollback 可从安全 sidecar manifest 恢复原文件并校验 ownership record。
 - **GUI 未托管副本操作**：内容相同但缺少 marker/正确源链接的普通副本显示为 `synced`，不再冒充可收回的 `linked`；平台垃圾桶仅对有 ownership 证据的条目启用，避免点击后触发 fail-closed 错误。
+- **MCP 等价采纳**：canonical source 与现有 Codex named entry 语义等价时生成显式 adoption；确认后仅写逐 server ownership ledger，保持 `.codex/config.toml` 字节不变。
+- **GUI 版本一致性**：Tauri binary manifest 与界面版本统一为 0.4.0。
 
 ### Security
 

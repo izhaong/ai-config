@@ -225,6 +225,25 @@ describe("useAssetOperations MCP platform toggle", () => {
     });
   });
 
+  it("从 Codex 视图为 MCP 请求 Codex source-first 导入审阅", async () => {
+    const { result } = renderOps({ activePlatform: "codex" });
+    const entry = mcpEntry({ cursor: "unlinked", codex: "synced", aiconfig: "unlinked" });
+
+    await act(async () => {
+      result.current.handlePlatformToggle(entry, "aiconfig");
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.fetchImportToSourcePlan).toHaveBeenCalledWith(
+        "mcp",
+        "demo",
+        "user-global",
+        "codex",
+      );
+      expect(mocks.importAsset).not.toHaveBeenCalled();
+    });
+  });
+
   it("不会收回其它平台上已 synced 的 MCP", async () => {
     const { result } = renderOps();
     const entry = mcpEntry({ claude: "synced" });

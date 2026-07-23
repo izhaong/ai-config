@@ -19,6 +19,7 @@ use crate::model::{AssetKind, PlatformId};
 use crate::paths::{self, SyncRoots};
 use crate::platform;
 use crate::projection::fingerprint::{path_content_digest, path_fingerprint};
+use crate::projection::mcp::entry_fingerprint::codex_mcp_entry;
 use crate::projection::mcp::source::load_mcp_definition_at;
 use crate::projection::model::{FingerprintType, PathFingerprint, SourceLayer};
 
@@ -89,15 +90,21 @@ fn import_source_location(
         }
         return Ok((deploy_base.join("AGENTS.md"), deploy_base.to_path_buf()));
     }
-    if kind == AssetKind::Mcp && source_platform != PlatformId::Cursor {
+    if kind == AssetKind::Mcp && !matches!(source_platform, PlatformId::Cursor | PlatformId::Codex)
+    {
         return Err(CoreError::NotImplemented(
-            "MCP import currently supports only Cursor JSON containers",
+            "MCP import currently supports only Cursor JSON or Codex TOML containers",
         ));
     }
-    let platform_path = platform::kind_asset_path(source_platform, kind, deploy_base, asset_root)
-        .ok_or(CoreError::NotImplemented(
-        "this platform and asset kind do not have a lossless import mapping",
-    ))?;
+    let platform_path = if kind == AssetKind::Mcp && source_platform == PlatformId::Codex {
+        deploy_base.join(".codex/config.toml")
+    } else {
+        platform::kind_asset_path(source_platform, kind, deploy_base, asset_root).ok_or(
+            CoreError::NotImplemented(
+                "this platform and asset kind do not have a lossless import mapping",
+            ),
+        )?
+    };
     if kind == AssetKind::Mcp {
         let approved_root = platform_path.parent().ok_or_else(|| {
             CoreError::InvalidPath("platform MCP path has no approved parent".to_owned())
@@ -1387,18 +1394,34 @@ fn platform_mcp_entry_from_bytes(
     request: &ImportRequest,
     source_bytes: &[u8],
 ) -> Result<Value, CoreError> {
-    if request.source_platform != PlatformId::Cursor {
-        return Err(CoreError::InvalidPath(
-            "this import slice only accepts Cursor MCP JSON containers".to_owned(),
-        ));
+    let mut entry = match request.source_platform {
+        PlatformId::Cursor => {
+            let document: Value = serde_json::from_slice(source_bytes)?;
+            document
+                .get("mcpServers")
+                .and_then(Value::as_object)
+                .and_then(|servers| servers.get(&request.name))
+                .cloned()
+        }
+        PlatformId::Codex => {
+            let document = std::str::from_utf8(source_bytes)
+                .map_err(|_| CoreError::InvalidPath("Codex MCP TOML is not UTF-8".to_owned()))?;
+            codex_mcp_entry(document, &request.name)?
+        }
+        _ => {
+            return Err(CoreError::InvalidPath(
+                "this import slice accepts only Cursor or Codex MCP containers".to_owned(),
+            ))
+        }
     }
-    let document: Value = serde_json::from_slice(source_bytes)?;
-    document
-        .get("mcpServers")
-        .and_then(Value::as_object)
-        .and_then(|servers| servers.get(&request.name))
-        .cloned()
-        .ok_or_else(|| CoreError::InvalidPath("selected MCP entry is missing".to_owned()))
+    .ok_or_else(|| CoreError::InvalidPath("selected MCP entry is missing".to_owned()))?;
+    if request.source_platform == PlatformId::Codex {
+        entry
+            .as_object_mut()
+            .ok_or_else(|| CoreError::InvalidPath("selected MCP entry is not a table".to_owned()))?
+            .remove("type");
+    }
+    Ok(entry)
 }
 
 fn inspect_mcp_secrets(entry: &Value) -> ImportSecretPreflight {
@@ -1415,9 +1438,36 @@ fn inspect_mcp_secrets(entry: &Value) -> ImportSecretPreflight {
             }
         }
     }
+    if let Some(headers) = entry.get("http_headers").and_then(Value::as_object) {
+        for (key, value) in headers {
+            if credential_like_key(key) && !value.is_null() {
+                keys.insert(key.to_owned());
+                reasons.insert("literal_secret_value".to_owned());
+            }
+        }
+    }
+    if let Some(headers) = entry.get("env_http_headers").and_then(Value::as_object) {
+        for (key, value) in headers {
+            let valid_reference = value.as_str().is_some_and(safe_secret_key);
+            if !valid_reference {
+                keys.insert(key.to_owned());
+                reasons.insert("invalid_environment_reference".to_owned());
+            }
+        }
+    }
+    if entry
+        .get("bearer_token_env_var")
+        .is_some_and(|value| !value.as_str().is_some_and(safe_secret_key))
+    {
+        keys.insert("bearer_token_env_var".to_owned());
+        reasons.insert("invalid_environment_reference".to_owned());
+    }
     if let Some(fields) = entry.as_object() {
         for (key, value) in fields {
-            if matches!(key.as_str(), "env" | "headers") {
+            if matches!(
+                key.as_str(),
+                "env" | "headers" | "http_headers" | "env_http_headers" | "bearer_token_env_var"
+            ) {
                 continue;
             }
             if credential_like_key(key) && !value.is_null() {

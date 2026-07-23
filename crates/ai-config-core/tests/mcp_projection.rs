@@ -3,7 +3,8 @@ use std::fs;
 use ai_config_core::error::CoreError;
 use ai_config_core::model::PlatformId;
 use ai_config_core::projection::executor::{
-    apply_projection_plan, ApplyOptions, ExecutorContext, McpSecretProvider,
+    apply_projection_plan, rollback_projection_transaction, ApplyOptions, ExecutorContext,
+    McpSecretProvider,
 };
 use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
 use ai_config_core::projection::mcp::claude_json::{
@@ -190,6 +191,332 @@ fn mcp_planner_can_add_a_missing_managed_entry_without_claiming_foreign_entries(
     ));
     assert_eq!(plan.actions[0].reason_code, "generated_entries_missing");
     assert_eq!(plan.actions[0].mcp_members[0].name, "catalog");
+}
+
+#[test]
+fn codex_equivalent_mcp_adoption_writes_only_entry_ledger() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{
+          "targets":["codex"],
+          "config":{
+            "url":"https://mcp.example.test/mcp",
+            "bearer_token_env_var":"CATALOG_TOKEN",
+            "env_http_headers":{"X-Tenant":"CATALOG_TENANT"}
+          }
+        }"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Codex]);
+    let target = request.deploy_base.join(".codex/config.toml");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"model = "gpt-5"
+
+[mcp_servers.catalog]
+url = "https://mcp.example.test/mcp"
+bearer_token_env_var = "CATALOG_TOKEN"
+
+[mcp_servers.catalog.env_http_headers]
+X-Tenant = "CATALOG_TENANT"
+"#,
+    )
+    .unwrap();
+    let before = fs::read(target.as_std_path()).unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+
+    assert_eq!(plan.actions.len(), 1);
+    assert_eq!(plan.actions[0].kind, ProjectionActionKind::AdoptEquivalent);
+    assert_eq!(plan.actions[0].state.as_deref(), Some("equivalent"));
+    assert_eq!(
+        plan.actions[0].reason_code,
+        "equivalent_mcp_entries_unmanaged"
+    );
+
+    let skipped = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::for_plan(&plan),
+    )
+    .unwrap();
+    assert_eq!(skipped.skipped, 1);
+    assert!(ledger
+        .get(&plan.actions[0].mcp_members[0].id)
+        .unwrap()
+        .is_none());
+    assert_eq!(fs::read(target.as_std_path()).unwrap(), before);
+
+    let applied = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+    )
+    .unwrap();
+    assert_eq!(applied.changed, 1);
+    let transaction_id = applied
+        .transaction_id
+        .as_deref()
+        .expect("ledger-only MCP adoption must be durably rollback-addressable");
+    let record = ledger
+        .get(&plan.actions[0].mcp_members[0].id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(record.mode, ProjectionMode::GeneratedToml);
+    assert_eq!(record.entry_key.as_deref(), Some("mcp_servers.catalog"));
+    assert!(record.entry_fingerprint.is_some());
+    assert_eq!(fs::read(target.as_std_path()).unwrap(), before);
+
+    let rolled_back = rollback_projection_transaction(
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        transaction_id,
+    )
+    .unwrap();
+    assert_eq!(rolled_back.restored, 1);
+    assert!(ledger
+        .get(&plan.actions[0].mcp_members[0].id)
+        .unwrap()
+        .is_none());
+    assert_eq!(fs::read(target.as_std_path()).unwrap(), before);
+}
+
+#[test]
+fn codex_equivalent_mcp_adoption_rejects_target_drift_without_ledger_write() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["codex"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Codex]);
+    let target = request.deploy_base.join(".codex/config.toml");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        "[mcp_servers.catalog]\ncommand = \"catalog-mcp\"\n",
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let plan =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    assert_eq!(plan.actions[0].kind, ProjectionActionKind::AdoptEquivalent);
+
+    fs::write(
+        target.as_std_path(),
+        "[mcp_servers.catalog]\ncommand = \"changed-after-plan\"\n",
+    )
+    .unwrap();
+    let error = apply_projection_plan(
+        &plan,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::with_selected_action_ids(&plan, plan.action_ids.clone()),
+    )
+    .unwrap_err();
+    assert_eq!(
+        error
+            .report
+            .failure
+            .as_ref()
+            .map(|failure| failure.code.as_str()),
+        Some("action_apply_failed")
+    );
+    assert!(ledger
+        .get(&plan.actions[0].mcp_members[0].id)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn codex_mcp_mixed_managed_and_equivalent_entries_adopt_and_rollback_independently() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["codex"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    let request = mcp_request(root, vec![PlatformId::Codex]);
+    let target = request.deploy_base.join(".codex/config.toml");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        r#"[mcp_servers.catalog]
+command = "catalog-mcp"
+
+[mcp_servers.search]
+command = "search-mcp"
+"#,
+    )
+    .unwrap();
+    let ledger = MemoryProjectionLedger::default();
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let first =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    apply_projection_plan(
+        &first,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::with_selected_action_ids(&first, first.action_ids.clone()),
+    )
+    .unwrap();
+    let catalog_id = first.actions[0].mcp_members[0].id.clone();
+
+    write_server(
+        root,
+        "search",
+        r#"{"targets":["codex"],"config":{"command":"search-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let mixed =
+        build_mcp_projection_plan(&request, &definitions, &PlannerContext::new(&ledger)).unwrap();
+    let managed = mixed
+        .actions
+        .iter()
+        .find(|action| action.kind == ProjectionActionKind::Noop)
+        .unwrap();
+    assert_eq!(managed.mcp_members.len(), 1);
+    assert_eq!(managed.mcp_members[0].name, "catalog");
+    let adopt_index = mixed
+        .actions
+        .iter()
+        .position(|action| action.kind == ProjectionActionKind::AdoptEquivalent)
+        .unwrap();
+    assert_eq!(mixed.actions[adopt_index].mcp_members.len(), 1);
+    assert_eq!(mixed.actions[adopt_index].mcp_members[0].name, "search");
+
+    let adoption = ai_config_core::projection::planner::ProjectionPlan {
+        schema_version: mixed.schema_version,
+        actions: vec![mixed.actions[adopt_index].clone()],
+        action_ids: vec![mixed.action_ids[adopt_index].clone()],
+        trust_requirements: vec![mixed.trust_requirements[adopt_index]],
+        warnings: Vec::new(),
+        plan_digest: mixed.plan_digest.clone(),
+    };
+    let applied = apply_projection_plan(
+        &adoption,
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        ApplyOptions::with_selected_action_ids(&adoption, adoption.action_ids.clone()),
+    )
+    .unwrap();
+    let search_id = adoption.actions[0].mcp_members[0].id.clone();
+    assert!(ledger.get(&catalog_id).unwrap().is_some());
+    assert!(ledger.get(&search_id).unwrap().is_some());
+
+    rollback_projection_transaction(
+        &ExecutorContext::new(&ledger, request.deploy_base.clone(), root.join("backups")),
+        applied.transaction_id.as_deref().unwrap(),
+    )
+    .unwrap();
+    assert!(ledger.get(&catalog_id).unwrap().is_some());
+    assert!(ledger.get(&search_id).unwrap().is_none());
+}
+
+#[test]
+fn codex_mcp_mixed_missing_and_equivalent_entries_never_implicitly_claim_the_equivalent_entry() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["codex"],"config":{"command":"catalog-mcp"}}"#,
+    );
+    write_server(
+        root,
+        "missing",
+        r#"{"targets":["codex"],"config":{"command":"missing-mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Codex]);
+    let target = request.deploy_base.join(".codex/config.toml");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    fs::write(
+        target.as_std_path(),
+        "[mcp_servers.catalog]\ncommand = \"catalog-mcp\"\n",
+    )
+    .unwrap();
+    let plan = build_mcp_projection_plan(
+        &request,
+        &definitions,
+        &PlannerContext::new(&MemoryProjectionLedger::default()),
+    )
+    .unwrap();
+
+    let adopt = plan
+        .actions
+        .iter()
+        .find(|action| action.kind == ProjectionActionKind::AdoptEquivalent)
+        .unwrap();
+    assert_eq!(adopt.mcp_members.len(), 1);
+    assert_eq!(adopt.mcp_members[0].name, "catalog");
+    let upsert = plan
+        .actions
+        .iter()
+        .find(|action| action.kind == ProjectionActionKind::UpsertGeneratedBatch)
+        .unwrap();
+    assert_eq!(upsert.mcp_members.len(), 1);
+    assert_eq!(upsert.mcp_members[0].name, "missing");
+}
+
+#[test]
+fn codex_legacy_type_is_ignored_for_equivalence_without_rewriting_target() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    write_server(
+        root,
+        "catalog",
+        r#"{"targets":["codex"],"config":{"url":"https://mcp.example.test/mcp"}}"#,
+    );
+    let definitions = resolve_effective_mcp_definitions(&OverlayRoots {
+        global: root.to_path_buf(),
+        workspace: None,
+        project: root.join("empty-project"),
+    })
+    .unwrap();
+    let request = mcp_request(root, vec![PlatformId::Codex]);
+    let target = request.deploy_base.join(".codex/config.toml");
+    fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
+    let before =
+        b"[mcp_servers.catalog]\ntype = \"http\"\nurl = \"https://mcp.example.test/mcp\"\n";
+    fs::write(target.as_std_path(), before).unwrap();
+    let plan = build_mcp_projection_plan(
+        &request,
+        &definitions,
+        &PlannerContext::new(&MemoryProjectionLedger::default()),
+    )
+    .unwrap();
+    assert_eq!(plan.actions[0].kind, ProjectionActionKind::AdoptEquivalent);
+    assert_eq!(fs::read(target.as_std_path()).unwrap(), before);
 }
 
 #[test]

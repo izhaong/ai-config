@@ -460,15 +460,21 @@ fn import_source_location(
         }
         return Ok((deploy_base.join("AGENTS.md"), deploy_base.to_path_buf()));
     }
-    if kind == AssetKind::Mcp && source_platform != PlatformId::Cursor {
+    if kind == AssetKind::Mcp && !matches!(source_platform, PlatformId::Cursor | PlatformId::Codex)
+    {
         return Err(CoreError::NotImplemented(
-            "MCP import currently supports only Cursor JSON containers",
+            "MCP import currently supports only Cursor JSON and Codex TOML containers",
         ));
     }
-    let platform_path = platform::kind_asset_path(source_platform, kind, deploy_base, asset_root)
-        .ok_or(CoreError::NotImplemented(
-        "this platform and asset kind do not have a lossless import mapping",
-    ))?;
+    let platform_path = if kind == AssetKind::Mcp && source_platform == PlatformId::Codex {
+        deploy_base.join(".codex/config.toml")
+    } else {
+        platform::kind_asset_path(source_platform, kind, deploy_base, asset_root).ok_or(
+            CoreError::NotImplemented(
+                "this platform and asset kind do not have a lossless import mapping",
+            ),
+        )?
+    };
     if kind == AssetKind::Mcp {
         let approved_root = platform_path
             .parent()

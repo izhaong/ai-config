@@ -18,6 +18,14 @@ describe("canApplyProjectionReview", () => {
       canApplyProjectionReview(review({ blocking_reason: "foreign_target" })),
     ).toBe(false);
     expect(
+      canApplyProjectionReview(
+        review({
+          blocking_reason: "foreign_target",
+          actions: [{ kind: "adopt_equivalent" }] as ProjectionReview["actions"],
+        }),
+      ),
+    ).toBe(true);
+    expect(
       canApplyProjectionReview(review({ ledger_status: "ledger_unavailable" })),
     ).toBe(false);
     expect(canApplyProjectionReview(review({ plan_digest: "" }))).toBe(false);
