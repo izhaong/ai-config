@@ -6,6 +6,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-29
+
 ### Added
 
 - **四层验证闭环**：`ai-config-verify` 增加源码测试、临时 HOME 同步生命周期、已安装版本/只读状态门禁，以及 GUI/IDE/daemon 人工验收边界。
@@ -169,6 +171,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CI：`cargo fmt`、clippy 未使用参数、daemon/Windows 交叉编译。
 - GUI Agent/Rule 描述解析与 agent 读取路径。
 
+[0.4.1]: https://github.com/izhaong/ai-config/releases/tag/v0.4.1
 [0.3.3]: https://github.com/izhaong/ai-config/releases/tag/v0.3.3
 [0.4.0]: https://github.com/izhaong/ai-config/releases/tag/v0.4.0
 [0.3.2]: https://github.com/izhaong/ai-config/releases/tag/v0.3.2
