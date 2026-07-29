@@ -5,7 +5,10 @@
 //!
 //! Phase 0 占位:`--help` 与 `--version` 可用,业务子命令以 "not yet implemented" 退出。
 
-use std::process::ExitCode;
+use std::{
+    io::{self, Write},
+    process::ExitCode,
+};
 
 use ai_config_core::paths;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -309,13 +312,15 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            clap_complete::generate(
-                shell,
-                &mut Cli::command(),
-                "ai-config",
-                &mut std::io::stdout(),
-            );
-            ExitCode::SUCCESS
+            let stdout = io::stdout();
+            let mut stdout = stdout.lock();
+            match emit_completion(shell, &mut stdout) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("failed to write completion: {error}");
+                    ExitCode::from(5)
+                }
+            }
         }
         Cmd::Secrets { action } => {
             let mapped = match action {
@@ -461,5 +466,48 @@ fn resolve_root(flag: Option<&str>) -> Utf8PathBuf {
     paths::resolve_asset_root(Utf8Path::new(&raw))
 }
 
+fn emit_completion<W: Write>(shell: clap_complete::Shell, writer: &mut W) -> io::Result<()> {
+    let mut generated = Vec::new();
+    clap_complete::generate(shell, &mut Cli::command(), "ai-config", &mut generated);
+    match writer.write_all(&generated) {
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        result => result,
+    }
+}
+
 // re-export 给 clap_complete
 use clap::CommandFactory;
+
+#[cfg(test)]
+mod completion_tests {
+    use std::io::{self, Write};
+
+    struct FailingWriter(io::ErrorKind);
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(self.0))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn completion_broken_pipe_is_success() {
+        let mut writer = FailingWriter(io::ErrorKind::BrokenPipe);
+
+        super::emit_completion(clap_complete::Shell::Zsh, &mut writer)
+            .expect("an early-closing completion consumer is not a CLI failure");
+    }
+
+    #[test]
+    fn completion_other_io_error_fails() {
+        let mut writer = FailingWriter(io::ErrorKind::PermissionDenied);
+
+        let error = super::emit_completion(clap_complete::Shell::Zsh, &mut writer)
+            .expect_err("non-broken-pipe output errors must remain visible");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
+}

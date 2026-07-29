@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **四层验证闭环**：`ai-config-verify` 增加源码测试、临时 HOME 同步生命周期、已安装版本/只读状态门禁，以及 GUI/IDE/daemon 人工验收边界。
+
+### Fixed
+
+- **Completion 管道退出**：shell completion 输出被 `head` 等消费者提前关闭时不再因 BrokenPipe panic；其它 stdout 错误仍返回失败。
+
 ## [0.4.0] - 2026-07-19
 
 ### Added
