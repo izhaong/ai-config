@@ -640,22 +640,22 @@ S3 用户编辑一行
 
 | 控件 | 组件 / 逻辑 |
 | --- | --- |
-| 五平台 icon | `entryPlatformToggle.ts` → `asset_ops::deploy` / `retract` / `import` / `deploy_from_platform` |
-| 更新 ↻ | `entryUpdate.ts` → 对已激活平台批量 `deploy` |
-| 删除 🗑 | 二次 arm → `ConfirmModal` → `delete_source`（源视图）或单平台 `retract`（平台视图） |
+| 平台 icon | source view → scope-level projection/retract review；平台 view → reviewed import only |
+| 更新 ↻ | 打开 source-first projection review |
+| 删除 🗑 | source delete 需明确确认；平台 target 只可通过 reviewed retract 处理 |
 
 ### 19.3 关键交互规则
 
-1. **五平台对等**：ai-config 目录与其它 IDE 目录均为独立副本；收回 ai-config **不**自动收回 IDE。
+1. **唯一 source**：ai-config 是唯一可编辑资产源；平台目录只保存投影或外部盘点结果。
 2. **浏览当前平台不收回**：`activePlatform === plat` 且非源浏览 / 或源浏览 ai-config 时 skip。
-3. **synced**：`platform_scan` + `materialize::is_managed_deploy`；可覆盖为 linked。
-4. **跨平台拷贝**：在 IDE 平台 A 视图点平台 B → `deploy_from_platform(A→B)`。
+3. **状态**：managed、foreign、conflict、drifted 与 unsupported 由 source-first planner 和 ledger 证明。
+4. **导入**：平台资产只能经 plan digest 与单个 action ID 写入 source；不支持跨平台拷贝。
 
 ### 19.4 参考实现路径
 
 | 层 | 路径 |
 | --- | --- |
 | 产品语义 | `docs/product/PRD.md` §3.5 |
-| Core | `crates/ai-config-core/src/asset_ops.rs`、`materialize.rs`、`platform_scan.rs` |
+| Core | `crates/ai-config-core/src/projection/`、`platform_scan.rs`（只读 inventory） |
 | GUI | `apps/ai-config-gui/src/utils/entryPlatformToggle.ts`、`hooks/useAssetOperations.ts` |
 | 上游路径 | `docs/reference/vercel-skills-agent-paths.md` |

@@ -6,7 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { assetKindLabel } from "../../i18n/labels";
 import { PLATFORM_NAME } from "../../platformIcons";
-import type { AssetKind, DeployPlatform, Platform, PlatformAssetEntry } from "../../types";
+import {
+  canRemoveFromPlatform,
+  type AssetKind,
+  type DeployPlatform,
+  type Platform,
+  type PlatformAssetEntry,
+} from "../../types";
 import { aggregateLinkStateForUi } from "../../utils/aggregatePlatformState";
 import { canUpdateEntry } from "../../utils/entryUpdate";
 import { rowSyncLeadSlot } from "../../utils/rowSyncLeadSlot";
@@ -78,7 +84,17 @@ export function AssetToolbar({
   const leadSlot = rowSyncLeadSlot(activeKind, browsingSource);
 
   const batchDeleteDisabled =
-    loading || busy || selectedCount === 0 || visibleCount === 0;
+    loading ||
+    busy ||
+    selectedCount === 0 ||
+    visibleCount === 0 ||
+    (!browsingSource &&
+      !selectedEntries.some((entry) =>
+        canRemoveFromPlatform(
+          entry.kind,
+          entry.states[activePlatform as DeployPlatform],
+        ),
+      ));
 
   const batchUpdateDisabled =
     loading ||

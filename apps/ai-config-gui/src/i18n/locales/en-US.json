@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "ai-config",
-    "version": "v0.3.3",
+    "version": "v0.4.0",
     "daemonStopped": "daemon stopped"
   },
   "language": {
@@ -165,6 +165,7 @@
   },
   "empty": {
     "loading": "Loading…",
+    "close": "Close",
     "mcp": "No MCP servers yet. Add entries in <code>{{assetRoot}}/mcp.json</code>",
     "mcpGlobal": "No MCP servers yet. Add entries in <code>~/.ai-config/mcp.json</code>",
     "assets": "No assets yet. Add files under <code>{{assetRoot}}/{{kindDir}}/</code>",
@@ -207,6 +208,24 @@
     "differs": "Different",
     "confirm": "Overwrite {{target}} with selection",
     "detectFailed": "Conflict check failed: {{error}}"
+  },
+  "projection": {
+    "applyTitle": "Review source-first projection plan",
+    "retractTitle": "Review source-first retraction plan",
+    "importTitle": "Review import-to-source plan",
+    "reviewMessage": "Execution is bound to this exact digest. Foreign and conflicting entries are never overwritten or adopted.",
+    "confirm": "Apply reviewed plan",
+    "confirmImport": "Import into source",
+    "ledgerUnavailable": "The ownership ledger is unavailable; execution is disabled.",
+    "blocked": "Plan is blocked: {{reason}}",
+    "missingSecrets": "Missing secrets: {{keys}}",
+    "reviewFailed": "Could not load projection plan: {{error}}",
+    "applyFailed": "Could not apply projection plan: {{error}}",
+    "applied": "Projection complete: {{changed}} changed, {{unchanged}} unchanged.",
+    "importFailed": "Could not import into source: {{error}}",
+    "importRequiredBeforeCopy": "Import the selected platform assets into the source first, then copy them to another project.",
+    "imported": "Safely imported {{count}} item(s) into source.",
+    "importMessage": "Import is bound to this plan digest and one action ID; it never deletes the platform original."
   },
   "copyToProject": {
     "title": "Copy to project",

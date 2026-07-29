@@ -32,6 +32,11 @@ use crate::mcp_json;
 use crate::model::{AssetKind, PlatformId, Project, SyncAction};
 use crate::paths;
 use crate::platform;
+use crate::projection::model::DeploymentScope;
+use crate::projection::planner::{
+    build_projection_plan, PlannerContext, ProjectionOperation, ProjectionPlan, ProjectionRequest,
+};
+use crate::projection::source::{resolve_effective_assets, OverlayRoots};
 use crate::source;
 
 /// 4 个平台(`platform::registry()` 的稳定顺序)。
@@ -42,6 +47,43 @@ fn all_platforms() -> Vec<PlatformId> {
         PlatformId::Claude,
         PlatformId::Hermes,
     ]
+}
+
+/// 将 legacy sync 调用面所需的完整 source-first 输入显式收拢为只读计划请求。
+///
+/// `OverlayRoots` 不能从旧 `paths::SyncRoots` 无损推导：workspace member 需要同时保留
+/// global、workspace 和 project 三层 provenance。因此调用方必须提供完整 overlay。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompatibilityProjectionRoots {
+    pub overlay: OverlayRoots,
+    pub scope_key: String,
+    pub scope: DeploymentScope,
+    pub deploy_base: camino::Utf8PathBuf,
+}
+
+/// 构造 source-first 只读计划的兼容入口。
+///
+/// 旧 `compute_*` / `SyncAction` 仍服务于 T009 之前的 legacy lifecycle（尤其是旧
+/// 整份 `mcp.json` 与 Hook 执行器）。新调用方必须从本函数取得 `ProjectionPlan`，不能
+/// 继续在 `sync` 中自行判断目标状态。该函数只解析 canonical per-server source，绝不
+/// 创建目录、链接、平台配置或 ledger 记录。
+pub fn build_compatibility_plan(
+    roots: &CompatibilityProjectionRoots,
+    operation: ProjectionOperation,
+    context: &PlannerContext<'_>,
+) -> Result<ProjectionPlan, CoreError> {
+    let assets = resolve_effective_assets(&roots.overlay)?;
+    build_projection_plan(
+        &ProjectionRequest {
+            operation,
+            scope_key: roots.scope_key.clone(),
+            scope: roots.scope,
+            deploy_base: roots.deploy_base.clone(),
+            assets,
+            platforms: all_platforms(),
+        },
+        context,
+    )
 }
 
 /// 派发项目 ID + 资产 kind + name → 稳定 64-bit item_id。
@@ -76,6 +118,9 @@ pub fn asset_dest_for_at_base(
     src: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Option<camino::Utf8PathBuf> {
+    if kind == AssetKind::Prompt {
+        return None;
+    }
     let plat_root = platform_dest_root(plat, kind, deploy_base)?;
     let entry_name = match kind {
         AssetKind::Skill => return Some(plat_root.join(name)),
@@ -99,6 +144,7 @@ pub fn asset_dest_for_at_base(
                 .unwrap_or_else(|| "md".to_string());
             format!("{name}.{ext}")
         }
+        AssetKind::Prompt => return None,
     };
     Some(plat_root.join(entry_name))
 }
@@ -119,6 +165,7 @@ pub fn link_src_for_create(kind: AssetKind, src: &Utf8Path) -> camino::Utf8PathB
         AssetKind::Rule | AssetKind::Command | AssetKind::Mcp | AssetKind::Hook => {
             src.to_path_buf()
         }
+        AssetKind::Prompt => src.to_path_buf(),
     }
 }
 
@@ -154,6 +201,7 @@ fn platform_dest_root(
             PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
             PlatformId::AiConfig => deploy_base.join("hooks"),
         },
+        AssetKind::Prompt => return None,
     })
 }
 
@@ -264,6 +312,7 @@ fn compute_actions(
                     })
                     .collect()
             }
+            AssetKind::Prompt => vec![],
         };
 
         for (name, src) in entries {
@@ -411,6 +460,11 @@ pub fn retract_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection::fingerprint::directory_digest;
+    use crate::projection::ledger::MemoryProjectionLedger;
+    use crate::projection::model::{DeploymentScope, SourceLayer};
+    use crate::projection::planner::{ProjectionActionKind, ProjectionOperation};
+    use crate::projection::source::OverlayRoots;
     use camino::Utf8PathBuf;
     use std::fs;
 
@@ -476,6 +530,60 @@ mod tests {
     }
 
     #[test]
+    fn compatibility_plan_preserves_three_layer_source_and_reports_foreign_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let global = root.join("global");
+        let workspace = root.join("workspace");
+        let repo = root.join("repo");
+        fs::create_dir_all(global.join("skills/global-review")).unwrap();
+        fs::write(global.join("skills/global-review/SKILL.md"), "global").unwrap();
+        fs::create_dir_all(workspace.join("skills/review")).unwrap();
+        fs::write(workspace.join("skills/review/SKILL.md"), "workspace").unwrap();
+        fs::create_dir_all(repo.join(".ai-config/skills/review")).unwrap();
+        fs::write(repo.join(".ai-config/skills/review/SKILL.md"), "project").unwrap();
+        fs::create_dir_all(repo.join(".agents/skills/review")).unwrap();
+        fs::write(repo.join(".agents/skills/review/SKILL.md"), "foreign").unwrap();
+        let roots = CompatibilityProjectionRoots {
+            overlay: OverlayRoots {
+                global,
+                workspace: Some(workspace),
+                project: repo.join(".ai-config"),
+            },
+            scope_key: "project:/fixture".to_owned(),
+            scope: DeploymentScope::Project,
+            deploy_base: repo.clone(),
+        };
+        let ledger = MemoryProjectionLedger::default();
+        let before = directory_digest(&root).unwrap();
+
+        let plan = build_compatibility_plan(
+            &roots,
+            ProjectionOperation::Sync,
+            &crate::projection::planner::PlannerContext::new(&ledger),
+        )
+        .unwrap();
+
+        let shared_target = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action
+                    .target
+                    .as_ref()
+                    .is_some_and(|target| target.path == repo.join(".agents/skills/review"))
+            })
+            .unwrap();
+        assert!(matches!(
+            shared_target.kind,
+            ProjectionActionKind::ReportOnly
+        ));
+        assert_eq!(shared_target.state.as_deref(), Some("foreign"));
+        assert_eq!(shared_target.members[0].source.layer, SourceLayer::Project);
+        assert_eq!(directory_digest(&root).unwrap(), before);
+    }
+
+    #[test]
     fn asset_dest_for_directory_agent_uses_dir_dest() {
         let tmp = tempfile::tempdir().unwrap();
         let src = Utf8PathBuf::from_path_buf(tmp.path().join("reviewer")).unwrap();
@@ -525,7 +633,7 @@ mod tests {
 
     #[test]
     fn compute_for_project_create_dest_under_repo_root() {
-        let _env_guard = HermesEnvGuard::unset();
+        let _env_guard = crate::test_env::EnvGuard::unset("HERMES_SKILLS_DIR");
 
         let (_tmp, default, repo) = make_project_with_default();
         let project = Project {
@@ -544,26 +652,6 @@ mod tests {
                     dest.starts_with(&repo),
                     "dest {dest} 应在项目根 {repo} 下(非 $HOME；Hermes skills 例外)"
                 );
-            }
-        }
-    }
-
-    /// 设/恢复 `HERMES_SKILLS_DIR` env,避免被其它并行测试污染本测试断言。
-    struct HermesEnvGuard {
-        prev: Option<String>,
-    }
-    impl HermesEnvGuard {
-        fn unset() -> Self {
-            let prev = std::env::var("HERMES_SKILLS_DIR").ok();
-            std::env::remove_var("HERMES_SKILLS_DIR");
-            Self { prev }
-        }
-    }
-    impl Drop for HermesEnvGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => std::env::set_var("HERMES_SKILLS_DIR", v),
-                None => std::env::remove_var("HERMES_SKILLS_DIR"),
             }
         }
     }

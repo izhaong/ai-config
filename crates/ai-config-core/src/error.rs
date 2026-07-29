@@ -97,6 +97,9 @@ pub enum CoreError {
 
     #[error("JSON 解析错误: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("投影账本错误: {0}")]
+    ProjectionLedger(String),
 }
 
 impl CoreError {
@@ -112,7 +115,7 @@ impl CoreError {
             | Self::AssetNotFound { hint, .. }
             | Self::ConfigNotFound { hint, .. }
             | Self::PermissionDenied { hint, .. } => Some(hint.as_str()),
-            Self::InvalidPath(_) | Self::Io(_) | Self::Json(_) => None,
+            Self::InvalidPath(_) | Self::Io(_) | Self::Json(_) | Self::ProjectionLedger(_) => None,
         }
     }
 
@@ -127,6 +130,7 @@ impl CoreError {
             | Self::AssetNotFound { .. } => exit_code::PARTIAL_FAILURE,
             Self::Io(_)
             | Self::Json(_)
+            | Self::ProjectionLedger(_)
             | Self::PermissionDenied { .. }
             | Self::ConfigNotFound { .. } => exit_code::FS_ERROR,
         }

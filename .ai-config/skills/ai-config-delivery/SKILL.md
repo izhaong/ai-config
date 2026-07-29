@@ -28,7 +28,7 @@ description: ai-config 交付（贴合 Cursor）：用户下发任务 → Agent 
 
 ### 1. 分支 + FEATURE_DIR
 
-见 `.cursor/rules/gitflow-spec-kit.mdc`、`.cursor/rules/spec-kit-gate.mdc`。
+见 `.ai-config/rules/gitflow-spec-kit.mdc`、`.ai-config/rules/spec-kit-gate.mdc`。
 
 ### 2. spec + plan（含 Todos）
 

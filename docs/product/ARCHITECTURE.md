@@ -72,8 +72,8 @@ ai-configd-core
 ├── source         # 资产源解析：扫 skills/ rules/ mcp/ agents/ 目录 → 资产清单
 ├── platform       # 5 个平台适配器：AiConfig + Cursor / Codex / Claude / Hermes
 │   └── (trait)    #   skills_dir / rules_dir / agents_dir / mcp_deploy_path
-├── materialize    # GUI 下发：硬拷贝 + `.ai-config-deploy.json` marker；retract / check
-├── asset_ops      # 单条 CRUD + deploy / retract / import / deploy_from_platform
+├── projection     # source resolver + read-only planner + transactional executor + ownership ledger
+├── asset_ops      # source CRUD 与只读详情
 ├── asset_scope    # 资产根定位、全平台收回（delete_source）
 ├── platform_scan  # 列表扫描 + per-platform LinkState（含 synced）
 ├── link           # 遗留：symlink / junction（守护进程 sync 等路径；与 materialize 并存）
@@ -104,8 +104,8 @@ ai-configd-core
                     ┌─────────────────┐
                     │ 资产源（文件）   │
                     │ ┌─────────────┐ │
-                    │ │ skills/     │ │   硬拷贝（GUI asset_ops / materialize）
-                    │ │ rules/      │ │   硬拷贝
+                    │ │ skills/     │ │   direct links / generated adapters
+                    │ │ rules/      │ │   direct links / generated adapters
                     │ │ mcp/servers/│ │   文件 + 模板渲染
                     │ │ agents/     │ │   硬拷贝
                     │ └─────────────┘ │
@@ -170,8 +170,8 @@ mcp/servers/<name>.json (逐项)          secrets.env (0600, git 外)
            │  合并所有 enabled 条目到 mcpServers
            ▼
     ~/.cursor/mcp.json   (原子写：tmp + rename)
-    ~/.codex/mcp.json    (同上)
-    ~/.claude/mcp.json   (同上)
+    ~/.codex/config.toml (owned MCP tables only)
+    ~/.claude.json / <repo>/.mcp.json (owned MCP entries only)
     ~/.hermes/config.yaml  (YAML `mcp_servers:` 段 merge；保留 model/provider 等其它键)
     ~/.hermes/skills/      (全局 skills；项目作用域也写 $HOME)
     <repo>/.cursor/rules/  (Hermes 仅项目级 rules)
@@ -194,7 +194,7 @@ pub trait PlatformAdapter {
 }
 ```
 
-**GUI 下发**走 `materialize::deploy`（硬拷贝 + marker），**不**与源目录共享 inode。`asset_ops::retract(..., AiConfig)` 只删 ai-config 平台目录，语义与其它平台 `retract` 一致（PRD §3.5）。
+GUI 只调用 projection plan/apply/retract 与 reviewed import bridge；executor 根据 ownership ledger 创建 direct links 或受管 generated entries。平台目录从不成为 source。
 
 **上游路径**：IDE skill 目录以 [vercel-labs/skills `src/agents.ts`](https://github.com/vercel-labs/skills/blob/main/src/agents.ts) 为参考；见 `docs/reference/vercel-skills-agent-paths.md`。
 

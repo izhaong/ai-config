@@ -3,6 +3,9 @@
 use std::fs;
 use std::path::Path;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
 use tempfile::TempDir;
@@ -40,45 +43,41 @@ fn cmd(home: &Path, root: &Path) -> Command {
 }
 
 #[test]
-fn deploy_copies_mcp_json_to_platform() {
+fn deploy_refuses_legacy_write_without_creating_platform_file() {
     let (home, root) = setup();
     let cursor_mcp = home.path().join(".cursor").join("mcp.json");
+    let source = root.path().join("mcp.json");
+    let source_before = fs::read(&source).expect("read source before");
     assert!(!cursor_mcp.exists());
 
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "cursor"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
-    let content = fs::read_to_string(&cursor_mcp).expect("mcp.json created");
-    let v: serde_json::Value = serde_json::from_str(&content).expect("valid JSON");
-    let mcp = v["mcpServers"].as_object().expect("mcpServers object");
-    assert!(mcp.contains_key("minio"));
-    assert_eq!(
-        mcp["minio"]["env"]["ENDPOINT"].as_str().unwrap(),
-        "minio.example.com:443"
+    assert!(
+        !cursor_mcp.exists(),
+        "deploy must not materialize legacy MCP"
     );
+    assert_eq!(fs::read(source).unwrap(), source_before);
 }
 
 #[test]
 fn retract_preserves_platform_mcp_without_ownership_evidence() {
     let (home, root) = setup();
     let cursor_mcp = home.path().join(".cursor").join("mcp.json");
-
-    cmd(home.path(), root.path())
-        .args(["mcp", "deploy", "minio", "cursor"])
-        .assert()
-        .success();
-    assert!(cursor_mcp.exists());
+    let before = r#"{"mcpServers":{"minio":{"command":"docker"}}}"#;
+    fs::write(&cursor_mcp, before).unwrap();
 
     cmd(home.path(), root.path())
         .args(["mcp", "retract", "minio", "cursor"])
         .assert()
-        .failure();
+        .failure()
+        .code(2);
 
     let raw = fs::read_to_string(&cursor_mcp).expect("platform mcp.json preserved");
-    let v: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-    assert!(v["mcpServers"].get("minio").is_some());
+    assert_eq!(raw, before);
 }
 
 #[test]
@@ -122,18 +121,21 @@ fn status_does_not_initialize_global_asset_root() {
 }
 
 #[test]
-fn project_sync_writes_mcp_under_project_deploy_base() {
+fn project_sync_apply_writes_mcp_under_project_deploy_base() {
     let home = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
     let asset_root = repo.path().join(".ai-config");
-    fs::create_dir_all(asset_root.join("skills")).unwrap();
+    fs::create_dir_all(asset_root.join("mcp/servers")).unwrap();
     fs::write(
-        asset_root.join("mcp.json"),
-        r#"{"mcpServers":{"project-only":{"command":"echo"}}}"#,
+        asset_root.join("mcp/servers/project-only.json"),
+        r#"{"enabled":true,"targets":["cursor"],"config":{"command":"echo"}}"#,
     )
     .unwrap();
 
-    cmd(home.path(), repo.path()).arg("sync").assert().success();
+    cmd(home.path(), repo.path())
+        .args(["sync", "--apply"])
+        .assert()
+        .success();
 
     assert!(
         repo.path().join(".cursor/mcp.json").is_file(),
@@ -179,9 +181,10 @@ fn deploy_does_not_touch_other_platforms() {
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "cursor"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
-    assert!(cursor_mcp.exists());
+    assert!(!cursor_mcp.exists());
     let codex_after = fs::read_to_string(&codex_mcp).unwrap();
     assert_eq!(codex_after, codex_before);
 }
@@ -199,20 +202,18 @@ fn deploy_merges_into_existing_platform_mcp_json() {
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "cursor"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
     let v: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&cursor_mcp).unwrap()).unwrap();
     let mcp = v["mcpServers"].as_object().unwrap();
-    assert!(mcp.contains_key("minio"));
-    assert!(
-        mcp.contains_key("user-thing"),
-        "per-server deploy must preserve other platform entries"
-    );
+    assert!(!mcp.contains_key("minio"));
+    assert!(mcp.contains_key("user-thing"));
 }
 
 #[test]
-fn deploy_hermes_writes_config_yaml_preserving_other_keys() {
+fn deploy_hermes_refuses_legacy_write_preserving_other_keys() {
     let (home, root) = setup();
     let hermes_dir = home.path().join(".hermes");
     fs::create_dir_all(&hermes_dir).unwrap();
@@ -222,13 +223,11 @@ fn deploy_hermes_writes_config_yaml_preserving_other_keys() {
     cmd(home.path(), root.path())
         .args(["mcp", "deploy", "minio", "hermes"])
         .assert()
-        .success();
+        .failure()
+        .code(2);
 
     let content = fs::read_to_string(&config_yaml).expect("config.yaml updated");
-    assert!(content.contains("model: gpt-test"));
-    assert!(content.contains("mcp_servers:"));
-    assert!(content.contains("minio:"));
-    assert!(content.contains("minio.example.com:443"));
+    assert_eq!(content, "model: gpt-test\n");
 }
 
 #[test]
@@ -237,45 +236,78 @@ fn retract_hermes_preserves_server_without_ownership_evidence() {
     let hermes_dir = home.path().join(".hermes");
     fs::create_dir_all(&hermes_dir).unwrap();
     let config_yaml = hermes_dir.join("config.yaml");
-    fs::write(&config_yaml, "model: gpt-test\n").unwrap();
-
-    cmd(home.path(), root.path())
-        .args(["mcp", "deploy", "minio", "hermes"])
-        .assert()
-        .success();
+    let before = "model: gpt-test\nmcp_servers:\n  minio:\n    command: docker\n";
+    fs::write(&config_yaml, before).unwrap();
 
     cmd(home.path(), root.path())
         .args(["mcp", "retract", "minio", "hermes"])
         .assert()
-        .failure();
+        .failure()
+        .code(2);
 
     let content = fs::read_to_string(&config_yaml).expect("config.yaml still exists");
-    assert!(content.contains("model: gpt-test"));
-    assert!(content.contains("minio:"));
+    assert_eq!(content, before);
 }
 
 #[test]
-fn migrate_hermes_merges_legacy_mcp_json() {
+fn migrate_hermes_refuses_non_dry_run_and_preserves_legacy_files() {
     let (home, root) = setup();
     let hermes_dir = home.path().join(".hermes");
     fs::create_dir_all(&hermes_dir).unwrap();
+    let legacy = hermes_dir.join("mcp.json");
     fs::write(
-        hermes_dir.join("mcp.json"),
+        &legacy,
         r#"{"mcpServers":{"legacy-svc":{"command":"echo","args":["legacy"]}}}"#,
     )
     .unwrap();
+    let config_yaml = hermes_dir.join("config.yaml");
+    fs::write(&config_yaml, "model: foreign-model\n").unwrap();
+    let legacy_before = fs::read(&legacy).unwrap();
+    let config_before = fs::read(&config_yaml).unwrap();
 
-    cmd(home.path(), root.path())
+    let assert = cmd(home.path(), root.path())
         .args(["mcp", "migrate-hermes"])
         .assert()
-        .success();
-
-    let config_yaml = hermes_dir.join("config.yaml");
-    let content = fs::read_to_string(&config_yaml).expect("config.yaml created");
-    assert!(content.contains("legacy-svc:"));
+        .failure()
+        .code(2);
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(
-        !hermes_dir.join("mcp.json").exists(),
-        "legacy mcp.json should be renamed after migrate"
+        stderr.contains("source-first") && stderr.contains("只读"),
+        "expected a source-first read-only refusal, got: {stderr}"
+    );
+
+    assert!(
+        legacy.is_file(),
+        "refusal must not rename or remove legacy mcp.json"
+    );
+    assert_eq!(fs::read(&legacy).unwrap(), legacy_before);
+    assert_eq!(fs::read(&config_yaml).unwrap(), config_before);
+}
+
+#[test]
+fn migrate_hermes_dry_run_preserves_legacy_files() {
+    let (home, root) = setup();
+    let hermes_dir = home.path().join(".hermes");
+    fs::create_dir_all(&hermes_dir).unwrap();
+    let legacy = hermes_dir.join("mcp.json");
+    fs::write(
+        &legacy,
+        r#"{"mcpServers":{"legacy-svc":{"command":"echo"}}}"#,
+    )
+    .unwrap();
+    let legacy_before = fs::read(&legacy).unwrap();
+    let config_yaml = hermes_dir.join("config.yaml");
+
+    cmd(home.path(), root.path())
+        .args(["mcp", "migrate-hermes", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("dry-run"));
+
+    assert_eq!(fs::read(&legacy).unwrap(), legacy_before);
+    assert!(
+        !config_yaml.exists(),
+        "dry-run must not create a Hermes configuration"
     );
 }
 
@@ -293,7 +325,10 @@ fn secrets_list_only_keys_no_values() {
     let (home, root) = setup();
     let cfg = home.path().join(".config").join("ai-config");
     fs::create_dir_all(&cfg).unwrap();
-    fs::write(cfg.join("secrets.env"), "MINIO_ENDPOINT=secret-value\n").unwrap();
+    let secrets = cfg.join("secrets.env");
+    fs::write(&secrets, "MINIO_ENDPOINT=secret-value\n").unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o600)).unwrap();
 
     cmd(home.path(), root.path())
         .args(["--json", "secrets", "list"])

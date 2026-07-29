@@ -10,10 +10,11 @@ members = [
     "crates/ai-config-watcher",
     "crates/ai-config-store",
     "apps/ai-config-gui",
+    "apps/ai-config-gui/src-tauri",
 ]
 
 [workspace.package]
-version = "0.3.4"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.78"
 license = "MIT"
@@ -28,6 +29,7 @@ serde_json = "1"
 schemars = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 toml = "0.8"
+toml_edit = "0.25"
 # 错误
 thiserror = "1"
 anyhow = "1"
@@ -39,6 +41,8 @@ clap = { version = "4.5", features = ["derive", "cargo", "wrap_help"] }
 # FS / 路径
 camino = { version = "1.1", features = ["serde1"] }
 walkdir = "2.5"
+sha2 = "0.10"
+hex = "0.4"
 # 通知（FS watch）
 notify = "6.1"
 notify-debouncer-mini = "0.4"

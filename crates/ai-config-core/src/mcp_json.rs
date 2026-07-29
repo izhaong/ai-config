@@ -447,6 +447,39 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_layout_setup_leaves_legacy_mcp_directory_unmodified() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let legacy_server = root.join("mcp/servers/foo.json");
+        fs::create_dir_all(legacy_server.parent().unwrap()).unwrap();
+        let legacy_contents = r#"{"name":"foo","enabled":true,"config":{"command":"uvx"}}"#;
+        fs::write(&legacy_server, legacy_contents).unwrap();
+
+        crate::paths::ensure_asset_layout(&root).unwrap();
+
+        assert_eq!(fs::read_to_string(&legacy_server).unwrap(), legacy_contents);
+        assert!(!root.join("mcp.json").exists());
+    }
+
+    #[test]
+    fn global_initialization_leaves_legacy_mcp_directory_unmodified() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let legacy_server = root.join("mcp/servers/foo.json");
+        fs::create_dir_all(legacy_server.parent().unwrap()).unwrap();
+        let legacy_contents = r#"{"name":"foo","enabled":true,"config":{"command":"uvx"}}"#;
+        fs::write(&legacy_server, legacy_contents).unwrap();
+        fs::create_dir_all(root.join("skills/kept")).unwrap();
+        fs::write(root.join("skills/kept/SKILL.md"), "# kept").unwrap();
+        let _root_guard = crate::test_env::EnvGuard::set("AI_CONFIG_ROOT", root.as_str());
+
+        assert_eq!(crate::paths::init_user_asset_root().unwrap(), root);
+
+        assert_eq!(fs::read_to_string(&legacy_server).unwrap(), legacy_contents);
+        assert!(!root.join("mcp.json").exists());
+    }
+
+    #[test]
     fn upsert_gui_style_ai_config_server() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();

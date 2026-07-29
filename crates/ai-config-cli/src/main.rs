@@ -5,7 +5,10 @@
 //!
 //! Phase 0 占位:`--help` 与 `--version` 可用,业务子命令以 "not yet implemented" 退出。
 
-use std::process::ExitCode;
+use std::{
+    io::{self, Write},
+    process::ExitCode,
+};
 
 use ai_config_core::paths;
 use camino::{Utf8Path, Utf8PathBuf};
@@ -16,7 +19,9 @@ mod asset;
 mod daemon;
 mod lifecycle;
 mod mcp;
+mod migration;
 mod output;
+mod projection;
 mod secrets;
 mod serve;
 
@@ -50,11 +55,23 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Cmd {
     /// 一键安装(取代旧 install.sh,PRD §5 场景 A)
-    Install,
+    Install {
+        /// Render the reviewed projection plan transactionally.
+        #[arg(long)]
+        apply: bool,
+    },
     /// 卸载(保留用户手写配置,备份 mcp.json)
-    Uninstall,
+    Uninstall {
+        /// Apply the reviewed retract plan.
+        #[arg(long)]
+        apply: bool,
+    },
     /// 手工同步一次(守护进程未跑时使用,PRD §10 A-5)
-    Sync,
+    Sync {
+        /// Render the reviewed projection plan transactionally.
+        #[arg(long)]
+        apply: bool,
+    },
     /// 当前同步状态
     Status,
     /// 列出已纳管资产
@@ -99,6 +116,35 @@ enum Cmd {
         action: McpCmd,
     },
 
+    /// Explicitly import one platform asset into the canonical source layer.
+    Import {
+        /// Asset kind: skill, rule, mcp, agent, command, or prompt.
+        kind: String,
+        /// Stable canonical asset name (prompt currently accepts AGENTS only).
+        name: String,
+        /// Platform that currently owns the asset.
+        #[arg(long)]
+        from: String,
+        /// Canonical destination layer.
+        #[arg(long)]
+        to: String,
+        /// Replace a different existing canonical asset after review.
+        #[arg(long)]
+        replace: bool,
+        /// Reviewed JSON plan emitted by the same import command.
+        #[arg(long)]
+        plan: Option<String>,
+        /// Execute the one reviewed import. Omit for a read-only plan.
+        #[arg(long)]
+        apply: bool,
+    },
+
+    /// Source-first migration tools; inventory is strictly read-only.
+    Migrate {
+        #[command(subcommand)]
+        action: MigrateCmd,
+    },
+
     /// 守护进程子命令
     Daemon {
         #[command(subcommand)]
@@ -136,7 +182,11 @@ enum McpCmd {
     Show {
         name: String,
     },
-    Add,
+    /// 从已校验的单 server JSON 创建 canonical source（不触发平台写入）
+    Add {
+        /// 单 server MCP 定义 JSON；会写入 <root>/mcp/servers/<name>.json
+        source: String,
+    },
     Remove {
         name: String,
     },
@@ -166,12 +216,43 @@ enum McpCmd {
         /// 只输出报告,不真写盘
         #[arg(long)]
         dry_run: bool,
+        /// 抽取旧容器中的 literal env/header 到 secret store（尚未接通时明确拒绝）
+        #[arg(long)]
+        extract_secrets: bool,
+        /// 允许 migration 写 source/secret store（尚未接通时明确拒绝）
+        #[arg(long)]
+        apply: bool,
     },
     /// 遗留 `~/.hermes/mcp.json` → `~/.hermes/config.yaml` 的 `mcp_servers`
     MigrateHermes {
         /// 只输出报告,不真写盘
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum MigrateCmd {
+    /// Inventory legacy/current skill locations without changing the filesystem.
+    Inventory,
+    /// Build the reviewed source-first adoption plan without changing the filesystem.
+    Plan,
+    /// Adopt explicitly selected equivalent targets from a reviewed migration plan.
+    SourceFirst {
+        /// JSON file emitted by `ai-config migrate plan --json`.
+        #[arg(long)]
+        plan: String,
+        /// Stable action ID to adopt. May be repeated; only AdoptEquivalent actions are valid.
+        #[arg(long = "select")]
+        select: Vec<String>,
+        /// Execute the selected reviewed adoptions. Omit for a read-only verification.
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Restore a completed explicit import when its canonical result has not drifted.
+    Rollback {
+        /// Transaction ID returned by `ai-config import --apply`.
+        transaction_id: String,
     },
 }
 
@@ -231,13 +312,15 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            clap_complete::generate(
-                shell,
-                &mut Cli::command(),
-                "ai-config",
-                &mut std::io::stdout(),
-            );
-            ExitCode::SUCCESS
+            let stdout = io::stdout();
+            let mut stdout = stdout.lock();
+            match emit_completion(shell, &mut stdout) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("failed to write completion: {error}");
+                    ExitCode::from(5)
+                }
+            }
         }
         Cmd::Secrets { action } => {
             let mapped = match action {
@@ -285,17 +368,65 @@ fn main() -> ExitCode {
             let mapped = match action {
                 McpCmd::List => mcp::McpCmd::List,
                 McpCmd::Show { name } => mcp::McpCmd::Show { name },
-                McpCmd::Add => mcp::McpCmd::Add,
+                McpCmd::Add { source } => mcp::McpCmd::Add { source },
                 McpCmd::Remove { name } => mcp::McpCmd::Remove { name },
                 McpCmd::Enable { name } => mcp::McpCmd::Enable { name },
                 McpCmd::Disable { name } => mcp::McpCmd::Disable { name },
                 McpCmd::Deploy { name, to } => mcp::McpCmd::Deploy { name, to },
                 McpCmd::Retract { name, from } => mcp::McpCmd::Retract { name, from },
-                McpCmd::Migrate { source, dry_run } => mcp::McpCmd::Migrate { source, dry_run },
+                McpCmd::Migrate {
+                    source,
+                    dry_run,
+                    extract_secrets,
+                    apply,
+                } => mcp::McpCmd::Migrate {
+                    source,
+                    dry_run,
+                    extract_secrets,
+                    apply,
+                },
                 McpCmd::MigrateHermes { dry_run } => mcp::McpCmd::MigrateHermes { dry_run },
             };
             mapped.run(mode, &default_root)
         }
+        Cmd::Import {
+            kind,
+            name,
+            from,
+            to,
+            replace,
+            plan,
+            apply,
+        } => migration::run_import(
+            mode,
+            &default_root,
+            &kind,
+            &name,
+            &from,
+            &to,
+            replace,
+            plan.as_deref(),
+            apply,
+        ),
+        Cmd::Migrate { action } => match action {
+            MigrateCmd::Inventory => migration::run_inventory(mode, &default_root, cli.workspace),
+            MigrateCmd::Plan => migration::run_plan(mode, &default_root, cli.workspace),
+            MigrateCmd::SourceFirst {
+                plan,
+                select,
+                apply,
+            } => migration::run_source_first(
+                mode,
+                &default_root,
+                cli.workspace,
+                &plan,
+                select,
+                apply,
+            ),
+            MigrateCmd::Rollback { transaction_id } => {
+                migration::run_rollback(mode, &default_root, &transaction_id)
+            }
+        },
         Cmd::Daemon { action } => {
             // 桥接 main::DaemonCmd → daemon 模块的 DaemonCmd(传入 --json 全局标志)
             let mapped = match action {
@@ -309,12 +440,11 @@ fn main() -> ExitCode {
             };
             daemon::run(mapped, mode)
         }
-        Cmd::Install => lifecycle::run_install(&default_root, cli.workspace, mode),
-        Cmd::Uninstall => {
-            // Phase 1 不区分 interactive(无 stdin 提示);force 始终为 true。
-            lifecycle::run_uninstall(&default_root, true, mode)
+        Cmd::Install { apply } => projection::run(&default_root, cli.workspace, apply, false, mode),
+        Cmd::Uninstall { apply } => {
+            projection::run(&default_root, cli.workspace, apply, true, mode)
         }
-        Cmd::Sync => lifecycle::run_sync(&default_root, cli.workspace, mode),
+        Cmd::Sync { apply } => projection::run(&default_root, cli.workspace, apply, false, mode),
         Cmd::Status => lifecycle::run_status(&default_root, mode),
         Cmd::List => lifecycle::run_list(&default_root, mode),
         Cmd::Show { name } => lifecycle::run_show(&default_root, &name, mode),
@@ -336,5 +466,48 @@ fn resolve_root(flag: Option<&str>) -> Utf8PathBuf {
     paths::resolve_asset_root(Utf8Path::new(&raw))
 }
 
+fn emit_completion<W: Write>(shell: clap_complete::Shell, writer: &mut W) -> io::Result<()> {
+    let mut generated = Vec::new();
+    clap_complete::generate(shell, &mut Cli::command(), "ai-config", &mut generated);
+    match writer.write_all(&generated) {
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        result => result,
+    }
+}
+
 // re-export 给 clap_complete
 use clap::CommandFactory;
+
+#[cfg(test)]
+mod completion_tests {
+    use std::io::{self, Write};
+
+    struct FailingWriter(io::ErrorKind);
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::from(self.0))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn completion_broken_pipe_is_success() {
+        let mut writer = FailingWriter(io::ErrorKind::BrokenPipe);
+
+        super::emit_completion(clap_complete::Shell::Zsh, &mut writer)
+            .expect("an early-closing completion consumer is not a CLI failure");
+    }
+
+    #[test]
+    fn completion_other_io_error_fails() {
+        let mut writer = FailingWriter(io::ErrorKind::PermissionDenied);
+
+        let error = super::emit_completion(clap_complete::Shell::Zsh, &mut writer)
+            .expect_err("non-broken-pipe output errors must remain visible");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    }
+}

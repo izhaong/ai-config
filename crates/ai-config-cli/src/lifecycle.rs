@@ -1,5 +1,6 @@
-//! Phase 1 业务子命令(PRD §5 / §10):
-//! `install` / `uninstall` / `sync` / `status` / `list` / `show` / `doctor`。
+//! 只读 lifecycle 报告：`status` / `list` / `show` / `doctor`。
+//!
+//! install / uninstall / sync 统一由 projection plan/apply 执行；此模块不得直接写平台目标。
 //!
 //! ## 退出码契约(PRD §9.1)
 //!
@@ -24,62 +25,29 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::hermes_config;
 use ai_config_core::hook_adapter;
 use ai_config_core::link::{self, LinkHealth};
 use ai_config_core::materialize;
 use ai_config_core::mcp_json;
-use ai_config_core::model::{AssetKind, PlatformId, SyncAction};
+use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::paths;
 use ai_config_core::platform;
-use ai_config_core::secrets as core_secrets;
 use ai_config_core::source;
 use ai_config_core::sync;
 use ai_config_core::template::McpSyncState;
-use ai_config_core::workspace;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
-// ── 共享:扫描 + 装载 ──────────────────────────────────────────────
+// ── 共享:只读扫描 ────────────────────────────────────────────────
 
-/// 一次同步的"工作上下文":扫 default_root + 装 secrets + 列所有平台适配器。
-struct SyncContext {
+struct ReadContext {
     scan: source::ScanResult,
-    /// secrets 已加载(key→value)。**绝不**回显 value 到日志 / stdout / JSON。
-    secrets_pairs: Vec<(String, String)>,
-    actions: Vec<SyncAction>,
-    deploy_base: camino::Utf8PathBuf,
 }
 
-fn load_context(default_root: &Utf8Path) -> Result<SyncContext, CoreError> {
+fn load_context(default_root: &Utf8Path) -> Result<ReadContext, CoreError> {
     let roots = paths::resolve_sync_roots(default_root);
-    load_context_from_roots(&roots)
-}
-
-fn load_context_from_roots(roots: &paths::SyncRoots) -> Result<SyncContext, CoreError> {
     let scan = source::scan_with_override(&roots.asset_root, &roots.global_default)?;
-    let name = roots
-        .repo_root
-        .file_name()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "default".to_string());
-    let project = ai_config_core::model::Project::new(name, roots.repo_root.clone());
-    let actions = sync::compute_for_sync_roots(&project, roots)?;
-    let pairs = core_secrets::load()?;
-    Ok(SyncContext {
-        scan,
-        secrets_pairs: pairs,
-        actions,
-        deploy_base: roots.deploy_base.clone(),
-    })
-}
-
-fn load_context_for_member(
-    workspace_root: &Utf8Path,
-    member: &Utf8Path,
-) -> Result<SyncContext, CoreError> {
-    let roots = workspace::resolve_member_sync_roots(member, workspace_root);
-    load_context_from_roots(&roots)
+    Ok(ReadContext { scan })
 }
 
 fn all_platforms() -> [PlatformId; 4] {
@@ -101,651 +69,7 @@ fn platform_label(p: PlatformId) -> &'static str {
     }
 }
 
-// ── 共享:执行 SyncAction ──────────────────────────────────────────
-
-/// 一条动作的执行结果。
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-struct Outcome {
-    label: String,
-    platform: String,
-    kind: String,
-    result: &'static str, // "ok" | "skipped" | "failed"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<String>,
-}
-
-impl Outcome {
-    fn ok(label: String, platform: PlatformId, kind: &str) -> Self {
-        Self {
-            label,
-            platform: platform_label(platform).to_string(),
-            kind: kind.to_string(),
-            result: "ok",
-            error: None,
-            hint: None,
-        }
-    }
-    fn skipped(label: String, platform: PlatformId, kind: &str, reason: &str) -> Self {
-        Self {
-            label,
-            platform: platform_label(platform).to_string(),
-            kind: kind.to_string(),
-            result: "skipped",
-            error: Some(reason.to_string()),
-            hint: None,
-        }
-    }
-    fn failed(label: String, platform: PlatformId, kind: &str, err: &CoreError) -> Self {
-        Self {
-            label,
-            platform: platform_label(platform).to_string(),
-            kind: kind.to_string(),
-            result: "failed",
-            error: Some(err.to_string()),
-            hint: err.hint().map(str::to_owned),
-        }
-    }
-}
-
-fn infer_kind_from_dest(dest: &camino::Utf8Path) -> &'static str {
-    let s = dest.as_str();
-    if s.contains("/hooks/") && !s.ends_with("/hooks") {
-        return "hook";
-    }
-    if s.contains("/skills/") || s.ends_with("/skills") {
-        "skill"
-    } else if s.contains("/rules/") {
-        "rule"
-    } else if s.contains("/commands/") {
-        "command"
-    } else if s.contains("/agents/") || s.contains("/subagents/") {
-        "agent"
-    } else {
-        "unknown"
-    }
-}
-
-/// 跑一次完整 sync(per-item × per-platform 动作展开),返回 outcomes。
-fn execute_all_actions(ctx: &SyncContext) -> Vec<Outcome> {
-    let mut out: Vec<Outcome> = Vec::new();
-    let mut mcp_renders_done = std::collections::HashSet::new();
-
-    for action in &ctx.actions {
-        match action {
-            SyncAction::DeployHook {
-                platform,
-                name,
-                asset_root,
-                deploy_base,
-                ..
-            } => {
-                let label = format!("DeployHook {name} → {}", platform_label(*platform));
-                match hook_adapter::deploy(asset_root, deploy_base, name, *platform) {
-                    Ok(msg) => out.push(Outcome::ok(msg, *platform, "hook")),
-                    Err(e) => out.push(Outcome::failed(label, *platform, "hook", &e)),
-                }
-            }
-            SyncAction::Create {
-                platform,
-                dest,
-                src,
-                item_id: _,
-            } => {
-                let kind = infer_kind_from_dest(dest);
-                let link_src = match kind {
-                    "skill" => ai_config_core::sync::link_src_for_create(AssetKind::Skill, src),
-                    "rule" => ai_config_core::sync::link_src_for_create(AssetKind::Rule, src),
-                    "command" => ai_config_core::sync::link_src_for_create(AssetKind::Command, src),
-                    "agent" => ai_config_core::sync::link_src_for_create(AssetKind::Agent, src),
-                    _ => src.clone(),
-                };
-                let label = format!("Create {} → {}", kind, dest);
-                if paths::is_project_deploy_base(&ctx.deploy_base)
-                    && dest.exists()
-                    && !materialize::is_managed_deploy(dest)
-                    && kind != "hook"
-                {
-                    out.push(Outcome::skipped(
-                        label,
-                        *platform,
-                        kind,
-                        "项目已有非托管文件，跳过覆盖",
-                    ));
-                    continue;
-                }
-                // 确保父目录存在
-                if let Some(parent) = dest.parent() {
-                    if !parent.as_str().is_empty() && !parent.exists() {
-                        if let Err(e) = std::fs::create_dir_all(parent.as_std_path()) {
-                            out.push(Outcome {
-                                label: label.clone(),
-                                platform: platform_label(*platform).to_string(),
-                                kind: kind.to_string(),
-                                result: "failed",
-                                error: Some(format!("create_dir_all {} 失败: {e}", parent)),
-                                hint: Some("检查父目录权限".to_string()),
-                            });
-                            continue;
-                        }
-                    }
-                }
-                match materialize::deploy(&link_src, dest) {
-                    Ok(()) => {
-                        if *platform == PlatformId::Hermes && kind == "skill" {
-                            if let Some(skills_root) = dest.parent() {
-                                if let Err(e) = hermes_config::after_skill_deploy(skills_root) {
-                                    out.push(Outcome::failed(
-                                        format!("Hermes skills external_dirs ({skills_root})"),
-                                        *platform,
-                                        kind,
-                                        &e,
-                                    ));
-                                    continue;
-                                }
-                            }
-                        }
-                        out.push(Outcome::ok(label, *platform, kind));
-                    }
-                    Err(e) => out.push(Outcome::failed(label, *platform, kind, &e)),
-                }
-            }
-            SyncAction::RenderMcp { platform, .. } => {
-                if mcp_renders_done.insert(*platform) {
-                    let Some(ref src) = ctx.scan.mcp_json else {
-                        continue;
-                    };
-                    let label = format!("RenderMcp {}", platform_label(*platform));
-                    let adapter = match platform::for_scope(*platform, &ctx.deploy_base) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            out.push(Outcome::failed(label, *platform, "mcp", &e));
-                            continue;
-                        }
-                    };
-                    let dest = adapter.mcp_deploy_path();
-                    let asset_root = src.parent().unwrap_or(src);
-                    let server_names = match mcp_json::list_server_names(asset_root) {
-                        Ok(n) => n,
-                        Err(e) => {
-                            out.push(Outcome::failed(label, *platform, "mcp", &e));
-                            continue;
-                        }
-                    };
-                    let mut ok = true;
-                    for server_name in &server_names {
-                        let config = match mcp_json::get_server_config(asset_root, server_name) {
-                            Ok(Some(c)) => c,
-                            Ok(None) => continue,
-                            Err(e) => {
-                                out.push(Outcome::failed(
-                                    format!("{label} `{server_name}`"),
-                                    *platform,
-                                    "mcp",
-                                    &e,
-                                ));
-                                ok = false;
-                                break;
-                            }
-                        };
-                        if let Err(e) = mcp_json::upsert_server_on_platform(
-                            *platform,
-                            &dest,
-                            server_name,
-                            &config,
-                            Some(src),
-                        ) {
-                            out.push(Outcome::failed(
-                                format!("{label} `{server_name}`"),
-                                *platform,
-                                "mcp",
-                                &e,
-                            ));
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if ok {
-                        out.push(Outcome::ok(label, *platform, "mcp"));
-                    }
-                }
-            }
-            SyncAction::Linked { .. } | SyncAction::Unlink { .. } | SyncAction::Retract { .. } => {
-                // install / sync 路径不处理
-            }
-        }
-    }
-    out
-}
-
-// ── 1. install ──────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct InstallReport {
-    ok: bool,
-    config_dir: String,
-    config_dir_created: bool,
-    assets_synced: usize,
-    platforms: usize,
-    outcomes: Vec<Outcome>,
-    secrets: SecretsSummary,
-    exit_code: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    workspace: Option<WorkspaceInstallReport>,
-}
-
-#[derive(Debug, Serialize)]
-struct WorkspaceInstallReport {
-    workspace: String,
-    members: Vec<WorkspaceMemberReport>,
-}
-
-#[derive(Debug, Serialize)]
-struct WorkspaceMemberReport {
-    path: String,
-    assets_synced: usize,
-    failed: usize,
-    outcomes: Vec<Outcome>,
-}
-
-#[derive(Debug, Serialize)]
-struct SecretsSummary {
-    file_exists: bool,
-    key_count: usize,
-    missing: Vec<MissingSecret>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct MissingSecret {
-    server: String,
-    key: String,
-}
-
-/// `ai-config install`(PRD §5 场景 A / §10 A-1)
-pub fn run_install(default_root: &Utf8Path, workspace: bool, mode: OutputMode) -> ExitCode {
-    if workspace {
-        return run_install_workspace(default_root, mode);
-    }
-    // 1. 初始化 ~/.config/ai-config/(若不在)
-    let config_dir = ai_config_home().join(".config").join("ai-config");
-    let config_dir_created = !config_dir.exists();
-    if config_dir_created {
-        if let Err(e) = std::fs::create_dir_all(config_dir.as_std_path()) {
-            emit_error_envelope(
-                mode,
-                exit_code::FS_ERROR,
-                &format!("创建 {} 失败: {e}", config_dir),
-                Some("检查 $HOME 权限"),
-            );
-            return ExitCode::from(exit_code::FS_ERROR);
-        }
-    }
-
-    // 2. 扫资产
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-
-    // 3. secrets(MCP 已改为明文 mcp.json,不再校验 ${VAR})
-    let missing: Vec<MissingSecret> = Vec::new();
-    let secrets_summary = SecretsSummary {
-        file_exists: core_secrets::default_path().exists(),
-        key_count: ctx.secrets_pairs.len(),
-        missing: missing.clone(),
-    };
-
-    // 4. 执行 SyncAction
-    let outcomes = execute_all_actions(&ctx);
-    let ok_count = outcomes
-        .iter()
-        .filter(|o| o.result == "ok" || o.result == "skipped")
-        .count();
-    let failed_count = outcomes.iter().filter(|o| o.result == "failed").count();
-
-    // 5. 退出码
-    let code = if !missing.is_empty() {
-        exit_code::SECRETS_MISSING
-    } else if failed_count > 0 {
-        exit_code::PARTIAL_FAILURE
-    } else {
-        exit_code::SUCCESS
-    };
-
-    let report = InstallReport {
-        ok: code == exit_code::SUCCESS,
-        config_dir: config_dir.as_str().to_string(),
-        config_dir_created,
-        assets_synced: ok_count,
-        platforms: all_platforms().len(),
-        outcomes,
-        secrets: secrets_summary,
-        exit_code: code,
-        workspace: None,
-    };
-
-    if mode.is_json() {
-        emit_json(mode, &report);
-    } else if !mode.is_quiet() {
-        if config_dir_created {
-            emit_line(mode, format!("+ 创建配置目录: {}", config_dir));
-        }
-        if !missing.is_empty() {
-            emit_line(mode, format!("! secrets 缺 {} 个 key:", missing.len()));
-            for m in &missing {
-                emit_line(mode, format!("    - server `{}` 缺 `{}`", m.server, m.key));
-            }
-        }
-        if code == exit_code::SUCCESS {
-            emit_line(
-                mode,
-                format!(
-                    "{} 个资产已下发到 {} 个平台",
-                    report.assets_synced, report.platforms
-                ),
-            );
-        } else {
-            emit_line(
-                mode,
-                format!(
-                    "{} 个资产已下发到 {} 个平台(失败 {})",
-                    report.assets_synced, report.platforms, failed_count
-                ),
-            );
-        }
-    }
-
-    ExitCode::from(code)
-}
-
-fn run_install_workspace(workspace_root: &Utf8Path, mode: OutputMode) -> ExitCode {
-    let config_dir = ai_config_home().join(".config").join("ai-config");
-    let config_dir_created = !config_dir.exists();
-    if config_dir_created {
-        if let Err(e) = std::fs::create_dir_all(config_dir.as_std_path()) {
-            emit_error_envelope(
-                mode,
-                exit_code::FS_ERROR,
-                &format!("创建 {} 失败: {e}", config_dir),
-                Some("检查 $HOME 权限"),
-            );
-            return ExitCode::from(exit_code::FS_ERROR);
-        }
-    }
-
-    let members = match workspace::discover_members(workspace_root) {
-        Ok(m) => m,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-
-    let mut member_reports = Vec::new();
-    let mut all_outcomes = Vec::new();
-    let mut total_ok = 0usize;
-    let mut total_failed = 0usize;
-
-    for member in &members {
-        let ctx = match load_context_for_member(workspace_root, member) {
-            Ok(c) => c,
-            Err(e) => {
-                emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-                return ExitCode::from(e.exit_code());
-            }
-        };
-        let outcomes = execute_all_actions(&ctx);
-        let ok = outcomes
-            .iter()
-            .filter(|o| o.result == "ok" || o.result == "skipped")
-            .count();
-        let failed = outcomes.iter().filter(|o| o.result == "failed").count();
-        total_ok += ok;
-        total_failed += failed;
-        if !mode.is_quiet() && !mode.is_json() {
-            emit_line(
-                mode,
-                format!("==> {} ({} ok, {} failed)", member, ok, failed),
-            );
-        }
-        member_reports.push(WorkspaceMemberReport {
-            path: member.as_str().to_string(),
-            assets_synced: ok,
-            failed,
-            outcomes: outcomes.clone(),
-        });
-        all_outcomes.extend(outcomes);
-    }
-
-    let secrets_summary = SecretsSummary {
-        file_exists: core_secrets::default_path().exists(),
-        key_count: core_secrets::load().map(|p| p.len()).unwrap_or(0),
-        missing: Vec::new(),
-    };
-
-    let code = if total_failed > 0 {
-        exit_code::PARTIAL_FAILURE
-    } else {
-        exit_code::SUCCESS
-    };
-
-    let report = InstallReport {
-        ok: code == exit_code::SUCCESS,
-        config_dir: config_dir.as_str().to_string(),
-        config_dir_created,
-        assets_synced: total_ok,
-        platforms: all_platforms().len(),
-        outcomes: all_outcomes,
-        secrets: secrets_summary,
-        exit_code: code,
-        workspace: Some(WorkspaceInstallReport {
-            workspace: workspace_root.as_str().to_string(),
-            members: member_reports,
-        }),
-    };
-
-    if mode.is_json() {
-        emit_json(mode, &report);
-    } else if !mode.is_quiet() {
-        emit_line(
-            mode,
-            format!(
-                "workspace {}: {} 成员, {} 项下发, {} 失败",
-                workspace_root,
-                members.len(),
-                total_ok,
-                total_failed
-            ),
-        );
-    }
-
-    ExitCode::from(code)
-}
-
-// ── 2. uninstall ────────────────────────────────────────────────
-
-#[derive(Debug, Serialize)]
-struct UninstallReport {
-    ok: bool,
-    retracted: usize,
-    mcp_backups: usize,
-    platforms: usize,
-    outcomes: Vec<Outcome>,
-    exit_code: u8,
-}
-
-/// `ai-config uninstall`(PRD §5 场景 F / §10 A-2)
-pub fn run_uninstall(default_root: &Utf8Path, _force: bool, mode: OutputMode) -> ExitCode {
-    let ctx = match load_context(default_root) {
-        Ok(c) => c,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-
-    let mut outcomes: Vec<Outcome> = Vec::new();
-
-    // 1. 收回所有本工具创建的 symlink(Create → unlink)
-    for action in &ctx.actions {
-        if let SyncAction::Create { platform, dest, .. } = action {
-            let kind = infer_kind_from_dest(dest);
-            let label = format!("Retract {kind} {dest}");
-            match materialize::retract(dest) {
-                Ok(()) => outcomes.push(Outcome::ok(label, *platform, kind)),
-                Err(e) => {
-                    let s = e.to_string();
-                    if s.contains("不是本工具下发") {
-                        outcomes.push(Outcome::skipped(label, *platform, kind, &s));
-                    } else {
-                        outcomes.push(Outcome::failed(label, *platform, kind, &e));
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. T001: 在具名 ownership ledger 落地前，不收回任何平台 MCP。
-    // 平台聚合配置可能同时包含 ai-config 与用户手工条目，整文件删除不可证明安全。
-    for plat in all_platforms() {
-        let label = format!("RetractMcp {}", platform_label(plat));
-        outcomes.push(Outcome::skipped(
-            label,
-            plat,
-            "mcp",
-            "缺少可验证的 MCP 所有权记录；平台聚合配置保持不变",
-        ));
-    }
-
-    let retracted = outcomes
-        .iter()
-        .filter(|o| o.label.starts_with("Retract") && o.result == "ok")
-        .count();
-    let mcp_retracted = outcomes
-        .iter()
-        .filter(|o| o.label.starts_with("RetractMcp") && o.result == "ok")
-        .count();
-    let failed = outcomes.iter().filter(|o| o.result == "failed").count();
-    let code = if failed > 0 {
-        exit_code::PARTIAL_FAILURE
-    } else {
-        exit_code::SUCCESS
-    };
-
-    let report = UninstallReport {
-        ok: code == exit_code::SUCCESS,
-        retracted,
-        mcp_backups: mcp_retracted,
-        platforms: all_platforms().len(),
-        outcomes,
-        exit_code: code,
-    };
-
-    if mode.is_json() {
-        emit_json(mode, &report);
-    } else if !mode.is_quiet() {
-        emit_line(
-            mode,
-            format!("已收回 {retracted} 条链接,{mcp_retracted} 份平台 mcp.json"),
-        );
-        if failed > 0 {
-            emit_line(mode, format!("! {failed} 条失败"));
-        }
-    }
-
-    ExitCode::from(code)
-}
-
-// ── 3. sync ─────────────────────────────────────────────────────
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct SyncReport {
-    ok: bool,
-    synced: usize,
-    failed: usize,
-    outcomes: Vec<Outcome>,
-    exit_code: u8,
-}
-
-/// `ai-config sync` — 返回结构化报告（CLI / MCP 共用）。
-pub fn sync_report(default_root: &Utf8Path, workspace: bool) -> Result<SyncReport, CoreError> {
-    if workspace {
-        return sync_report_workspace(default_root);
-    }
-    let ctx = load_context(default_root)?;
-    let outcomes = execute_all_actions(&ctx);
-    let synced = outcomes
-        .iter()
-        .filter(|o| o.result == "ok" || o.result == "skipped")
-        .count();
-    let failed = outcomes.iter().filter(|o| o.result == "failed").count();
-    let code = if failed > 0 {
-        exit_code::PARTIAL_FAILURE
-    } else {
-        exit_code::SUCCESS
-    };
-    Ok(SyncReport {
-        ok: code == exit_code::SUCCESS,
-        synced,
-        failed,
-        outcomes,
-        exit_code: code,
-    })
-}
-
-fn sync_report_workspace(workspace_root: &Utf8Path) -> Result<SyncReport, CoreError> {
-    let members = workspace::discover_members(workspace_root)?;
-    let mut outcomes = Vec::new();
-    for member in &members {
-        let ctx = load_context_for_member(workspace_root, member)?;
-        outcomes.extend(execute_all_actions(&ctx));
-    }
-    let synced = outcomes
-        .iter()
-        .filter(|o| o.result == "ok" || o.result == "skipped")
-        .count();
-    let failed = outcomes.iter().filter(|o| o.result == "failed").count();
-    let code = if failed > 0 {
-        exit_code::PARTIAL_FAILURE
-    } else {
-        exit_code::SUCCESS
-    };
-    Ok(SyncReport {
-        ok: code == exit_code::SUCCESS,
-        synced,
-        failed,
-        outcomes,
-        exit_code: code,
-    })
-}
-
-/// `ai-config sync`(PRD §10 A-5)
-pub fn run_sync(default_root: &Utf8Path, workspace: bool, mode: OutputMode) -> ExitCode {
-    let report = match sync_report(default_root, workspace) {
-        Ok(r) => r,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-    let synced = report.synced;
-    let failed = report.failed;
-    let code = report.exit_code;
-
-    if mode.is_json() {
-        emit_json(mode, &report);
-    } else if !mode.is_quiet() {
-        emit_line(mode, format!("{synced} 个 ok / {failed} 个 fail"));
-    }
-
-    ExitCode::from(code)
-}
-
-// ── 4. status ───────────────────────────────────────────────────
+// ── status ──────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct StatusReport {
@@ -887,6 +211,9 @@ fn describe_for(
     platform: PlatformId,
     default_root: &Utf8Path,
 ) -> (String, camino::Utf8PathBuf) {
+    if kind == AssetKind::Prompt {
+        return ("unsupported".to_string(), camino::Utf8PathBuf::new());
+    }
     let adapter = match platform::for_id(platform) {
         Ok(a) => a,
         Err(_) => return ("unmanaged".to_string(), camino::Utf8PathBuf::new()),
@@ -933,6 +260,7 @@ fn describe_for(
             };
             return (state.to_string(), dest);
         }
+        AssetKind::Prompt => unreachable!("Prompt is rejected before path resolution"),
     };
     if !dest.exists() && dest.as_std_path().symlink_metadata().is_err() {
         return ("missing".to_string(), dest);
@@ -1161,6 +489,7 @@ fn kind_to_str(k: AssetKind) -> &'static str {
         AssetKind::Mcp => "mcp",
         AssetKind::Agent => "agent",
         AssetKind::Command => "command",
+        AssetKind::Prompt => "prompt",
         AssetKind::Hook => "hook",
     }
 }
@@ -1213,20 +542,7 @@ fn flat_assets(scan: &source::ScanResult) -> Vec<(AssetKind, String, camino::Utf
     out
 }
 
-fn ai_config_home() -> camino::Utf8PathBuf {
-    if let Ok(h) = std::env::var("AI_CONFIG_HOME") {
-        return camino::Utf8PathBuf::from(h);
-    }
-    if let Ok(h) = std::env::var("HOME") {
-        return camino::Utf8PathBuf::from(h);
-    }
-    if let Ok(h) = std::env::var("USERPROFILE") {
-        return camino::Utf8PathBuf::from(h);
-    }
-    camino::Utf8PathBuf::from(".")
-}
-
-// ── 单元测试(PRD §10 A-3:install → uninstall → install 幂等) ─────────
+// ── 单元测试 ────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1266,7 +582,11 @@ mod tests {
     }
     impl HomeGuard {
         fn set_to(p: &Path) -> Self {
-            let lock = HOME_TEST_LOCK.lock().expect("HOME test lock");
+            // A prior assertion can unwind after its guard restored HOME. Keep later tests
+            // diagnostic instead of hiding their own contract failures behind lock poisoning.
+            let lock = HOME_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let prev = std::env::var("HOME").ok();
             std::env::set_var("HOME", p);
             // 同时清掉 AI_CONFIG_HOME(防止旧 env 干扰)
@@ -1285,9 +605,9 @@ mod tests {
 
     // ── 共享测试:install → uninstall → install 幂等(PRD §10 A-3) ─
 
-    /// 安全收回后，未带 marker 的 legacy copy 只能跳过；重复 install 仍须幂等。
+    /// Install / uninstall 默认只返回投影计划；不得沿用旧 lifecycle 写入或报告字段。
     #[test]
-    fn install_uninstall_install_is_idempotent() {
+    fn install_and_uninstall_default_to_plan_only_without_targets() {
         let (root_tmp, root) = make_project();
         let home_tmp = tempfile::tempdir().expect("home tempdir");
         let _home = HomeGuard::set_to(home_tmp.path());
@@ -1300,45 +620,35 @@ mod tests {
             c
         };
 
-        // 1st install
-        let out = assert(&["--root", root.as_str(), "--quiet", "install"])
-            .output()
-            .expect("1st install");
-        assert!(
-            out.status.success(),
-            "1st install should succeed; stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-
-        // uninstall
-        let out = assert(&["--root", root.as_str(), "--json", "uninstall"])
-            .output()
-            .expect("uninstall");
-        assert!(
-            out.status.success(),
-            "uninstall should succeed; stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        // T001 不再删除整份平台 MCP，未证明 ownership 的历史副本也不得删除。
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json out");
-        assert_eq!(v["mcp_backups"].as_u64(), Some(0), "got {v:?}");
-        assert!(
-            home_tmp
-                .path()
-                .join(".cursor/skills/foo/SKILL.md")
-                .is_file(),
-            "没有 marker 的旧平台副本必须保留"
-        );
-
-        // 2nd install — 应当幂等(链接已撤回,从头开始)
-        let out = assert(&["--root", root.as_str(), "--quiet", "install"])
-            .output()
-            .expect("2nd install");
-        assert!(
-            out.status.success(),
-            "2nd install should also succeed (idempotent); stderr={}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        for (command, label) in [("install", "install"), ("uninstall", "uninstall")] {
+            let out = assert(&["--root", root.as_str(), "--json", command])
+                .output()
+                .expect(label);
+            assert!(
+                out.status.success(),
+                "{label} plan should succeed; stderr={}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let report: serde_json::Value =
+                serde_json::from_slice(&out.stdout).expect("projection lifecycle JSON");
+            assert!(report["plan"]["schema_version"].is_u64(), "got {report:?}");
+            assert!(report["plan"]["plan_digest"].is_string(), "got {report:?}");
+            assert!(
+                report.get("apply").is_none(),
+                "{label} without --apply must never execute a plan: {report:?}"
+            );
+        }
+        for target in [
+            home_tmp.path().join(".agents/skills/foo"),
+            home_tmp.path().join(".cursor/mcp.json"),
+            home_tmp.path().join(".claude/skills/foo"),
+        ] {
+            assert!(
+                !target.exists(),
+                "default lifecycle command must not create {}",
+                target.display()
+            );
+        }
 
         // 保留 root_tmp 防止 drop
         drop(root_tmp);
@@ -1467,14 +777,23 @@ mod tests {
     }
 
     #[test]
-    fn sync_report_produces_outcomes() {
+    fn projection_sync_defaults_to_plan_only_report() {
         let (root_tmp, root) = make_project();
         let home_tmp = tempfile::tempdir().expect("home");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        let report = super::sync_report(&root, false).expect("sync_report");
-        assert!(!report.outcomes.is_empty());
-        assert!(report.synced > 0 || report.failed > 0);
+        let execution =
+            crate::projection::execute(&root, false, false, false).expect("source-first sync plan");
+        assert_eq!(
+            execution.exit_code,
+            ai_config_core::error::exit_code::SUCCESS
+        );
+        assert!(execution.report.apply.is_none());
+        assert!(!execution.report.plan.actions.is_empty());
+        assert!(
+            !home_tmp.path().join(".agents/skills/foo").exists(),
+            "default projection sync must remain zero-write"
+        );
         drop(root_tmp);
     }
 
@@ -1497,8 +816,23 @@ mod tests {
         let members = ai_config_core::workspace::discover_members(&ws).unwrap();
         assert_eq!(members.len(), 2);
 
-        let report = super::sync_report(&ws, true).expect("workspace sync");
-        assert!(!report.outcomes.is_empty());
+        let result = crate::projection::execute(&ws, true, false, false);
+        let error = match result {
+            Ok(_) => panic!("workspace projection must fail closed until its adapter exists"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            ai_config_core::error::CoreError::NotImplemented(_)
+        ));
+        assert_eq!(
+            error.exit_code(),
+            ai_config_core::error::exit_code::ARG_ERROR
+        );
+        assert!(
+            !home_tmp.path().join(".agents/skills/foo").exists(),
+            "unsupported workspace mode must not write platform targets"
+        );
     }
 
     // ── 共享测试:show 不存在的 name 退出码 3(部分失败) ────────

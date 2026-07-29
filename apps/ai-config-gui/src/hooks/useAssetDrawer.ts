@@ -83,7 +83,7 @@ export function useAssetDrawer({
   });
 
   const canOpenEntry = useMemoizedFn((entry: PlatformAssetEntry) =>
-    canOpenAssetEntry(entry, activePlatform),
+    canOpenAssetEntry(entry),
   );
 
   const reloadDrawerIfOpen = useMemoizedFn(

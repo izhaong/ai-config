@@ -18,6 +18,22 @@ const mocks = vi.hoisted(() => ({
   deployAsset: vi.fn(() => Promise.resolve("mcp `demo` → codex OK")),
   detectSyncConflict: vi.fn(() => Promise.resolve(null)),
   applySyncChoice: vi.fn(() => Promise.resolve("synced OK")),
+  fetchProjectionPlan: vi.fn(() =>
+    Promise.resolve({
+      schema_version: 1,
+      plan_digest: "reviewed-digest",
+      actions: [],
+      blocking_reason: null,
+    }),
+  ),
+  fetchImportToSourcePlan: vi.fn(() =>
+    Promise.resolve({
+      schema_version: 1,
+      plan_digest: "import-digest",
+      actions: [],
+      blocking_reason: null,
+    }),
+  ),
 }));
 
 vi.mock("../api/tauriAssets", () => ({
@@ -25,6 +41,8 @@ vi.mock("../api/tauriAssets", () => ({
   applySyncChoice: mocks.applySyncChoice,
   deployAsset: mocks.deployAsset,
   deployAssetFromPlatform: mocks.deployAssetFromPlatform,
+  fetchImportToSourcePlan: mocks.fetchImportToSourcePlan,
+  fetchProjectionPlan: mocks.fetchProjectionPlan,
   detectSyncConflict: mocks.detectSyncConflict,
   importAsset: mocks.importAsset,
   retractAsset: mocks.retractAsset,
@@ -158,7 +176,7 @@ describe("useAssetOperations MCP platform toggle", () => {
     });
   });
 
-  it("从 Cursor 视图拷贝 MCP 到 Codex", async () => {
+  it("从 Cursor 视图不能直接复制 MCP 到 Codex", async () => {
     const { result, showToast } = renderOps();
     const entry = mcpEntry({ codex: "missing" });
 
@@ -167,18 +185,28 @@ describe("useAssetOperations MCP platform toggle", () => {
     });
 
     await vi.waitFor(() => {
-      expect(mocks.deployAssetFromPlatform).toHaveBeenCalledWith(
-        "mcp",
-        "demo",
-        "user-global",
-        "cursor",
-        "codex",
-      );
-      expect(showToast).toHaveBeenCalled();
+      expect(mocks.deployAssetFromPlatform).not.toHaveBeenCalled();
+      expect(mocks.deployAsset).not.toHaveBeenCalled();
+      expect(showToast).not.toHaveBeenCalled();
     });
   });
 
-  it("从 Cursor 视图导入 MCP 到 ai-config", async () => {
+  it("源视图部署先请求 scope-level source-first review，而不是平台互拷", async () => {
+    const { result } = renderOps({ browsingSource: true, activePlatform: "aiconfig" });
+    const entry = mcpEntry({ aiconfig: "linked", codex: "missing" });
+
+    await act(async () => {
+      result.current.handlePlatformToggle(entry, "codex");
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.fetchProjectionPlan).toHaveBeenCalledWith("user-global", false);
+      expect(mocks.deployAssetFromPlatform).not.toHaveBeenCalled();
+      expect(mocks.deployAsset).not.toHaveBeenCalled();
+    });
+  });
+
+  it("从 Cursor 视图先请求 source-first 导入审阅，而不是直接写入", async () => {
     const { result } = renderOps();
     const entry = mcpEntry({ aiconfig: "unlinked" });
 
@@ -187,16 +215,36 @@ describe("useAssetOperations MCP platform toggle", () => {
     });
 
     await vi.waitFor(() => {
-      expect(mocks.importAsset).toHaveBeenCalledWith(
+      expect(mocks.fetchImportToSourcePlan).toHaveBeenCalledWith(
         "mcp",
         "demo",
         "user-global",
         "cursor",
       );
+      expect(mocks.importAsset).not.toHaveBeenCalled();
     });
   });
 
-  it("收回其它平台上已 synced 的 MCP", async () => {
+  it("从 Codex 视图为 MCP 请求 Codex source-first 导入审阅", async () => {
+    const { result } = renderOps({ activePlatform: "codex" });
+    const entry = mcpEntry({ cursor: "unlinked", codex: "synced", aiconfig: "unlinked" });
+
+    await act(async () => {
+      result.current.handlePlatformToggle(entry, "aiconfig");
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.fetchImportToSourcePlan).toHaveBeenCalledWith(
+        "mcp",
+        "demo",
+        "user-global",
+        "codex",
+      );
+      expect(mocks.importAsset).not.toHaveBeenCalled();
+    });
+  });
+
+  it("不会收回其它平台上已 synced 的 MCP", async () => {
     const { result } = renderOps();
     const entry = mcpEntry({ claude: "synced" });
 
@@ -204,13 +252,6 @@ describe("useAssetOperations MCP platform toggle", () => {
       result.current.handlePlatformToggle(entry, "claude");
     });
 
-    await vi.waitFor(() => {
-      expect(mocks.retractAsset).toHaveBeenCalledWith(
-        "mcp",
-        "demo",
-        "user-global",
-        "claude",
-      );
-    });
+    expect(mocks.retractAsset).not.toHaveBeenCalled();
   });
 });

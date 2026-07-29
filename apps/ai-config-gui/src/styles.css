@@ -512,6 +512,12 @@ body.sidebar-resizing .sidebar-resizer-col {
   overflow: hidden;
 }
 
+.content-pane-scroll.is-drawer-open .content-pane-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* ── 列表顶栏 + 行：统一三列网格 ─────────────────────────── */
 .list-header {
   flex-shrink: 0;

@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { CopyToProjectModal } from "./components/feedback/CopyToProjectModal";
 import { ConfirmModal } from "./components/feedback/ConfirmModal";
-import { SyncConflictModal } from "./components/feedback/SyncConflictModal";
+import { ProjectionPlanModal } from "./components/feedback/ProjectionPlanModal";
+import { ImportPlanModal } from "./components/feedback/ImportPlanModal";
 import { UpdateModal } from "./components/feedback/UpdateModal";
 import { AddSkillModal } from "./components/feedback/AddSkillModal";
 import { AddMcpModal } from "./components/feedback/AddMcpModal";
@@ -243,18 +244,21 @@ export function App() {
           onConfirm={() => void confirm?.onConfirm()}
         />
 
-      <SyncConflictModal
-        key={
-          ops.syncConflict
-            ? `${ops.syncConflict.entry.name}:${ops.syncConflict.targetPlatform}`
-            : "closed"
-        }
-        open={!!ops.syncConflict}
-        report={ops.syncConflict?.report ?? null}
-        defaultSource={ops.syncConflict?.defaultSource ?? "aiconfig"}
+      <ProjectionPlanModal
+        open={!!ops.projectionReview}
+        review={ops.projectionReview?.review ?? null}
+        retract={ops.projectionReview?.retract ?? false}
         busy={busy}
-        onCancel={ops.dismissSyncConflict}
-        onConfirm={(source) => void ops.confirmSyncConflict(source)}
+        onCancel={ops.dismissProjectionReview}
+        onApply={() => void ops.confirmProjectionReview()}
+      />
+
+      <ImportPlanModal
+        open={!!ops.importReview}
+        plan={ops.importReview?.plan ?? null}
+        busy={busy}
+        onCancel={ops.dismissImportReview}
+        onApply={() => void ops.confirmImportReview()}
       />
 
       {projects.registerProjectOpen ? (

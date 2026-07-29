@@ -38,7 +38,7 @@ export function ListColCheck({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-center justify-center",
+        "list-col-check flex cursor-pointer items-center justify-center",
         className,
       )}
       {...props}
@@ -68,7 +68,7 @@ export function ListColActions({
   return (
     <div
       className={cn(
-        "flex w-[var(--list-actions-w)] min-w-[var(--list-actions-w)] max-w-[var(--list-actions-w)] shrink-0 items-center justify-end",
+        "list-col-actions flex w-[var(--list-actions-w)] min-w-[var(--list-actions-w)] max-w-[var(--list-actions-w)] shrink-0 items-center justify-end",
         className,
       )}
       {...props}

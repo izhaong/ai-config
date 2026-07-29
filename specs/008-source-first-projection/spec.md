@@ -4,7 +4,7 @@
 
 **Created**: 2026-07-12
 
-**Status**: Draft
+**Status**: Approved（2026-07-16 补齐平台资产契约）
 **Input**: 将 ai-config 作为 skills、rules、commands、agents、入口提示词、hooks 与 MCP 的统一管理源；平台只消费逐项链接或经 adapter 生成的单向投影，解决多份副本、来源竞争、错误平台路径、外部资产误覆盖与 secrets 混入资产仓的问题。
 
 ## User Scenarios & Testing
@@ -117,6 +117,133 @@
 
 ## Requirements
 
+### 平台资产契约（实现与验收的权威边界）
+
+本节冻结 `skills → rules → MCP → agents → commands → hooks` 的统一源、平台消费位置与作用域语义。实现、迁移、GUI 状态和测试必须以本节为准；当旧 PRD、README、现有 adapter、第三方安装器或本机历史目录与本节冲突时，只能把旧行为列为 legacy inventory，不能继续作为新投影目标。
+
+**官方契约复核日期**：2026-07-16。
+
+**Workspace scope 归一化**：`workspace` 是独立 deploy scope，而非写入用户 HOME 的别名。对表中有稳定 project target 的 Cursor、Codex、Claude 能力，workspace 使用 workspace root 代替 `<repo>`；Hermes 的 workspace skill、MCP 与 Hook 仍为 `unsupported`，不得借此改写全局 `config.yaml`。每个 capability test 必须断言目标仍位于该 workspace root 内。
+
+**上游依据**：
+
+- Cursor：[Skills](https://cursor.com/docs/skills)、[Rules](https://cursor.com/docs/rules)、[Subagents](https://cursor.com/docs/subagents)、[MCP](https://cursor.com/docs/mcp)、[Hooks](https://cursor.com/docs/hooks)、[Commands](https://cursor.com/changelog/1-6)。
+- Codex：[Skills](https://developers.openai.com/codex/skills/)、[AGENTS.md](https://developers.openai.com/codex/agent-configuration/agents-md/)、[Execution Rules](https://developers.openai.com/codex/agent-configuration/rules/)、[Subagents](https://developers.openai.com/codex/agent-configuration/subagents/)、[MCP](https://developers.openai.com/codex/extend/mcp/)、[Custom Prompts](https://developers.openai.com/codex/custom-prompts/)、[Hooks](https://developers.openai.com/codex/hooks/)。
+- Claude Code：[Directory](https://code.claude.com/docs/en/claude-directory)、[Rules](https://code.claude.com/docs/en/memory#organize-rules-with-clauderules)、[MCP](https://code.claude.com/docs/en/mcp)、[Subagents](https://code.claude.com/docs/en/sub-agents)、[Skills and Commands](https://code.claude.com/docs/en/skills)、[Hooks](https://code.claude.com/docs/en/hooks-guide)。
+- Hermes：[Skills](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/skills.md)、[Context Files](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/guides/tips.md)、[MCP](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/mcp.md)、[Hooks](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/hooks.md)。
+
+#### 统一源结构与投影类型
+
+全局源固定为 `~/.ai-config/`，项目源固定为 `<repo>/.ai-config/`；两者目录结构必须同构。平台目录不是 source layer。
+
+```text
+<asset_root>/
+├── skills/<name>/SKILL.md
+├── rules/<name>.mdc
+├── mcp/servers/<name>.json
+├── agents/<name>.md
+├── commands/<name>.md
+├── prompts/AGENTS.md
+├── hooks.json
+└── hooks/<single-file-or-bundle>
+```
+
+平台 adapter 只能选择以下投影类型：
+
+| 类型 | 含义 |
+| --- | --- |
+| `direct_link` | 平台能原样消费单条文件或目录；逐资产链接到 canonical source。 |
+| `shared_target` | 多个平台官方上会读取同一物理目标；planner 只生成一个 target action，并在状态中列出全部消费者。 |
+| `generated` | 平台格式或聚合容器不同；adapter 生成具名条目并保留 foreign/unknown 内容。 |
+| `external_directory` | 平台通过官方配置引用一个外部资产根，不复制资产。 |
+| `copy_fallback` | 仅平台/OS 无法建立链接且用户显式允许时使用；状态必须显示 `copied`。 |
+| `unsupported` | 当前 scope 没有官方消费位置或无法无损表达；不得猜测目录或写入其他 scope。 |
+
+#### 1. Skills
+
+Canonical skill 是 `skills/<name>/` 整目录，`SKILL.md` 必须存在；脚本、参考资料、模板和资源均随该目录作为一个资产单元。禁止链接整个 `skills/` 根。
+
+| 平台 | 用户全局目标 | 项目目标 | 加载/调用语义 | ai-config 投影决策 |
+| --- | --- | --- | --- | --- |
+| Cursor | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持嵌套项目 skills。 | 与 Codex 共用 `shared_target + direct_link`。`.cursor/skills` 仍是官方支持的 alternate location；为避免同一 skill 被投影两次，ai-config 只盘点/兼容该位置，不作为新默认目标。 |
+| Codex | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/`，按 CWD 到 repo root 发现 | 默认允许 implicit invocation；用户可 `$skill-name`；支持链接后的 skill 目录。 | 与 Cursor 共用 `shared_target + direct_link`。`~/.codex/skills` 和 `<repo>/.codex/skills` 只作 legacy inventory。 |
+| Claude | `~/.claude/skills/<name>/` | `<repo>/.claude/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持父级、嵌套目录和目录软链。 | `direct_link`。 |
+| Hermes | `~/.hermes/config.yaml` 的 `skills.external_dirs` | 无官方 project-scoped skill target | 自动进入 skill index，也可 `/skill-name`；本地 `~/.hermes/skills` 优先于 external dir 同名项。 | 全局为 `external_directory`，指向 canonical global skills root；项目为 `unsupported`，不得把项目 skill 写进全局 Hermes 命名空间。 |
+
+Cursor 与 Codex 对 `.agents/skills` 的可见性是物理共享的：同一个 skill 不能承诺“只对 Codex 可见但对 Cursor 不可见”。GUI 可分别展示两平台兼容性，但 apply/retract 必须折叠为一个共享 target，且收回前必须确认没有其他有效消费者仍请求该 target。
+
+#### 2. Rules
+
+本资产中的 Rule 指“注入模型上下文的指导规则”，不是 shell 权限、审批或执行策略。Canonical rule 使用 `rules/<name>.mdc` 保存正文和可规范化的 description/path/always 语义；adapter 必须无损转换平台触发语义，不能仅改扩展名后假定兼容。
+
+| 平台 | 用户全局目标 | 项目目标 | 格式/加载语义 | ai-config 投影决策 |
+| --- | --- | --- | --- | --- |
+| Cursor | 官方 User Rules 存于 Cursor Customize/账号设置，无稳定文件目标 | `<repo>/.cursor/rules/<name>.mdc` | `.mdc`；支持 Always、Agent Decides、路径匹配和手动引用。 | 全局平台投影 `unsupported`；项目 `generated` 或在字节级兼容时 `direct_link`。不得假造 `~/.cursor/rules` 为权威官方目标。 |
+| Codex | 无独立 instruction-rule 目录 | 无独立 instruction-rule 目录；项目指导由 `AGENTS.md` 链承载 | `~/.codex/rules/*.rules` 与 `<repo>/.codex/rules/*.rules` 是 Starlark **命令执行策略**，不是提示规则。 | instruction Rule 在全局/项目均为 `unsupported`；需要进入 Codex 的通用指导必须显式纳入 canonical Prompt/AGENTS 方案。绝对禁止把 `.mdc` 写入 `.codex/rules`。 |
+| Claude | `~/.claude/rules/<name>.md` | `<repo>/.claude/rules/<name>.md` | Markdown；无 `paths` 时启动加载，有 `paths` 时按文件上下文加载；递归发现并支持软链。 | `generated`；仅当 canonical 内容和 frontmatter 已符合 Claude 契约时可 `direct_link`。 |
+| Hermes | 无独立全局模块化 rule 目标 | `<repo>/.cursor/rules/<name>.mdc`（Cursor compatibility） | Hermes 从项目 CWD 读取 `.cursor/rules/*.mdc`；全局身份/人格属于 `SOUL.md`，不等同 Rule。 | 全局 `unsupported`；项目与 Cursor 共用一个 `shared_target`。不得把全局 rule 写入项目或 `SOUL.md`。 |
+
+#### 3. MCP
+
+Canonical MCP 必须是 `mcp/servers/<name>.json` 的逐 server 资产，只保存可共享字段和 secret 引用。平台 MCP 文件都是聚合容器，必须 `generated` merge，禁止软链整份配置或以整文件为所有权单位。
+
+| 平台 | 用户全局目标 | 项目目标 | 平台格式 | ai-config 投影决策 |
+| --- | --- | --- | --- | --- |
+| Cursor | `~/.cursor/mcp.json` | `<repo>/.cursor/mcp.json` | JSON `mcpServers` | 按 server 名生成/更新具名条目。 |
+| Codex | `~/.codex/config.toml` | `<repo>/.codex/config.toml`（仅 trusted project） | TOML `[mcp_servers.<name>]` | 按 server 名生成/更新 TOML table；不得写 `.codex/mcp.json`。 |
+| Claude | `~/.claude.json` 的 user scope | `<repo>/.mcp.json` 的 project scope | JSON `mcpServers` | 全局源映射 user scope，项目源映射可提交的 project scope。Claude local scope 虽也存于 `~/.claude.json`，但属于用户私有项目状态，只盘点、不自动接管。不得写 `~/.claude/mcp.json`。 |
+| Hermes | `~/.hermes/config.yaml` 的 `mcp_servers` | 无官方 project-scoped MCP 配置 | YAML | 全局按 server 名生成/更新；项目 `unsupported`，不得为项目请求改写全局 config。 |
+
+同一个目标容器中的 MCP、Hook、Hermes `skills.external_dirs` 等 mutation 必须合并为一个 target batch；整次 plan 只能解析、备份和替换该容器一次。所有平台的 foreign server、注释和未知字段必须保留。
+
+#### 4. Agents / Subagents
+
+Canonical agent 使用 `agents/<name>.md` 表达名称、描述、指令和可移植能力约束。平台格式不同，adapter 必须显式转换；不能把同一 Markdown 盲目复制到所有目录。
+
+| 平台 | 用户全局目标 | 项目目标 | 格式/调用语义 | ai-config 投影决策 |
+| --- | --- | --- | --- | --- |
+| Cursor | `~/.cursor/agents/<name>.md` | `<repo>/.cursor/agents/<name>.md` | Markdown + YAML frontmatter；按描述自动委派，也可自然语言指定。Cursor 兼容读取 Claude/Codex agent 目录，但 native 目录优先。 | `generated`；不得默认投影到兼容目录。 |
+| Codex | `~/.codex/agents/<name>.toml` | `<repo>/.codex/agents/<name>.toml` | TOML，至少含 `name`、`description`、`developer_instructions`；用户可要求 delegation，规则/skill 也可触发。 | `generated`；禁止使用 `.codex/subagents`。 |
+| Claude | `~/.claude/agents/<name>.md` | `<repo>/.claude/agents/<name>.md` | Markdown + YAML frontmatter；Claude 可自动委派，用户可 `@agent-name`。 | `generated`；只有 canonical 已完全符合 Claude schema 时才可 `direct_link`。禁止使用 `.claude/subagents`。 |
+| Hermes | 无静态 custom-agent 文件目标 | 无静态 custom-agent 文件目标 | delegation 由运行时和 `config.yaml` 控制，不是逐 agent 文件资产。 | 全局/项目均 `unsupported`；不得创建 `.hermes/agents`。 |
+
+平台不支持的 agent 字段必须在 plan 中显示为 blocking `unsupported` 或明确的降级项；不得静默丢弃 tools、model、readonly/sandbox、skills、MCP 或 delegation 约束。
+
+#### 5. Commands
+
+Canonical command 是 `commands/<name>.md`，语义固定为“用户显式调用的可复用 prompt”。若平台会自动调用同格式内容，adapter 必须加上 explicit-only 控制；command 与 skill 同名时必须在 plan 阶段报告冲突或遵循平台已公开的确定优先级。
+
+| 平台 | 用户全局目标 | 项目目标 | 调用语义 | ai-config 投影决策 |
+| --- | --- | --- | --- | --- |
+| Cursor | `~/.cursor/commands/<name>.md` | `<repo>/.cursor/commands/<name>.md`（项目根） | `/name` 显式调用；嵌套项目 commands 不属于当前官方稳定目标。 | `direct_link`；新需求若需要自动判断，应建 Skill 而不是 Command。 |
+| Codex | deprecated legacy `~/.codex/prompts/<name>.md` | 无 project-scoped custom prompt | legacy 通过 `/prompts:name` 显式调用；官方要求新可复用 prompt 使用 Skill。 | 全局/项目均 `unsupported`；`.codex/prompts` 只作 migration inventory，可建议转换为 Skill。禁止创建 `.codex/commands`。 |
+| Claude | `~/.claude/commands/<name>.md` | `<repo>/.claude/commands/<name>.md` | `/name`；commands 已并入 skills 机制但仍兼容，Skill 同名时 Skill 优先。 | legacy-compatible `direct_link`；新建时 UI 应优先推荐 Skill，但不得擅自改变现有 Command 的显式调用语义。 |
+| Hermes | 无独立自定义 command 资产目录 | 无独立自定义 command 资产目录 | 自定义 `/name` 来自 Skill。 | 全局/项目均 `unsupported`；提供“转换为 Skill”建议。 |
+
+#### 6. Hooks
+
+Canonical Hook 由 `hooks.json` 中的具名绑定和 `hooks/` 下的一个合法脚本单元组成。脚本单元只允许“单文件”或“单目录整包”；配置绑定必须由 adapter 合并，脚本/整包可逐项链接。禁止只同步脚本不生成绑定，也禁止只写绑定却引用平台外散落文件。
+
+| 平台 | 用户全局目标 | 项目目标 | 平台格式 | ai-config 投影决策 |
+| --- | --- | --- | --- | --- |
+| Cursor | `~/.cursor/hooks.json` + `~/.cursor/hooks/` | `<repo>/.cursor/hooks.json` + `<repo>/.cursor/hooks/` | JSON，camelCase lifecycle events；项目 Hook 可供 Cloud Agent 使用，用户 Hook 不进入 Cloud Agent。 | 配置 `generated` + 脚本单元 `direct_link`。 |
+| Codex | `~/.codex/hooks.json` 或 `~/.codex/config.toml` + `~/.codex/hooks/` | `<repo>/.codex/hooks.json` 或 `<repo>/.codex/config.toml` + `<repo>/.codex/hooks/` | JSON/TOML，PascalCase events；项目 Hook 仅 trusted project 加载，并需独立 trust review。 | 新投影固定选择 `hooks.json` 作为单一表示；配置 `generated` + 脚本单元 `direct_link`，不得在同一 scope 同时生成 inline `[hooks]`。 |
+| Claude | `~/.claude/settings.json` 的 `hooks` + `~/.claude/hooks/` | `<repo>/.claude/settings.json` 的 `hooks` + `<repo>/.claude/hooks/` | JSON settings，PascalCase events；project/local/user settings 有明确优先级。 | settings 具名绑定 `generated` + 脚本单元 `direct_link`；不得覆盖 permissions、model 等其他设置。 |
+| Hermes | `~/.hermes/config.yaml` 的 `hooks` + `~/.hermes/hooks/` | 无官方 project-scoped Hook 配置 | YAML；CLI/gateway 共同加载 shell hooks。 | 全局配置 `generated` + 脚本单元 `direct_link`；项目 `unsupported`，不得为项目请求改写全局 config。 |
+
+Hook adapter 必须完成事件名、matcher、输入输出和阻断语义的显式映射。没有等价事件或返回语义时，该 binding 必须为 `unsupported`，不得仅因“能运行脚本”就声称兼容。
+
+#### 防偏航验收规则
+
+1. 每个平台契约测试必须逐资产断言上表中的 global/project target、格式、投影类型与 unsupported 边界。
+2. adapter 不得返回本节未列出的“猜测路径”；legacy 路径只能由 inventory/migration 扫描，不得成为普通 sync 的写目标。
+3. 指向同一规范化物理目标的多个平台消费者必须合并为一个 action；状态仍需列出全部消费者及可见性耦合。
+4. `supported path` 不等于 `supported format`；无法无损表达字段时必须 generated、降级并提示，或 blocking unsupported。
+5. 聚合配置只能按具名 owned entry 修改；任何外部条目、注释、顺序敏感内容和未知字段必须保留。
+6. 官方契约 URL 或上游快照变化时，契约测试必须先失败；更新本节和测试快照后才能修改 adapter。
+7. 新增资产类型或平台能力前必须先更新本节、对应 FR 与验收用例，禁止先写平台路径再补需求。
+8. 契约实现与验收顺序固定为 `Skills → Rules → MCP → Agents → Commands → Hooks`；每类资产必须先补失败测试、再最小实现、跑该类定向测试并留下独立验收记录，上一类未通过不得扩展下一类；每个计划任务完成并验证后形成独立 commit checkpoint。全部本地门禁通过后，才能执行真实 HOME 的只读 inventory；真实写入仅允许用户再次确认的一项无 secret、非关键、无 conflict Skill canary。
+
 ### Functional Requirements
 
 #### 单一事实源与作用域
@@ -130,11 +257,11 @@
 #### 单向投影与平台适配
 
 - **FR-006**: 自动流向只能是 effective source → platform projection；平台变化不得自动写回源。
-- **FR-007**: 可原样消费的 skill、rule、command、agent、prompt 和 hook script 必须逐项链接；禁止链接整个平台资产根，也禁止默认创建独立硬拷贝。
+- **FR-007**: 仅当平台能原样、无损消费且目标是单条专用路径时，skill、rule、command、agent、prompt 和 hook script 才可逐项链接；异构格式与聚合容器必须生成具名 projection。禁止链接整个平台资产根，也禁止默认创建独立硬拷贝。
 - **FR-008**: 平台 adapter 必须明确返回该资产在当前 scope 的 `direct_link`、`generated`、`external_directory`、`copy_fallback` 或 `unsupported` 策略。
-- **FR-009**: Codex user/repo skills 必须使用官方 `.agents/skills` 路径并支持逐项 symlink；Codex MCP 必须合并到 `.codex/config.toml` 的 `mcp_servers`。
-- **FR-010**: Claude skills/agents/commands 与 MCP 必须写入其官方作用域路径；user MCP 不得写入 `~/.claude/mcp.json`。
-- **FR-011**: Hermes global skills 优先通过 `skills.external_dirs` 引用 canonical source；在缺少官方 project-scoped target 时，项目 skill、MCP 和 hook 必须报告 `unsupported`，不得静默写入全局 Hermes 命名空间。
+- **FR-009**: Skills 必须遵守本节 Skills 契约：Cursor 与 Codex 的 global/repo 投影共用 `.agents/skills` 物理 target，Claude 使用 `.claude/skills`，Hermes global 使用 `skills.external_dirs`；平台可见性耦合必须如实展示。
+- **FR-010**: Rules、Agents 与 Commands 必须遵守本节对应契约；Codex instruction rules 不得写入执行策略 `.codex/rules`，Codex/Claude agents 不得写入虚构的 `subagents` 目录，Codex commands 不得写入 `.codex/commands`。
+- **FR-011**: MCP 与 Hooks 必须遵守本节对应契约；缺少官方 project-scoped target 的 Hermes project skill、MCP 和 Hook 必须报告 `unsupported`，不得静默写入全局 Hermes 命名空间。
 - **FR-012**: Cursor、Codex、Claude 和 Hermes 的聚合配置更新必须保留所有外部条目和未知字段；同一次 plan 中指向同一聚合文件的多个条目必须合并为一个 target batch，只解析、备份和替换一次。
 - **FR-013**: Windows fallback 必须显式显示为 `copied`，不得伪装成 `managed_link`；copy 必须经临时路径和 backup-swap，失败时恢复原目标。
 - **FR-014**: 在源与目标无变化时重复 apply 必须产生零变更。
@@ -175,6 +302,9 @@
 - **FR-037**: `.cc-switch`、插件缓存、平台内置资产和其他管理工具必须视为 external；ai-config 只报告交集和冲突，不擅自清理。
 - **FR-038**: 第一阶段不得依赖 daemon、watcher、event bus 或未完成的 SQLite item/target 状态才能保证正确性。
 - **FR-039**: CLI、MCP server 与 GUI 必须调用同一 core planner/executor，不得分别实现状态或写入语义；对同一规范化请求，三个入口必须产生相同 schema version、action ordering 和 plan digest。
+- **FR-040**: `PlatformCapability` 必须以本节六类资产契约为数据来源，并能区分 source scope、deployment scope、consumer set、target path、format、projection mode、trust requirement 与 legacy inventory path。
+- **FR-041**: 对同一物理 target 的共享消费者、同一聚合容器的跨资产 mutation 和同名跨 scope 资产，planner 必须先规范化与去重，再生成唯一 action；不得由平台循环产生重复写入。
+- **FR-042**: 所有 legacy/alternate 路径必须在 status 与 migration 中标明来源、是否仍被平台消费以及为何不再作为默认 target；存在 legacy 资产不得让普通 sync 自动迁移、覆盖或删除。
 
 ### Key Entities
 

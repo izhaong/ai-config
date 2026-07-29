@@ -10,7 +10,8 @@ use ai_config_core::model::{AssetKind, PlatformId};
 use ai_config_core::paths;
 use ai_config_core::source;
 
-use crate::lifecycle::{ListReport, StatusReport, SyncReport};
+use crate::lifecycle::{ListReport, StatusReport};
+use crate::projection::{self, LifecycleReport};
 
 /// 资产根扫描摘要（MCP `ai_config_env`）。
 #[derive(Debug, serde::Serialize, JsonSchema)]
@@ -49,6 +50,9 @@ pub fn parse_kind(s: &str) -> Result<AssetKind, String> {
         "agent" | "agents" => Ok(AssetKind::Agent),
         "command" | "commands" => Ok(AssetKind::Command),
         "mcp" => Ok(AssetKind::Mcp),
+        "prompt" | "prompts" => Err(
+            "Prompt 仅能经 source-first projection planner；旧 API lifecycle 已禁用".to_string(),
+        ),
         other => Err(format!(
             "未知资产类型 `{other}`；可用: skill, rule, agent, command, mcp"
         )),
@@ -76,8 +80,8 @@ pub fn status(root: &Utf8Path) -> Result<StatusReport, CoreError> {
     crate::lifecycle::status_report(root)
 }
 
-pub fn sync(root: &Utf8Path) -> Result<SyncReport, CoreError> {
-    crate::lifecycle::sync_report(root, false)
+pub fn sync(root: &Utf8Path, apply: bool) -> Result<LifecycleReport, CoreError> {
+    Ok(projection::execute(root, false, apply, false)?.report)
 }
 
 pub fn doctor(root: &Utf8Path) -> Result<doctor::DoctorReport, CoreError> {
@@ -104,25 +108,27 @@ pub fn save(
 }
 
 pub fn deploy(
-    root: &Utf8Path,
-    kind: AssetKind,
-    name: &str,
-    platform: PlatformId,
+    _root: &Utf8Path,
+    _kind: AssetKind,
+    _name: &str,
+    _platform: PlatformId,
+    _apply: bool,
 ) -> Result<String, CoreError> {
-    with_scope(root, |scope| {
-        asset_ops::deploy(&scope, kind, name, platform)
-    })
+    Err(CoreError::NotImplemented(
+        "MCP 单项 deploy 尚未映射到 source-first projection plan；请使用 ai_config_sync 并显式 apply=true",
+    ))
 }
 
 pub fn retract(
-    root: &Utf8Path,
-    kind: AssetKind,
-    name: &str,
-    platform: PlatformId,
+    _root: &Utf8Path,
+    _kind: AssetKind,
+    _name: &str,
+    _platform: PlatformId,
+    _apply: bool,
 ) -> Result<String, CoreError> {
-    with_scope(root, |scope| {
-        asset_ops::retract(&scope, kind, name, platform)
-    })
+    Err(CoreError::NotImplemented(
+        "MCP 单项 retract 尚未映射到 source-first projection plan；请使用 ai_config_sync 的 uninstall 生命周期",
+    ))
 }
 
 pub fn scan_summary(root: &Utf8Path) -> Result<EnvSummary, CoreError> {
@@ -177,5 +183,11 @@ mod tests {
         } else {
             std::env::remove_var("AI_CONFIG_ROOT");
         }
+    }
+
+    #[test]
+    fn prompt_kind_is_reserved_for_the_projection_planner() {
+        let err = parse_kind("prompt").expect_err("Prompt must not enter the legacy API");
+        assert!(err.contains("source-first projection planner"));
     }
 }

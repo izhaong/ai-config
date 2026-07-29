@@ -44,7 +44,7 @@ export function useAssetBrowser({
   reloadDrawerIfOpen,
 }: UseAssetBrowserOptions) {
   const { t } = useTranslation();
-  const [activePlatform, setActivePlatform] = useState<Platform>("cursor");
+  const [activePlatform, setActivePlatform] = useState<Platform>("aiconfig");
   const [activeKind, setActiveKind] = useState<AssetKind>("skill");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [manualLoading, setManualLoading] = useState(false);
@@ -56,10 +56,16 @@ export function useAssetBrowser({
 
   const browsingSource = isSourcePlatform(activePlatform);
 
-  const issues = doctor?.platform_capability_issues ?? [];
+  const capabilityIssues = doctor?.platform_capability_issues;
   const issueMap = useMemo(
-    () => new Map(issues.map((i) => [`${i.platform}:${i.kind}`, i.reason])),
-    [issues],
+    () =>
+      new Map(
+        (capabilityIssues ?? []).map((i) => [
+          `${i.platform}:${i.kind}`,
+          i.reason,
+        ]),
+      ),
+    [capabilityIssues],
   );
 
   const issueReasonFor = useMemoizedFn(
@@ -211,7 +217,7 @@ export function useAssetBrowser({
     !!issueMap.get(`${activePlatform}:${activeKind}`);
 
   const canOpenEntry = useMemoizedFn((entry: PlatformAssetEntry) =>
-    canOpenAssetEntry(entry, activePlatform),
+    canOpenAssetEntry(entry),
   );
 
   const togglePlatformBrowse = useMemoizedFn((plat: Platform) => {

@@ -13,10 +13,7 @@ export function shouldLoadFromSource(
 }
 
 /** 是否可在抽屉中打开资产 */
-export function canOpenEntry(
-  entry: PlatformAssetEntry,
-  _activePlatform: Platform,
-): boolean {
+export function canOpenEntry(entry: PlatformAssetEntry): boolean {
   const path = entry.platform_path?.trim() ?? "";
   if (!path) return false;
   return true;

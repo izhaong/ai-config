@@ -1,60 +1,84 @@
 ---
 name: ai-config-verify
-description: ai-config 变更验证：cargo test、GUI build、ai-config doctor/status。声称完成前必跑。
+description: ai-config 四层验收：源码测试、隔离生命周期、已安装运行态、人工外部门禁。声称完成前必跑。
 ---
 
 # ai-config 验证
 
-## 快速（core / CLI 改动）
+验证必须区分四层结果，不能用源码测试替代已安装版本或真实 IDE 验收。
 
-在仓库根：
+## 一键验证
+
+```bash
+.ai-config/skills/ai-config-verify/scripts/verify-closure.sh all
+```
+
+可按层运行：
+
+```bash
+.ai-config/skills/ai-config-verify/scripts/verify-closure.sh source
+.ai-config/skills/ai-config-verify/scripts/verify-closure.sh sandbox
+.ai-config/skills/ai-config-verify/scripts/verify-closure.sh runtime
+```
+
+## 1. Source：源码自动化
+
+- `cargo test --workspace`
+- `cargo build -p ai-config-cli`
+- `npm run test && npm run build`
+- 行为变更必须包含本次新增/更新的回归用例。
+
+快速聚焦 core/CLI 时可先跑：
 
 ```bash
 cargo test -p ai-config-core -p ai-config-cli
-cargo build -p ai-config-cli
-./target/debug/ai-config doctor
-./target/debug/ai-config status
 ```
 
-## 全 workspace（daemon / store / watcher）
+## 2. Sandbox：临时 HOME 生命周期
 
-```bash
-cargo test --workspace
-```
+隔离脚本必须使用 `mktemp -d` 的 HOME 与资产根，覆盖：
 
-## GUI
+- sync 默认仅生成 plan，平台目标零写入；
+- `sync --apply` 创建受管目标；
+- status 无 broken / wrong source / wrong type；
+- uninstall 默认仅生成 plan；
+- `uninstall --apply` 收回受管目标并保留 canonical source；
+- doctor、completion 完整消费和提前关闭。
 
-```bash
-cd apps/ai-config-gui
-npm run test
-npm run build
-```
+禁止为冒烟覆盖真实 HOME。禁止调用旧版 `sync` 猜测 `--dry-run` 语义。
 
-有 Tauri command 改动：
+## 3. Runtime：已安装运行态
 
-```bash
-cargo test -p ai-config-gui
-```
+先比较：
 
-## 新功能测试门禁
+- `target/debug/ai-config --version`
+- `command -v ai-config` 与 `ai-config --version`
 
-- **Rust**：`ai-config-core` / CLI 行为 → 模块内 `#[test]` 或 `tests/`，与实现同批提交。
-- **GUI**：`utils` / `hooks` / 关键组件 → Vitest（`*.test.ts(x)`），覆盖主路径与关键分支。
-- 只改样式/文案且无语义变更可例外；**交互、状态机、Tauri 契约变更必须补测**。
-- 声称完成前：`cargo test -p ai-config-core -p ai-config-cli` 与 `npm run test` 均 0 失败。
+版本不一致立即停止，不能调用旧二进制的 sync。版本一致后，真实环境只读执行：
 
-## 同步冒烟（改了 platform / sync / command）
+- `doctor --json`
+- `status --json`
+- `secrets validate --json`
 
-```bash
-ai-config command list
-ai-config skill list    # 若有本地 ~/.ai-config 资产
-ai-config sync --dry-run   # 若支持
-```
+Runtime 通过要求：doctor 无阻塞、无 literal MCP secret；status 无 broken / wrong_source / wrong_type；secrets 无缺失。
 
-## 通过标准
+## 4. Manual：人工/外部门禁
 
-- 测试 0 失败（含 **本次改动新增/更新的用例**）
-- `npm run test && npm run build` 无 TS 错误
-- `doctor` 无阻塞项（按当前产品定义）
+以下不由自动化结果代替：
+
+- GUI 关键交互与视觉检查；
+- Cursor / Codex / Claude / Hermes 重启后资产可见性；
+- daemon 长驻、文件变更触发和系统重启恢复；
+- 真实 provider/MCP 连通性；
+- 发布包、自动更新、签名与目标操作系统验收。
+
+## 结论格式
+
+交付报告逐层写 `PASS` / `FAIL` / `NOT RUN`，并列出：
+
+- 构建版本与安装版本；
+- sandbox 生命周期证据；
+- runtime drift/blocker；
+- manual 外部门禁。
 
 未通过不得标 Todo/Plan 为 completed。

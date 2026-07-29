@@ -18,7 +18,8 @@ use ai_config_core::doctor::DoctorReport;
 use ai_config_core::error::CoreError;
 
 use crate::agent_api::{self, parse_kind, parse_platform, resolve_scope_root, EnvSummary};
-use crate::lifecycle::{ListReport, StatusReport, SyncReport};
+use crate::lifecycle::{ListReport, StatusReport};
+use crate::projection::LifecycleReport;
 
 #[derive(Debug, Clone)]
 pub struct AiConfigMcpServer {
@@ -61,6 +62,9 @@ struct OkMessage {
 struct RootParam {
     #[serde(default)]
     root: Option<String>,
+    #[serde(default)]
+    #[schemars(default)]
+    apply: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -87,6 +91,9 @@ struct DeployParam {
     kind: String,
     name: String,
     platform: String,
+    #[serde(default)]
+    #[schemars(default)]
+    apply: bool,
 }
 
 #[tool_router]
@@ -118,13 +125,15 @@ impl AiConfigMcpServer {
         Ok(Json(agent_api::doctor(&root).map_err(Self::err)?))
     }
 
-    #[tool(description = "将资产同步到已勾选平台（等同 ai-config sync --json）")]
+    #[tool(description = "生成 source-first 同步计划；仅 apply=true 才会写入目标平台")]
     async fn ai_config_sync(
         &self,
         Parameters(params): Parameters<RootParam>,
-    ) -> Result<Json<SyncReport>, McpError> {
+    ) -> Result<Json<LifecycleReport>, McpError> {
         let root = self.root_for(params.root);
-        Ok(Json(agent_api::sync(&root).map_err(Self::err)?))
+        Ok(Json(
+            agent_api::sync(&root, params.apply).map_err(Self::err)?,
+        ))
     }
 
     #[tool(description = "读取单条资产正文与元数据")]
@@ -161,7 +170,8 @@ impl AiConfigMcpServer {
         let kind = parse_kind(&params.kind).map_err(Self::err_msg)?;
         let platform = parse_platform(&params.platform).map_err(Self::err_msg)?;
         let root = self.root_for(params.root);
-        let msg = agent_api::deploy(&root, kind, &params.name, platform).map_err(Self::err)?;
+        let msg = agent_api::deploy(&root, kind, &params.name, platform, params.apply)
+            .map_err(Self::err)?;
         Ok(Json(OkMessage {
             ok: true,
             message: msg,
@@ -176,7 +186,8 @@ impl AiConfigMcpServer {
         let kind = parse_kind(&params.kind).map_err(Self::err_msg)?;
         let platform = parse_platform(&params.platform).map_err(Self::err_msg)?;
         let root = self.root_for(params.root);
-        let msg = agent_api::retract(&root, kind, &params.name, platform).map_err(Self::err)?;
+        let msg = agent_api::retract(&root, kind, &params.name, platform, params.apply)
+            .map_err(Self::err)?;
         Ok(Json(OkMessage {
             ok: true,
             message: msg,
@@ -233,9 +244,58 @@ pub fn run(default_root: Utf8PathBuf) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+    use std::fs;
+
     use ai_config_core::paths;
+    use tempfile::TempDir;
 
     use super::*;
+
+    const MISSING_SECRET_KEY: &str = "T009_MISSING_CATALOG_TOKEN";
+    const SECRET_VALUE_SENTINEL: &str = "t009-mcp-secret-value-must-not-leak";
+
+    static MCP_SYNC_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    fn projection_fixture() -> TempDir {
+        let repo = TempDir::new().expect("temporary project");
+        let source = repo.path().join(".ai-config");
+        fs::create_dir_all(source.join("skills/demo")).expect("skill parent");
+        fs::write(source.join("skills/demo/SKILL.md"), "# canonical demo\n")
+            .expect("canonical skill");
+        fs::create_dir_all(source.join("prompts")).expect("prompt parent");
+        fs::write(source.join("prompts/AGENTS.md"), "canonical instructions\n")
+            .expect("canonical prompt");
+        repo
+    }
 
     #[test]
     fn tool_output_schemas_are_objects() {
@@ -254,5 +314,201 @@ mod tests {
                 tool.name
             );
         }
+    }
+
+    #[test]
+    fn mutation_tools_require_explicit_apply_and_sync_returns_projection_plan() {
+        let server = AiConfigMcpServer::new(paths::discover_global_asset_root());
+        let tools = server.tool_router.list_all();
+        for name in ["ai_config_sync", "ai_config_deploy", "ai_config_retract"] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("missing mutation tool {name}"));
+            let apply = tool
+                .input_schema
+                .get("properties")
+                .and_then(|properties| properties.get("apply"))
+                .unwrap_or_else(|| panic!("{name} must expose an apply parameter"));
+            assert_eq!(
+                apply.get("default").and_then(|value| value.as_bool()),
+                Some(false),
+                "{name} must be plan-only unless apply=true is explicit"
+            );
+        }
+
+        let sync = tools
+            .iter()
+            .find(|tool| tool.name == "ai_config_sync")
+            .expect("sync tool");
+        let output = sync.output_schema.as_ref().expect("sync output schema");
+        let plan = output
+            .get("properties")
+            .and_then(|properties| properties.get("plan"))
+            .expect("sync must return the exact projection plan");
+        assert!(
+            plan.get("properties")
+                .and_then(|properties| properties.get("schema_version"))
+                .is_some()
+                && plan
+                    .get("properties")
+                    .and_then(|properties| properties.get("plan_digest"))
+                    .is_some(),
+            "agent and CLI must receive the same plan identity"
+        );
+        assert!(
+            output
+                .get("properties")
+                .and_then(|properties| properties.get("apply"))
+                .is_some(),
+            "apply=true must return an apply report without hiding the plan"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_handler_is_plan_only_by_default_and_foreign_guard_blocks_apply() {
+        let repo = projection_fixture();
+        let root = Utf8PathBuf::from_path_buf(repo.path().to_path_buf()).expect("utf8 repo");
+        let server = AiConfigMcpServer::new(root.clone());
+
+        let plan_only = server
+            .ai_config_sync(Parameters(RootParam {
+                root: None,
+                apply: false,
+            }))
+            .await
+            .expect("plan-only MCP sync")
+            .0;
+        assert!(plan_only.apply.is_none(), "default MCP sync must not apply");
+        assert!(
+            !repo.path().join(".agents/skills/demo").exists(),
+            "plan-only MCP sync must not create a target"
+        );
+        for operation in ["deploy", "retract"] {
+            let params = DeployParam {
+                root: None,
+                kind: "skill".to_owned(),
+                name: "demo".to_owned(),
+                platform: "cursor".to_owned(),
+                apply: true,
+            };
+            let result = if operation == "deploy" {
+                server.ai_config_deploy(Parameters(params)).await
+            } else {
+                server.ai_config_retract(Parameters(params)).await
+            };
+            let error = match result {
+                Ok(_) => panic!("single-item MCP {operation} must fail closed"),
+                Err(error) => error,
+            };
+            assert!(
+                error.message.contains("source-first projection"),
+                "single-item MCP {operation} must fail closed until it has a plan adapter"
+            );
+        }
+        assert!(
+            !repo.path().join(".cursor/skills/demo/SKILL.md").exists(),
+            "refused single-item MCP operations must never use the legacy write path"
+        );
+
+        let foreign = repo.path().join("AGENTS.md");
+        fs::write(&foreign, "foreign instructions\n").expect("foreign project entry");
+        let foreign_before = fs::read(&foreign).expect("read foreign entry");
+        let blocked = server
+            .ai_config_sync(Parameters(RootParam {
+                root: None,
+                apply: true,
+            }))
+            .await
+            .expect("foreign guard is a report, not a retryable write")
+            .0;
+        assert!(
+            blocked.blocking_reason.is_some(),
+            "apply=true must surface the foreign ownership guard"
+        );
+        assert_eq!(fs::read(&foreign).unwrap(), foreign_before);
+        assert!(
+            !repo.path().join(".agents/skills/demo").exists(),
+            "foreign guard must prevent all plan actions, not only the conflicting prompt"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sync_handler_missing_mcp_secret_returns_a_safe_partial_report_and_applies_direct_assets(
+    ) {
+        let _lock = MCP_SYNC_ENV_LOCK.lock().await;
+        let home = TempDir::new().expect("temporary HOME");
+        let _home = EnvVarGuard::set("HOME", home.path());
+        let _asset_root = EnvVarGuard::remove("AI_CONFIG_ROOT");
+        let secrets = TempDir::new().expect("temporary secret directory");
+        let secret_path = Utf8PathBuf::from_path_buf(secrets.path().join("secrets.env"))
+            .expect("temporary secret path is UTF-8");
+        ai_config_core::secrets::save_to(
+            &[(
+                "UNRELATED_TEST_SECRET".to_owned(),
+                SECRET_VALUE_SENTINEL.to_owned(),
+            )],
+            &secret_path,
+        )
+        .expect("seed strict temporary secret store");
+        let _secret_dir = EnvVarGuard::set("AI_CONFIG_SECRETS_DIR", secrets.path());
+
+        let repo = projection_fixture();
+        let source = repo.path().join(".ai-config/mcp/servers/catalog.json");
+        fs::create_dir_all(source.parent().expect("MCP source parent")).expect("MCP source parent");
+        fs::write(
+            source,
+            format!(
+                r#"{{
+  "enabled": true,
+  "targets": ["cursor"],
+  "config": {{
+    "command": "catalog-mcp",
+    "env": {{ "{MISSING_SECRET_KEY}": "${{{MISSING_SECRET_KEY}}}" }}
+  }}
+}}"#
+            ),
+        )
+        .expect("write missing-secret canonical MCP source");
+        let root = Utf8PathBuf::from_path_buf(repo.path().to_path_buf()).expect("UTF-8 repo");
+        let server = AiConfigMcpServer::new(root);
+
+        let report = server
+            .ai_config_sync(Parameters(RootParam {
+                root: None,
+                apply: true,
+            }))
+            .await
+            .expect("MCP sync must return a partial report, not a retryable error")
+            .0;
+        let report_json = serde_json::to_value(&report).expect("serialize MCP lifecycle report");
+        let serialized = serde_json::to_string(&report_json).expect("serialize report text");
+
+        assert_eq!(
+            report.blocking_reason.as_deref(),
+            Some("mcp_missing_secret_keys"),
+            "MCP missing-secret state must take precedence over unrelated report-only actions: {report_json:?}"
+        );
+        assert!(
+            report_json["apply"]["skipped"].as_u64().unwrap_or_default() > 0,
+            "MCP sync must report the missing server as skipped: {report_json:?}"
+        );
+        assert_eq!(
+            report_json["apply"]["mcp_skipped_members"][0]["missing_secret_keys"],
+            serde_json::json!([MISSING_SECRET_KEY]),
+            "MCP reports may name unavailable keys but not their values"
+        );
+        assert!(
+            !serialized.contains(SECRET_VALUE_SENTINEL),
+            "MCP lifecycle report must not leak values from the caller-owned secret store"
+        );
+        assert!(
+            repo.path().join(".agents/skills/demo").exists(),
+            "a skipped MCP member must not prevent direct assets from applying"
+        );
+        assert!(
+            !repo.path().join(".cursor/mcp.json").exists(),
+            "a missing-secret MCP member must not render a platform container"
+        );
     }
 }

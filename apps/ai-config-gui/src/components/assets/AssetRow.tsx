@@ -3,7 +3,13 @@ import { useTranslation } from "react-i18next";
 
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import type { DeployPlatform, Platform, PlatformAssetEntry } from "../../types";
+import {
+  canRemoveFromPlatform,
+  isSourcePlatform,
+  type DeployPlatform,
+  type Platform,
+  type PlatformAssetEntry,
+} from "../../types";
 import type { RowSyncLeadSlot } from "../../utils/rowSyncLeadSlot";
 import { canOpenEntry } from "../../utils/canOpenEntry";
 import { canUpdateEntry } from "../../utils/entryUpdate";
@@ -49,7 +55,7 @@ function AssetRowInner({
   rowKey,
 }: AssetRowProps) {
   const { t } = useTranslation();
-  const canOpen = !!onOpenAsset && canOpenEntry(entry, activePlatform);
+  const canOpen = !!onOpenAsset && canOpenEntry(entry);
   const isHook = entry.kind === "hook";
   const hookType = entry.hook_type ?? "command";
   const showHookDesc =
@@ -140,6 +146,10 @@ function AssetRowInner({
           }
           updateTitle={t("toolbar.rowUpdateTitle", { name: entry.name })}
           onDelete={handleDelete}
+          deleteDisabled={
+            !isSourcePlatform(activePlatform) &&
+            !canRemoveFromPlatform(entry.kind, entry.states[activePlatform])
+          }
           deleteTitle={t("toolbar.rowDeleteTitle", { name: entry.name })}
         />
       </ListColActions>

@@ -5,7 +5,7 @@
 ## 必读
 
 1. [AGENTS.md](./AGENTS.md)
-2. `.cursor/rules/00-ai-config-core.mdc`
+2. `.ai-config/rules/00-ai-config-core.mdc`
 3. `.specify/memory/constitution.md`
 
 ## 工作方式
@@ -16,4 +16,4 @@
 - GUI：agent `gui-ai-config-dev`
 - 非平凡交付：skill `ai-config-delivery`（内化 Spec Kit，勿让用户跑 `/speckit.*`）
 
-Commands 与 Skills 位于 `.cursor/commands/`、`.cursor/skills/`（供 Agent 参考，非用户必用）。
+Commands 与 Skills 位于 `.ai-config/commands/`、`.ai-config/skills/`；Claude 的运行时目录由 source-first projection 本地生成，不再追踪副本。

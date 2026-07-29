@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-bus"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -44,19 +44,22 @@ dependencies = [
 
 [[package]]
 name = "ai-config-cli"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "ai-config-core",
+ "ai-config-store",
  "anyhow",
  "assert_cmd",
  "camino",
  "clap",
  "clap_complete",
+ "hex",
  "predicates",
  "rmcp",
  "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -66,27 +69,31 @@ dependencies = [
 
 [[package]]
 name = "ai-config-core"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "camino",
  "chrono",
  "dirs 5.0.1",
+ "hex",
  "proptest",
  "schemars 1.2.1",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "toml 0.8.2",
+ "toml_edit 0.25.12+spec-1.1.0",
  "tracing",
  "walkdir",
 ]
 
 [[package]]
 name = "ai-config-daemon"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "ai-config-bus",
  "ai-config-core",
@@ -105,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-gui"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "ai-config-core",
  "ai-config-store",
@@ -120,14 +127,24 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
+name = "ai-config-gui-bin"
+version = "0.4.0"
+dependencies = [
+ "ai-config-gui",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
 name = "ai-config-store"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "ai-config-core",
  "anyhow",
@@ -145,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "ai-config-watcher"
-version = "0.3.4"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "camino",
@@ -4881,6 +4898,7 @@ dependencies = [
  "indexmap 2.14.0",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.3",
 ]
 

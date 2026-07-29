@@ -73,7 +73,12 @@ export function AssetDrawer({
               </p>
             ) : null}
           </div>
-          <button type="button" className="icon-btn" onClick={onClose}>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={t("drawer.close")}
+            onClick={onClose}
+          >
             ✕
           </button>
         </header>
@@ -95,6 +100,7 @@ export function AssetDrawer({
           ) : editing ? (
             <textarea
               className="skill-editor"
+              aria-label={t("drawer.edit")}
               value={draft}
               onChange={(e) => onDraftChange(e.target.value)}
               spellCheck={false}

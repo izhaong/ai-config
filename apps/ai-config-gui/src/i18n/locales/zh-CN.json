@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "ai-config",
-    "version": "v0.3.3",
+    "version": "v0.4.0",
     "daemonStopped": "守护进程已停止"
   },
   "language": {
@@ -165,6 +165,7 @@
   },
   "empty": {
     "loading": "加载中…",
+    "close": "关闭",
     "mcp": "暂无 MCP server。在 <code>{{assetRoot}}/mcp.json</code> 添加条目",
     "mcpGlobal": "暂无 MCP server。在 <code>~/.ai-config/mcp.json</code> 添加条目",
     "assets": "暂无资产。在 <code>{{assetRoot}}/{{kindDir}}/</code> 下添加文件",
@@ -207,6 +208,24 @@
     "differs": "内容不同",
     "confirm": "用所选版本覆盖 {{target}}",
     "detectFailed": "冲突检测失败: {{error}}"
+  },
+  "projection": {
+    "applyTitle": "审阅 source-first 投影计划",
+    "retractTitle": "审阅 source-first 回收计划",
+    "importTitle": "审阅导入到 source 计划",
+    "reviewMessage": "仅此计划摘要与下方 digest 完全一致时才会执行。外部/冲突项不会被覆盖或接管。",
+    "confirm": "确认执行此计划",
+    "confirmImport": "确认导入到 source",
+    "ledgerUnavailable": "ownership ledger 不可读，已禁止执行。",
+    "blocked": "计划被阻止：{{reason}}",
+    "missingSecrets": "缺少 Secret：{{keys}}",
+    "reviewFailed": "读取投影计划失败：{{error}}",
+    "applyFailed": "执行投影计划失败：{{error}}",
+    "applied": "投影完成：变更 {{changed}} 项，未变更 {{unchanged}} 项。",
+    "importFailed": "导入到 source 失败：{{error}}",
+    "importRequiredBeforeCopy": "请先将选中的平台资产导入源目录并完成审阅，再复制到其他项目。",
+    "imported": "已安全导入 {{count}} 项到 source。",
+    "importMessage": "导入会绑定此计划的 digest 与唯一 action ID，不会删除平台原件。"
   },
   "copyToProject": {
     "title": "复制到其他项目",

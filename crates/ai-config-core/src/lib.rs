@@ -31,11 +31,11 @@ pub mod path_independence;
 pub mod paths;
 pub mod platform;
 pub mod platform_scan;
+pub mod projection;
 pub mod secrets;
 pub mod skills_add;
 pub mod source;
 pub mod sync;
-pub mod sync_conflict;
 pub mod template;
 pub mod workspace;
 

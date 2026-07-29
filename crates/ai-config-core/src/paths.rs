@@ -158,11 +158,11 @@ pub fn ensure_user_asset_layout(root: &Utf8Path) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// 初始化资产根完整布局：skills / rules / agents 子目录 + `mcp.json`（全局与项目 `.ai-config` 共用）。
+/// 初始化资产根标准目录（全局与项目 `.ai-config` 共用）。
+///
+/// 不会创建或迁移 MCP 配置；这些操作必须由显式的 source-first 流程执行。
 pub fn ensure_asset_layout(asset_root: &Utf8Path) -> Result<(), CoreError> {
     ensure_user_asset_layout(asset_root)?;
-    let _ = mcp_json::ensure_mcp_json(asset_root);
-    let _ = mcp_json::migrate_legacy_mcp_layout(asset_root);
     Ok(())
 }
 
@@ -336,8 +336,6 @@ fn copy_dir_merge(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
 pub fn init_user_asset_root() -> Result<Utf8PathBuf, CoreError> {
     let root = effective_global_asset_root();
     ensure_user_asset_layout(&root)?;
-    let _ = mcp_json::ensure_mcp_json(&root);
-    let _ = mcp_json::migrate_legacy_mcp_layout(&root);
     if user_assets_need_seed(&root) {
         for seed in collect_seed_sources() {
             if seed.join("skills").is_dir() {
@@ -410,10 +408,7 @@ pub fn discover_global_asset_root() -> Utf8PathBuf {
 mod tests {
     use super::*;
     use std::fs;
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    static HOME_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn ensure_creates_standard_subdirs() {
@@ -501,11 +496,10 @@ mod tests {
     fn init_uses_ai_config_root_override() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        std::env::set_var("AI_CONFIG_ROOT", root.as_str());
+        let _root_guard = crate::test_env::EnvGuard::set("AI_CONFIG_ROOT", root.as_str());
         let got = init_user_asset_root().unwrap();
         assert_eq!(got, root);
         assert!(root.join("skills").is_dir());
-        std::env::remove_var("AI_CONFIG_ROOT");
     }
 
     #[test]
@@ -516,7 +510,10 @@ mod tests {
         for sub in ASSET_SUBDIRS {
             assert!(asset.join(sub).is_dir(), "missing {sub}");
         }
-        assert!(asset.join("mcp.json").is_file());
+        assert!(
+            !asset.join("mcp.json").exists(),
+            "ordinary layout setup must not create a legacy MCP aggregate"
+        );
     }
 
     #[test]
@@ -559,12 +556,12 @@ mod tests {
 
     #[test]
     fn resolve_sync_roots_project_repo() {
-        let _lock = HOME_TEST_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let prev = std::env::var("HOME").ok();
-        std::env::set_var("HOME", home.as_str());
-        std::env::remove_var("AI_CONFIG_ROOT");
+        let _env_guard = crate::test_env::EnvGuard::set_many(&[
+            ("HOME", Some(home.as_str())),
+            ("AI_CONFIG_ROOT", None),
+        ]);
         fs::create_dir_all(home.join(".ai-config/skills")).unwrap();
         let repo = home.join("myproj");
         fs::create_dir_all(repo.join(".ai-config/skills")).unwrap();
@@ -574,21 +571,16 @@ mod tests {
         assert_eq!(roots.deploy_base, repo);
         assert_ne!(roots.global_default, roots.asset_root);
         assert!(roots.global_default.ends_with(".ai-config"));
-        if let Some(p) = prev {
-            std::env::set_var("HOME", p);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 
     #[test]
     fn resolve_sync_roots_global_asset_root() {
-        let _lock = HOME_TEST_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let prev = std::env::var("HOME").ok();
-        std::env::set_var("HOME", home.as_str());
-        std::env::remove_var("AI_CONFIG_ROOT");
+        let _env_guard = crate::test_env::EnvGuard::set_many(&[
+            ("HOME", Some(home.as_str())),
+            ("AI_CONFIG_ROOT", None),
+        ]);
         let asset = home.join(".ai-config");
         fs::create_dir_all(asset.join("skills/foo")).unwrap();
         let roots = resolve_sync_roots(&asset);
@@ -596,23 +588,18 @@ mod tests {
         assert_eq!(roots.asset_root, asset);
         assert_eq!(roots.global_default, asset);
         assert_eq!(roots.deploy_base, home);
-        if let Some(p) = prev {
-            std::env::set_var("HOME", p);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 
     #[test]
     fn resolve_sync_roots_does_not_initialize_global_asset_root() {
-        let _lock = HOME_TEST_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let home = Utf8PathBuf::from_path_buf(tmp.path().join("home")).unwrap();
         let repo = Utf8PathBuf::from_path_buf(tmp.path().join("repo")).unwrap();
         fs::create_dir_all(repo.as_std_path()).unwrap();
-        let prev = std::env::var("HOME").ok();
-        std::env::set_var("HOME", home.as_str());
-        std::env::remove_var("AI_CONFIG_ROOT");
+        let _env_guard = crate::test_env::EnvGuard::set_many(&[
+            ("HOME", Some(home.as_str())),
+            ("AI_CONFIG_ROOT", None),
+        ]);
 
         let _ = resolve_sync_roots(&repo);
 
@@ -620,10 +607,5 @@ mod tests {
             !home.join(".ai-config").exists(),
             "scope resolution is read-only and must not seed the global asset root"
         );
-        if let Some(p) = prev {
-            std::env::set_var("HOME", p);
-        } else {
-            std::env::remove_var("HOME");
-        }
     }
 }

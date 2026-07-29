@@ -226,13 +226,12 @@ pub fn load() -> Result<Vec<(String, String)>, CoreError> {
 
 /// 从给定路径读 `.env`(供测试 / 显式路径场景)。
 pub fn load_from(path: &Utf8Path) -> Result<Vec<(String, String)>, CoreError> {
-    let content = match std::fs::read_to_string(path.as_std_path()) {
-        Ok(s) => s,
+    match std::fs::metadata(path.as_std_path()) {
+        Ok(_) => ensure_0600(path)?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err(CoreError::Io(e));
-        }
-    };
+        Err(e) => return Err(CoreError::Io(e)),
+    }
+    let content = std::fs::read_to_string(path.as_std_path())?;
     let pairs = parse_env(&content);
     // **只**打 key 数到 trace,**绝不**打 value。
     tracing::debug!(path = %path, keys = pairs.len(), "secrets::load 读完");
@@ -481,6 +480,12 @@ mod tests {
              D=delta\n",
         )
         .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         let path = Utf8Path::from_path(&path).unwrap();
         let pairs = load_from(path).expect("load ok");
         // 顺序: A, B, C, D(=缺 key 和 no_equals 那两行应被跳过)
@@ -558,6 +563,24 @@ mod tests {
             }
             other => panic!("expected PermissionDenied, got {other:?}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_rejects_an_existing_secrets_file_with_unsafe_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path_buf = dir.path().join("secrets.env");
+        let path = Utf8Path::from_path(&path_buf).unwrap();
+        std::fs::write(path.as_std_path(), "TOKEN=do-not-expose\n").unwrap();
+        std::fs::set_permissions(path.as_std_path(), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+
+        let error = load_from(path).expect_err("0644 secrets.env must be rejected before read");
+
+        assert!(matches!(error, CoreError::PermissionDenied { .. }));
+        assert!(!error.to_string().contains("do-not-expose"));
     }
 
     #[test]

@@ -80,6 +80,11 @@ pub fn scan_platform_assets(
     default_root: &Utf8Path,
     asset_root: &Utf8Path,
 ) -> Result<Vec<PlatformAssetEntry>, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧扫描 lifecycle 已禁用".into(),
+        ));
+    }
     if plat == PlatformId::AiConfig {
         return scan_aiconfig_assets(kind, default_root, asset_root);
     }
@@ -134,6 +139,11 @@ fn scan_aiconfig_assets(
     default_root: &Utf8Path,
     asset_root: &Utf8Path,
 ) -> Result<Vec<PlatformAssetEntry>, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧扫描 lifecycle 已禁用".into(),
+        ));
+    }
     let deploy_base = if asset_root == default_root {
         crate::paths::global_deploy_base()
     } else {
@@ -249,6 +259,9 @@ fn scan_platform_raw(
         AssetKind::Command => scan_platform_commands(adapter),
         AssetKind::Hook => scan_platform_hooks(adapter),
         AssetKind::Mcp => scan_platform_mcp(adapter),
+        AssetKind::Prompt => Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧扫描 lifecycle 已禁用".into(),
+        )),
     }
 }
 
@@ -698,6 +711,7 @@ pub fn find_source_path(
             .iter()
             .find(|item| item.script_filename == name)
             .map(|item| item.script_path.clone()),
+        AssetKind::Prompt => None,
     }
 }
 
@@ -858,6 +872,7 @@ fn platform_mirror_link_state(
                 LinkState::Missing
             };
         }
+        AssetKind::Prompt => return LinkState::Unlinked,
     };
     if fs::symlink_metadata(dest.as_std_path()).is_err() {
         return LinkState::Missing;
@@ -872,6 +887,7 @@ fn platform_mirror_link_state(
         }
         AssetKind::Mcp => false,
         AssetKind::Hook => unreachable!("handled above"),
+        AssetKind::Prompt => false,
     };
     if !matches {
         return LinkState::Unlinked;
@@ -907,7 +923,13 @@ fn deploy_health_to_link_state(
     health: crate::materialize::DeployHealth,
 ) -> LinkState {
     match health {
-        crate::materialize::DeployHealth::Linked { .. } => LinkState::Linked,
+        crate::materialize::DeployHealth::Linked { .. } => {
+            if crate::materialize::is_managed_deploy(dest) {
+                LinkState::Linked
+            } else {
+                LinkState::Synced
+            }
+        }
         crate::materialize::DeployHealth::Broken => LinkState::Broken,
         crate::materialize::DeployHealth::Unlinked => {
             if fs::symlink_metadata(dest.as_std_path()).is_ok() {
@@ -1203,6 +1225,11 @@ pub fn copy_asset_to_asset_root(
     to_default: &Utf8Path,
     to_root: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧复制 lifecycle 已禁用".into(),
+        ));
+    }
     if from_root == to_root {
         return Err(CoreError::InvalidPath(
             "源项目与目标项目相同，无法复制".into(),
@@ -1310,6 +1337,7 @@ pub fn copy_asset_to_asset_root(
             crate::hook::merge_bindings_into_manifest(to_root, &script_filename, &bindings)?;
             dest_script
         }
+        AssetKind::Prompt => unreachable!("Prompt is rejected before copy"),
     };
     Ok(dest)
 }
@@ -1381,8 +1409,25 @@ fn plat_label(p: PlatformId) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection::fingerprint::path_content_digest;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn prompt_scan_is_rejected_before_opening_platform_directories() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(tmp.path()).unwrap();
+        let err = scan_platform_assets(
+            PlatformId::Cursor,
+            AssetKind::Prompt,
+            root,
+            &root.join(".ai-config"),
+            &root.join(".ai-config"),
+        )
+        .expect_err("Prompt must not enter the legacy scanner");
+        assert!(err.to_string().contains("source-first projection planner"));
+        assert!(!root.join(".cursor").exists());
+    }
 
     fn touch(path: &Utf8Path, content: &str) {
         if let Some(parent) = path.parent() {
@@ -1430,6 +1475,21 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, "antd");
         assert_eq!(entries[0].2, "Ant Design skill");
+    }
+
+    #[test]
+    fn content_equal_unmanaged_copy_is_synced_not_linked() {
+        let tmp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(tmp.path()).unwrap();
+        let source = root.join(".ai-config/skills/demo/SKILL.md");
+        let target = root.join(".cursor/skills/demo/SKILL.md");
+        touch(&source, "# same\n");
+        touch(&target, "# same\n");
+
+        let state =
+            ide_asset_link_state(PlatformId::Cursor, AssetKind::Skill, "demo", &source, root);
+
+        assert_eq!(state, LinkState::Synced);
     }
 
     #[test]
@@ -1569,8 +1629,8 @@ mod tests {
         assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
         assert_eq!(
             states.get(&PlatformId::Claude),
-            Some(&LinkState::Linked),
-            "从 Claude 导入后在 ai-config 视图应显示 Claude 已同步"
+            Some(&LinkState::Synced),
+            "导入后保留的 Claude 原件无 ownership 证据，只能显示为 synced"
         );
     }
 
@@ -2040,32 +2100,30 @@ mod tests {
             "#!/bin/sh\n\"\"\"生命周期 TTS\"\"\"\n",
         );
 
-        let dest = import_hook_from_platform(
+        let canonical_before = path_content_digest(&asset_root).unwrap();
+        let platform_before = fs::read(repo.join(".cursor/hooks/lifecycle-tts.sh")).unwrap();
+        let manifest_before = fs::read(&hooks_json).unwrap();
+
+        let err = import_hook_from_platform(
             "lifecycle-tts.sh",
             PlatformId::Cursor,
             &asset_root,
             &asset_root,
             repo,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(dest, asset_root.join("hooks/lifecycle-tts.sh"));
-        assert!(dest.is_file());
-        assert!(asset_root.join("hooks.json").is_file());
-
-        let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
-        let cursor_path = repo.join(".cursor/hooks/lifecycle-tts.sh");
-        let states = compute_entry_states(
-            PlatformId::Cursor,
-            AssetKind::Hook,
-            "lifecycle-tts.sh",
-            &cursor_path,
-            repo,
-            &asset_root,
-            &source_scan,
+        assert!(err.to_string().contains("legacy Hook import is disabled"));
+        assert_eq!(path_content_digest(&asset_root).unwrap(), canonical_before);
+        assert_eq!(
+            fs::read(repo.join(".cursor/hooks/lifecycle-tts.sh")).unwrap(),
+            platform_before
         );
-        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
-        assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Synced));
+        assert_eq!(fs::read(&hooks_json).unwrap(), manifest_before);
+        assert!(
+            !asset_root.join("hooks/lifecycle-tts.sh").exists(),
+            "a rejected legacy import must not create a canonical Hook source"
+        );
     }
 
     #[test]

@@ -342,6 +342,9 @@ fn describe_link_state(
     platform: PlatformId,
     default_root: &Utf8Path,
 ) -> String {
+    if kind == AssetKind::Prompt {
+        return "unsupported".to_string();
+    }
     let adapter = match platform::for_id(platform) {
         Ok(a) => a,
         Err(_) => return "unmanaged".to_string(),
@@ -387,6 +390,7 @@ fn describe_link_state(
                 "missing".to_string()
             };
         }
+        AssetKind::Prompt => unreachable!("Prompt is rejected before path resolution"),
     };
     if !dest.exists() && dest.as_std_path().symlink_metadata().is_err() {
         return "missing".to_string();

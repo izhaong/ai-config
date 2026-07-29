@@ -6,6 +6,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **四层验证闭环**：`ai-config-verify` 增加源码测试、临时 HOME 同步生命周期、已安装版本/只读状态门禁，以及 GUI/IDE/daemon 人工验收边界。
+
+### Fixed
+
+- **Completion 管道退出**：shell completion 输出被 `head` 等消费者提前关闭时不再因 BrokenPipe panic；其它 stdout 错误仍返回失败。
+
+## [0.4.0] - 2026-07-19
+
+### Added
+
+- **source-first 投影审阅**：core 提供跨 transport 的只读 projection review，输出稳定 action ID 与 plan digest，不包含资产正文或 secret 值。
+- **Codex MCP source-first 导入**：CLI 与 GUI 可从项目 `.codex/config.toml` 按 named server 导入 canonical source，保留 bearer/header 环境变量引用与相对命令参数，不写入真实 secret。
+
+### Fixed
+
+- **durable adoption 崩溃恢复**：在目标已移入备份或已创建链接、但最终 transaction manifest 尚未落盘时，rollback 可从安全 sidecar manifest 恢复原文件并校验 ownership record。
+- **GUI 未托管副本操作**：内容相同但缺少 marker/正确源链接的普通副本显示为 `synced`，不再冒充可收回的 `linked`；平台垃圾桶仅对有 ownership 证据的条目启用，避免点击后触发 fail-closed 错误。
+- **MCP 等价采纳**：canonical source 与现有 Codex named entry 语义等价时生成显式 adoption；确认后仅写逐 server ownership ledger，保持 `.codex/config.toml` 字节不变。
+- **GUI 版本一致性**：Tauri binary manifest 与界面版本统一为 0.4.0。
+
+### Security
+
+- **GUI 写入边界**：移除 Tauri 的 deploy/retract、平台间复制与冲突覆盖 command，避免 GUI 绕过 source-first ownership、digest 和 rollback 合同。GUI 保留源资产编辑与显式导入；平台投影请使用 `ai-config sync --apply` 或 `ai-config uninstall --apply`。
+
+### Breaking
+
+- GUI 不再提供直接平台部署、回收、平台互拷或冲突覆盖操作。
+
 ## [0.3.4] - 2026-07-12
 
 ### Fixed
@@ -140,6 +170,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - GUI Agent/Rule 描述解析与 agent 读取路径。
 
 [0.3.3]: https://github.com/izhaong/ai-config/releases/tag/v0.3.3
+[0.4.0]: https://github.com/izhaong/ai-config/releases/tag/v0.4.0
 [0.3.2]: https://github.com/izhaong/ai-config/releases/tag/v0.3.2
 [0.3.1]: https://github.com/izhaong/ai-config/releases/tag/v0.3.1
 [0.3.0]: https://github.com/izhaong/ai-config/releases/tag/v0.3.0

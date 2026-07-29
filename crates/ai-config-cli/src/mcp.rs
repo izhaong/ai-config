@@ -1,29 +1,34 @@
 //! `ai-config mcp ...` 子命令(PRD §4.2 / §5.1 / §10 A-7 / A-8 / A-15)。
 //!
-//! 关键约束:
-//! - **per-item × per-platform**(§4.2):每条 server × 4 平台 — `add` / `remove` /
-//!   `enable` / `disable` 影响 `mcp/servers/<name>.json`;`deploy <name> <to>` /
-//!   `retract <name> <from>` 只渲染/移除**该** server 到/从**该**平台 mcp.json
-//!   (不触其它条目,保留用户手写)。
-//! - **A-7** 加 server → 4 份 mcp.json 一致(在 4 平台都 deploy 的话)
-//! - **A-8** 删 server → 4 份 mcp.json 不残留(retract 全部 → 4 份都清干净)
-//! - **A-15** 单条 deploy/retract 不影响其它条目:这是本模块最核心的不变量,见
-//!   `deploy_one_internal` / `retract_one_internal` 的实现。
+//! T007 安全边界：source-first CRUD 仅变更 canonical source；单项 `deploy` / `retract`
+//! 必须先构建经审核的 source-first projection plan，再交由 generated executor 事务执行。
+//! legacy migration 仅保留只读盘点；历史 secret-extraction 写路径已被 fail-closed。
 
-use std::io::{self, IsTerminal, Read, Write};
+use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::hermes_config::HermesMigrateReport;
-use ai_config_core::mcp_json;
-use ai_config_core::model::{McpServer, McpTransport, PlatformId};
+use ai_config_core::model::{McpServer, PlatformId};
 use ai_config_core::paths;
-use ai_config_core::platform;
-use ai_config_core::source;
+use ai_config_core::projection::executor::{
+    apply_projection_plan, ApplyOptions, ExecutorContext, McpSecretProvider,
+};
+use ai_config_core::projection::ledger::MemoryProjectionLedger;
+use ai_config_core::projection::mcp::source::{
+    load_mcp_definition_at, load_mcp_definitions, resolve_effective_mcp_definitions,
+    EffectiveMcpDefinition,
+};
+use ai_config_core::projection::model::DeploymentScope;
+use ai_config_core::projection::planner::{
+    build_mcp_projection_plan, McpSecretAvailability, PlannerContext, ProjectionActionKind,
+    ProjectionOperation, ProjectionRequest,
+};
+use ai_config_core::projection::source::OverlayRoots;
+use ai_config_core::secrets;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
@@ -33,7 +38,9 @@ pub enum McpCmd {
     Show {
         name: String,
     },
-    Add,
+    Add {
+        source: String,
+    },
     Remove {
         name: String,
     },
@@ -43,12 +50,12 @@ pub enum McpCmd {
     Disable {
         name: String,
     },
-    /// 单条 × 单平台下发(PRD §4.2 + §10 A-15)
+    /// 兼容保留的旧写入口；T007 期间一律拒绝。
     Deploy {
         name: String,
         to: String,
     },
-    /// 单条 × 单平台收回(PRD §4.2 + §10 A-15)
+    /// 兼容保留的旧写入口；T007 期间一律拒绝。
     Retract {
         name: String,
         from: String,
@@ -64,6 +71,8 @@ pub enum McpCmd {
     Migrate {
         source: Option<String>,
         dry_run: bool,
+        extract_secrets: bool,
+        apply: bool,
     },
     /// 遗留 `~/.hermes/mcp.json` → `~/.hermes/config.yaml` 的 `mcp_servers`
     MigrateHermes {
@@ -76,29 +85,232 @@ impl McpCmd {
         match self {
             McpCmd::List => run_list(mode, default_root),
             McpCmd::Show { name } => run_show(mode, default_root, &name),
-            McpCmd::Add => run_add(mode, default_root),
+            McpCmd::Add { source } => run_add(mode, default_root, &source),
             McpCmd::Remove { name } => run_remove(mode, default_root, &name),
             McpCmd::Enable { name } => run_set_enabled(mode, default_root, &name, true),
             McpCmd::Disable { name } => run_set_enabled(mode, default_root, &name, false),
-            McpCmd::Deploy { name, to } => match parse_platform(&to) {
-                Ok(plat) => run_deploy(mode, default_root, &name, plat),
-                Err(e) => {
-                    emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                    ExitCode::from(exit_code::ARG_ERROR)
-                }
-            },
-            McpCmd::Retract { name, from } => match parse_platform(&from) {
-                Ok(plat) => run_retract(mode, default_root, &name, plat),
-                Err(e) => {
-                    emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                    ExitCode::from(exit_code::ARG_ERROR)
-                }
-            },
-            McpCmd::Migrate { source, dry_run } => {
-                run_migrate(mode, default_root, source.as_deref(), dry_run)
+            McpCmd::Deploy { name, to } => {
+                run_projection_command(mode, default_root, &name, &to, ProjectionOperation::Sync)
             }
+            McpCmd::Retract { name, from } => run_projection_command(
+                mode,
+                default_root,
+                &name,
+                &from,
+                ProjectionOperation::Retract,
+            ),
+            McpCmd::Migrate {
+                source,
+                dry_run,
+                extract_secrets,
+                apply,
+            } => run_migrate(
+                mode,
+                default_root,
+                source.as_deref(),
+                dry_run,
+                extract_secrets,
+                apply,
+            ),
             McpCmd::MigrateHermes { dry_run } => run_migrate_hermes(mode, dry_run),
         }
+    }
+}
+
+/// CLI-owned secret boundary for a single source-first plan/apply invocation.  It is populated
+/// only through `secrets::load_from`, which rejects an existing store unless it is strict 0600.
+/// Neither planner nor executor receives the map itself, and no error/report serializes values.
+struct CliMcpSecrets {
+    values: BTreeMap<String, String>,
+}
+
+impl CliMcpSecrets {
+    fn load() -> Result<Self, CoreError> {
+        let pairs = secrets::load_from(&secrets::default_path())?;
+        Ok(Self {
+            values: pairs.into_iter().collect(),
+        })
+    }
+}
+
+impl McpSecretAvailability for CliMcpSecrets {
+    fn missing_secret_keys(&self, declared_keys: &[String]) -> Result<Vec<String>, CoreError> {
+        Ok(declared_keys
+            .iter()
+            .filter(|key| !self.values.contains_key(key.as_str()))
+            .cloned()
+            .collect())
+    }
+}
+
+impl McpSecretProvider for CliMcpSecrets {
+    fn resolve(&self, key: &str) -> Result<Option<String>, CoreError> {
+        Ok(self.values.get(key).cloned())
+    }
+}
+
+#[derive(Serialize)]
+struct McpProjectionCommandReport<'a> {
+    operation: &'a str,
+    server: &'a str,
+    platform: &'a str,
+    report: ai_config_core::projection::executor::ApplyReport,
+}
+
+/// The old CLI entrypoint is intentionally only an orchestration layer.  It never renders a
+/// platform container directly: source lookup -> read-only plan -> exact plan authorization ->
+/// transactional core executor.  `deploy_base` comes from the selected CLI scope, so all target
+/// writes remain inside the caller-selected user/project boundary.
+fn run_projection_command(
+    mode: OutputMode,
+    default_root: &Utf8Path,
+    name: &str,
+    platform_raw: &str,
+    operation: ProjectionOperation,
+) -> ExitCode {
+    let result = (|| -> Result<McpProjectionCommandReport<'_>, CoreError> {
+        let platform = parse_mcp_platform(platform_raw)?;
+        let roots = paths::resolve_sync_roots(default_root);
+        let scope = if paths::is_project_deploy_base(&roots.deploy_base) {
+            DeploymentScope::Project
+        } else {
+            DeploymentScope::User
+        };
+        let definitions = effective_mcp_definitions(&roots)?;
+        let definition = definitions
+            .into_iter()
+            .find(|definition| definition.definition.server.name == name)
+            .ok_or_else(|| missing_canonical_definition(name))?;
+        if operation == ProjectionOperation::Sync && !definition.definition.enabled_for(platform) {
+            return Err(CoreError::InvalidPath(format!(
+                "canonical MCP server `{name}` is disabled or does not target `{platform_raw}`"
+            )));
+        }
+
+        let secrets = CliMcpSecrets::load()?;
+        let request = ProjectionRequest {
+            operation,
+            scope_key: projection_scope_key(scope, &roots.deploy_base),
+            scope,
+            deploy_base: roots.deploy_base.clone(),
+            assets: Vec::new(),
+            platforms: vec![platform],
+        };
+        // A persistent projection ledger is deliberately not invented in the CLI.  Until the
+        // durable ledger slice lands, a later process can never prove ownership for retract and
+        // therefore turns it into a zero-write conflict rather than guessing from container data.
+        let ledger = MemoryProjectionLedger::default();
+        let plan = build_mcp_projection_plan(
+            &request,
+            &[definition],
+            &PlannerContext::new(&ledger).with_mcp_secret_availability(&secrets),
+        )?;
+        if plan.actions.is_empty() {
+            return Err(CoreError::InvalidPath(
+                "requested MCP server has no eligible source-first projection action".to_owned(),
+            ));
+        }
+        if let Some(conflict) = plan.actions.iter().find(|action| {
+            action.kind == ProjectionActionKind::ReportOnly
+                && !(action.state.as_deref() == Some("skipped")
+                    && action.reason_code == "mcp_missing_secret_keys")
+        }) {
+            return Err(CoreError::InvalidPath(format!(
+                "mcp_projection_plan_conflict:{}",
+                conflict.reason_code
+            )));
+        }
+        let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
+        let report = apply_projection_plan(
+            &plan,
+            &ExecutorContext::new(&ledger, roots.deploy_base.clone(), backup_root)
+                .with_mcp_secret_provider(&secrets),
+            ApplyOptions::for_plan(&plan),
+        )
+        .map_err(|error| error.error)?;
+        Ok(McpProjectionCommandReport {
+            operation: if operation == ProjectionOperation::Sync {
+                "deploy"
+            } else {
+                "retract"
+            },
+            server: name,
+            platform: platform_raw,
+            report,
+        })
+    })();
+
+    match result {
+        Ok(report) => {
+            if mode.is_json() {
+                emit_json(mode, &report);
+            } else {
+                emit_line(
+                    mode,
+                    format!(
+                        "mcp {} {} -> {}: changed={}, skipped={}, unchanged={}",
+                        report.operation,
+                        report.server,
+                        report.platform,
+                        report.report.changed,
+                        report.report.skipped,
+                        report.report.unchanged,
+                    ),
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
+            ExitCode::from(error.exit_code())
+        }
+    }
+}
+
+fn effective_mcp_definitions(
+    roots: &paths::SyncRoots,
+) -> Result<Vec<EffectiveMcpDefinition>, CoreError> {
+    let overlays = if paths::is_project_deploy_base(&roots.deploy_base) {
+        OverlayRoots {
+            global: roots.global_default.clone(),
+            workspace: None,
+            project: roots.asset_root.clone(),
+        }
+    } else {
+        // Do not load the same root twice: source provenance remains `Global` for a global CLI
+        // invocation and an absent project layer cannot shadow it.
+        OverlayRoots {
+            global: roots.asset_root.clone(),
+            workspace: None,
+            project: roots.asset_root.join(".ai-config-no-project-overlay"),
+        }
+    };
+    resolve_effective_mcp_definitions(&overlays)
+}
+
+fn missing_canonical_definition(name: &str) -> CoreError {
+    CoreError::InvalidPath(format!(
+        "source-first canonical MCP server `{name}` was not found; 拒绝写入 legacy MCP asset"
+    ))
+}
+
+fn projection_scope_key(scope: DeploymentScope, deploy_base: &Utf8Path) -> String {
+    match scope {
+        DeploymentScope::User => format!("user:{}", deploy_base),
+        DeploymentScope::Workspace => format!("workspace:{}", deploy_base),
+        DeploymentScope::Project => format!("project:{}", deploy_base),
+    }
+}
+
+fn parse_mcp_platform(raw: &str) -> Result<PlatformId, CoreError> {
+    match raw.to_ascii_lowercase().as_str() {
+        "cursor" => Ok(PlatformId::Cursor),
+        "codex" => Ok(PlatformId::Codex),
+        "claude" | "claudecode" | "claude-code" => Ok(PlatformId::Claude),
+        "hermes" => Ok(PlatformId::Hermes),
+        _ => Err(CoreError::InvalidPath(format!(
+            "unknown MCP deploy platform `{raw}`; use cursor, codex, claude, or hermes"
+        ))),
     }
 }
 
@@ -114,7 +326,7 @@ pub struct McpListEntry {
 // ── list / show ─────────────────────────────────────────────────
 
 fn run_list(mode: OutputMode, root: &Utf8Path) -> ExitCode {
-    let servers = match load_all_servers(root) {
+    let servers = match load_canonical_servers(root) {
         Ok(s) => s,
         Err(e) => {
             emit_error_envelope(mode, e.exit_code_kind(), &e.to_string(), e.hint_text());
@@ -133,7 +345,7 @@ fn run_list(mode: OutputMode, root: &Utf8Path) -> ExitCode {
 }
 
 fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
-    let found = match find_server(root, name) {
+    let found = match find_canonical_server(root, name) {
         Ok(v) => v,
         Err(e) => {
             emit_error_envelope(mode, e.exit_code_kind(), &e.to_string(), e.hint_text());
@@ -155,7 +367,6 @@ fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
                 "enabled": srv.enabled,
                 "source_path": path,
                 "secret_keys": srv.secret_keys,
-                "config": srv.config,
             }),
         );
     } else {
@@ -164,193 +375,245 @@ fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
         println!("enabled: {}", srv.enabled);
         println!("source: {}", path);
         println!("secret_keys: {:?}", srv.secret_keys);
-        println!(
-            "config: {}",
-            serde_json::to_string_pretty(&srv.config).unwrap_or_default()
-        );
     }
     ExitCode::SUCCESS
 }
 
-// ── add / remove / enable / disable ─────────────────────────────
+// ── source-first CRUD (source only, no platform lifecycle cutover) ──────────
 
-fn run_add(mode: OutputMode, root: &Utf8Path) -> ExitCode {
-    let stdin = io::stdin();
-    let parsed = if stdin.is_terminal() {
-        match add_interactive() {
-            Ok(p) => p,
-            Err(e) => {
-                emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                return ExitCode::from(exit_code::ARG_ERROR);
-            }
+fn run_add(mode: OutputMode, root: &Utf8Path, source: &str) -> ExitCode {
+    let source = Utf8Path::new(source);
+    let result = (|| -> anyhow::Result<Utf8PathBuf> {
+        reject_symlink(source, "MCP input source")?;
+        let definition = load_mcp_definition_at(source)?;
+        let destination = canonical_server_path(root, &definition.server.name)?;
+        ensure_canonical_parent(root)?;
+        if destination.exists() {
+            anyhow::bail!(
+                "canonical MCP source `{}` already exists",
+                definition.server.name
+            );
         }
-    } else {
-        match add_from_stdin() {
-            Ok(p) => p,
-            Err(e) => {
-                emit_error_envelope(mode, exit_code::ARG_ERROR, &e.to_string(), None);
-                return ExitCode::from(exit_code::ARG_ERROR);
-            }
+        let raw = std::fs::read(source.as_std_path())?;
+        write_new_file(&destination, &raw)?;
+        // Re-parse the exact persisted bytes so a bad input can never become a source.
+        load_mcp_definition_at(&destination)?;
+        Ok(destination)
+    })();
+    match result {
+        Ok(destination) => {
+            emit_mutation_success(mode, "add", &destination);
+            ExitCode::SUCCESS
         }
-    };
-    let (name, transport, _enabled, config) = parsed;
-    if let Err(e) = upsert_server(root, &name, &config) {
-        emit_error_envelope(mode, exit_code::FS_ERROR, &e.to_string(), None);
-        return ExitCode::from(exit_code::FS_ERROR);
+        Err(error) => emit_crud_error(mode, error),
     }
+}
+
+fn run_remove(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
+    let result = (|| -> anyhow::Result<Utf8PathBuf> {
+        let path = canonical_server_path(root, name)?;
+        reject_symlink(&path, "canonical MCP source")?;
+        let definition = load_mcp_definition_at(&path)?;
+        if definition.server.name != name {
+            anyhow::bail!("canonical MCP source name does not match requested server");
+        }
+        std::fs::remove_file(path.as_std_path())?;
+        Ok(path)
+    })();
+    match result {
+        Ok(path) => {
+            emit_mutation_success(mode, "remove", &path);
+            ExitCode::SUCCESS
+        }
+        Err(error) => emit_crud_error(mode, error),
+    }
+}
+
+fn run_set_enabled(mode: OutputMode, root: &Utf8Path, name: &str, enabled: bool) -> ExitCode {
+    let result = (|| -> anyhow::Result<(Utf8PathBuf, bool)> {
+        let path = canonical_server_path(root, name)?;
+        reject_symlink(&path, "canonical MCP source")?;
+        let definition = load_mcp_definition_at(&path)?;
+        if definition.server.name != name {
+            anyhow::bail!("canonical MCP source name does not match requested server");
+        }
+        if definition.server.enabled == enabled {
+            return Ok((path, false));
+        }
+        let raw = std::fs::read_to_string(path.as_std_path())?;
+        let mut document: Value = serde_json::from_str(&raw)?;
+        let object = document
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("canonical MCP source must be a JSON object"))?;
+        object.insert("enabled".to_owned(), Value::Bool(enabled));
+        let rendered = serde_json::to_vec_pretty(&document)?;
+        write_replace_file(&path, &rendered)?;
+        load_mcp_definition_at(&path)?;
+        Ok((path, true))
+    })();
+    match result {
+        Ok((path, changed)) => {
+            if mode.is_json() {
+                emit_json(
+                    mode,
+                    &serde_json::json!({
+                        "action": if enabled { "enable" } else { "disable" },
+                        "source_path": path,
+                        "changed": changed,
+                    }),
+                );
+            } else if changed {
+                println!("{}: {}", if enabled { "enabled" } else { "disabled" }, path);
+            } else {
+                println!("unchanged: {path}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => emit_crud_error(mode, error),
+    }
+}
+
+fn canonical_server_path(root: &Utf8Path, name: &str) -> anyhow::Result<Utf8PathBuf> {
+    if name.is_empty()
+        || name.starts_with('.')
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        anyhow::bail!("MCP server name must use only ASCII letters, digits, '.', '-' or '_'");
+    }
+    Ok(root.join("mcp/servers").join(format!("{name}.json")))
+}
+
+fn ensure_canonical_parent(root: &Utf8Path) -> anyhow::Result<()> {
+    let mcp = root.join("mcp");
+    let servers = mcp.join("servers");
+    for path in [&mcp, &servers] {
+        if path.exists() {
+            reject_symlink(path, "canonical MCP directory")?;
+        } else {
+            std::fs::create_dir(path.as_std_path())?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_symlink(path: &Utf8Path, what: &str) -> anyhow::Result<()> {
+    if std::fs::symlink_metadata(path.as_std_path())
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!("{what} must not be a symlink");
+    }
+    Ok(())
+}
+
+fn write_new_file(path: &Utf8Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let temp = temporary_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp.as_std_path())?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    match std::fs::hard_link(temp.as_std_path(), path.as_std_path()) {
+        Ok(()) => {
+            std::fs::remove_file(temp.as_std_path())?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(temp.as_std_path());
+            Err(error.into())
+        }
+    }
+}
+
+fn write_replace_file(path: &Utf8Path, bytes: &[u8]) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    reject_symlink(path, "canonical MCP source")?;
+    let temp = temporary_path(path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(temp.as_std_path())?;
+    file.write_all(bytes)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::rename(temp.as_std_path(), path.as_std_path())?;
+    Ok(())
+}
+
+fn temporary_path(path: &Utf8Path) -> Utf8PathBuf {
+    let filename = path.file_name().unwrap_or("mcp.json");
+    path.parent()
+        .unwrap_or_else(|| Utf8Path::new("."))
+        .join(format!(".{filename}.{}.tmp", std::process::id()))
+}
+
+fn emit_mutation_success(mode: OutputMode, action: &str, path: &Utf8Path) {
     if mode.is_json() {
         emit_json(
             mode,
-            &serde_json::json!({
-                "ok": true,
-                "action": "add",
-                "name": name,
-                "transport": transport,
-            }),
+            &serde_json::json!({ "action": action, "source_path": path, "changed": true }),
         );
     } else {
-        emit_line(mode, format!("mcp `{name}` 已写入 mcp.json"));
+        println!("{action}: {path}");
     }
-    ExitCode::SUCCESS
 }
 
-fn add_interactive() -> Result<(String, McpTransport, bool, Value), String> {
-    let name = prompt_required("server name")?;
-    let transport_raw = prompt_optional("transport (stdio|http|sse)", "stdio")?;
-    let command = prompt_optional("command (e.g. uvx)", "")?;
-    let args_raw = prompt_optional("args (逗号分隔,留空跳过)", "")?;
-    let env_raw = prompt_optional("env (KEY=VAL, 逗号分隔, 留空跳过)", "")?;
-    let enabled_raw = prompt_optional("enabled (y/n, 默认 y)", "y")?;
-    let enabled = !enabled_raw.trim().eq_ignore_ascii_case("n");
-
-    let transport = match transport_raw.to_ascii_lowercase().as_str() {
-        "stdio" => McpTransport::Stdio,
-        "http" => McpTransport::Http,
-        "sse" => McpTransport::Sse,
-        other => return Err(format!("未知 transport: {other}")),
-    };
-
-    let args: Vec<String> = if args_raw.trim().is_empty() {
-        vec![]
-    } else {
-        args_raw.split(',').map(|s| s.trim().to_string()).collect()
-    };
-    let env: Map<String, Value> = if env_raw.trim().is_empty() {
-        Map::new()
-    } else {
-        let mut m = Map::new();
-        for kv in env_raw.split(',') {
-            let kv = kv.trim();
-            if let Some((k, v)) = kv.split_once('=') {
-                m.insert(k.trim().to_string(), Value::String(v.trim().to_string()));
-            }
-        }
-        m
-    };
-
-    let mut config = Map::new();
-    if !command.trim().is_empty() {
-        config.insert(
-            "command".to_string(),
-            Value::String(command.trim().to_string()),
-        );
-    }
-    if !args.is_empty() {
-        config.insert(
-            "args".to_string(),
-            Value::Array(args.into_iter().map(Value::String).collect()),
-        );
-    }
-    if !env.is_empty() {
-        config.insert("env".to_string(), Value::Object(env));
-    }
-    Ok((name, transport, enabled, Value::Object(config)))
+fn emit_crud_error(mode: OutputMode, error: anyhow::Error) -> ExitCode {
+    emit_error_envelope(
+        mode,
+        exit_code::ARG_ERROR,
+        &error.to_string(),
+        Some("MCP source 必须是经过校验的单 server JSON；该操作不会写入任何平台配置"),
+    );
+    ExitCode::from(exit_code::ARG_ERROR)
 }
 
-fn add_from_stdin() -> Result<(String, McpTransport, bool, Value), String> {
-    let mut buf = String::new();
-    io::stdin()
-        .read_to_string(&mut buf)
-        .map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&buf).map_err(|e| e.to_string())?;
-    let name = v
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "stdin JSON 缺 `name` 字段".to_string())?
-        .to_string();
-    let transport = match v
-        .get("transport")
-        .and_then(Value::as_str)
-        .unwrap_or("stdio")
+// ── legacy platform writes: fail closed until generated executor exists ─────
+
+// ── migrate(legacy container → source-first per-server sources) ────────────
+
+fn run_migrate(
+    mode: OutputMode,
+    root: &Utf8Path,
+    source: Option<&str>,
+    dry_run: bool,
+    _extract_secrets: bool,
+    _apply: bool,
+) -> ExitCode {
+    let relative = Utf8Path::new(source.unwrap_or("mcp/cursor.mcp.template.json"));
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| matches!(component, Utf8Component::ParentDir))
     {
-        "stdio" => McpTransport::Stdio,
-        "http" => McpTransport::Http,
-        "sse" => McpTransport::Sse,
-        other => return Err(format!("未知 transport: {other}")),
-    };
-    let enabled = v.get("enabled").and_then(Value::as_bool).unwrap_or(true);
-    let config = v
-        .get("config")
-        .cloned()
-        .ok_or_else(|| "stdin JSON 缺 `config` 字段".to_string())?;
-    Ok((name, transport, enabled, config))
-}
-
-fn prompt_required(label: &str) -> Result<String, String> {
-    loop {
-        eprint!("{label}> ");
-        io::stderr().flush().ok();
-        let mut buf = String::new();
-        io::stdin().read_line(&mut buf).map_err(|e| e.to_string())?;
-        let v = buf.trim().to_string();
-        if !v.is_empty() {
-            return Ok(v);
-        }
+        emit_error_envelope(
+            mode,
+            exit_code::ARG_ERROR,
+            "legacy MCP source must be a path below the selected root",
+            Some("该只读盘点不会访问 --root 以外的路径"),
+        );
+        return ExitCode::from(exit_code::ARG_ERROR);
     }
-}
-
-fn prompt_optional(label: &str, default: &str) -> Result<String, String> {
-    eprint!("{label} [{default}]> ");
-    io::stderr().flush().ok();
-    let mut buf = String::new();
-    io::stdin().read_line(&mut buf).map_err(|e| e.to_string())?;
-    let v = buf.trim();
-    if v.is_empty() {
-        Ok(default.to_string())
-    } else {
-        Ok(v.to_string())
-    }
-}
-
-fn upsert_server(root: &Utf8Path, name: &str, config: &Value) -> Result<(), String> {
-    if name.is_empty() || name.contains('/') {
-        return Err("server name 非法: 不可为空,不可含 '/'".to_string());
-    }
-    mcp_json::ensure_mcp_json(root).map_err(|e| e.to_string())?;
-    mcp_json::upsert_server_in_document(root, name, config.clone()).map_err(|e| e.to_string())
-}
-
-// ── migrate(legacy mcp/servers 或模板 → mcp.json)────────────────
-
-fn run_migrate(mode: OutputMode, root: &Utf8Path, source: Option<&str>, dry_run: bool) -> ExitCode {
-    let rel_source = source.unwrap_or("mcp/cursor.mcp.template.json");
-    let template_path = root.join(rel_source);
-    let legacy_servers = root.join("mcp/servers");
-
+    let template_path = root.join(relative);
     if dry_run {
-        let count = if legacy_servers.is_dir() {
-            std::fs::read_dir(legacy_servers.as_std_path())
-                .map(|rd| {
-                    rd.flatten()
-                        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("json"))
-                        .count()
-                })
-                .unwrap_or(0)
-        } else if template_path.is_file() {
-            count_template_servers(&template_path).unwrap_or(0)
-        } else {
-            0
-        };
+        let count = std::fs::read_to_string(template_path.as_std_path())
+            .ok()
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|value| {
+                value
+                    .get("mcpServers")?
+                    .as_object()
+                    .map(|items| items.len())
+            })
+            .unwrap_or(0);
         if mode.is_json() {
             emit_json(
                 mode,
@@ -368,176 +631,18 @@ fn run_migrate(mode: OutputMode, root: &Utf8Path, source: Option<&str>, dry_run:
         return ExitCode::SUCCESS;
     }
 
-    if !legacy_servers.is_dir() && !template_path.is_file() && !root.join("mcp.json").is_file() {
-        let msg = format!("migrate 源不存在: 无 `mcp/servers/` 且无 `{template_path}`");
-        emit_error_envelope(
-            mode,
-            exit_code::FS_ERROR,
-            &msg,
-            Some("放置模板或 legacy servers"),
-        );
-        return ExitCode::from(exit_code::FS_ERROR);
-    }
-
-    if let Err(e) = mcp_json::migrate_legacy_mcp_layout(root) {
-        emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-        return ExitCode::from(e.exit_code());
-    }
-
-    let written = mcp_json::list_server_names(root).unwrap_or_default();
-    if mode.is_json() {
-        emit_json(
-            mode,
-            &serde_json::json!({
-                "written": written,
-                "skipped": [],
-                "errors": [],
-                "dry_run": false,
-            }),
-        );
-    } else {
-        println!("已迁移 {} 个 / 跳过 0 个 / 失败 0 个", written.len());
-    }
-    ExitCode::SUCCESS
+    emit_error_envelope(
+        mode,
+        exit_code::ARG_ERROR,
+        "legacy MCP migrate 只读：`--extract-secrets --apply` 不能绕过 reviewed source-first plan",
+        Some(
+            "使用 `ai-config mcp migrate --dry-run` 盘点；迁移请使用 `ai-config import` / `ai-config migrate source-first`",
+        ),
+    );
+    ExitCode::from(exit_code::ARG_ERROR)
 }
 
-fn count_template_servers(path: &Utf8Path) -> Result<usize, String> {
-    let raw = std::fs::read_to_string(path.as_std_path()).map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    Ok(v.get("mcpServers")
-        .and_then(|x| x.as_object())
-        .map(|m| m.len())
-        .unwrap_or(0))
-}
-
-fn run_remove(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
-    let found = match find_server(root, name) {
-        Ok(v) => v,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code_kind(), &e.to_string(), e.hint_text());
-            return ExitCode::from(e.exit_code_kind());
-        }
-    };
-    let Some((server, _path)) = found else {
-        let msg = format!("mcp server `{name}` 找不到");
-        let hint = "跑 `ai-config mcp list` 看全部";
-        emit_error_envelope(mode, exit_code::PARTIAL_FAILURE, &msg, Some(hint));
-        return ExitCode::from(exit_code::PARTIAL_FAILURE);
-    };
-    if let Err(e) = mcp_json::remove_server_from_document(root, &server.name) {
-        emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-        return ExitCode::from(e.exit_code());
-    }
-    if mode.is_json() {
-        emit_json(
-            mode,
-            &serde_json::json!({
-                "ok": true,
-                "action": "remove",
-                "name": name,
-            }),
-        );
-    } else {
-        emit_line(mode, format!("mcp `{name}` 已从 mcp.json 移除"));
-    }
-    ExitCode::SUCCESS
-}
-
-fn run_set_enabled(mode: OutputMode, root: &Utf8Path, name: &str, enabled: bool) -> ExitCode {
-    if enabled {
-        let msg = "单文件 mcp.json 模式不支持 enable;请用 `mcp add` 或编辑 mcp.json";
-        emit_error_envelope(mode, exit_code::ARG_ERROR, msg, None);
-        return ExitCode::from(exit_code::ARG_ERROR);
-    }
-    run_remove(mode, root, name)
-}
-
-// ── deploy / retract(per-item × per-platform) ─────────────────
-
-fn run_deploy(mode: OutputMode, root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
-    let adapter = match platform::for_id(plat) {
-        Ok(a) => a,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-    let dest = adapter.mcp_deploy_path();
-    let src_mcp = match mcp_json_path_for_root(root) {
-        Ok(p) => p,
-        Err(e) => {
-            emit_error_envelope(mode, exit_code::FS_ERROR, &e, None);
-            return ExitCode::from(exit_code::FS_ERROR);
-        }
-    };
-    let config = match mcp_json::get_server_config(root, name) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            let msg = format!("mcp server `{name}` 找不到");
-            emit_error_envelope(
-                mode,
-                exit_code::PARTIAL_FAILURE,
-                &msg,
-                Some("跑 `ai-config mcp list` 看全部"),
-            );
-            return ExitCode::from(exit_code::PARTIAL_FAILURE);
-        }
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-    let result = mcp_json::upsert_server_on_platform(plat, &dest, name, &config, Some(&src_mcp));
-    match result {
-        Ok(()) => {
-            if mode.is_json() {
-                emit_json(
-                    mode,
-                    &serde_json::json!({
-                        "ok": true,
-                        "action": "deploy",
-                        "name": name,
-                        "to": plat,
-                        "dest": dest.to_string(),
-                    }),
-                );
-            } else if plat == PlatformId::Hermes {
-                emit_line(
-                    mode,
-                    format!("mcp `{name}` 已写入 Hermes config.yaml ({dest})"),
-                );
-            } else {
-                emit_line(mode, format!("mcp.json 已 deploy 到 {plat:?}"));
-            }
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            ExitCode::from(e.exit_code())
-        }
-    }
-}
-
-fn run_retract(mode: OutputMode, _root: &Utf8Path, name: &str, plat: PlatformId) -> ExitCode {
-    let adapter = match platform::for_id(plat) {
-        Ok(a) => a,
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            return ExitCode::from(e.exit_code());
-        }
-    };
-    let dest = adapter.mcp_deploy_path();
-    let error = CoreError::LinkFailed {
-        src: "ai-config MCP ownership record".to_owned(),
-        dest: dest.to_string(),
-        reason: format!("尚不能证明 MCP server `{name}` 由 ai-config 管理"),
-        hint: "当前版本不会收回平台 MCP；请等待 source-first 迁移计划生成可验证的所有权记录"
-            .to_owned(),
-    };
-    emit_error_envelope(mode, error.exit_code(), &error.to_string(), error.hint());
-    ExitCode::from(error.exit_code())
-}
-
+/// A prepared migration deliberately keeps literal values private. It is never Debug/Serialize.
 fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {
     let home = paths::home_dir();
     let legacy = home.join(".hermes/mcp.json");
@@ -563,61 +668,13 @@ fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {
         }
         return ExitCode::SUCCESS;
     }
-    match mcp_json::migrate_legacy_hermes_mcp_json(&home) {
-        Ok(report) => emit_migrate_hermes_report(mode, &report),
-        Err(e) => {
-            emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
-            ExitCode::from(e.exit_code())
-        }
-    }
-}
-
-fn emit_migrate_hermes_report(mode: OutputMode, report: &HermesMigrateReport) -> ExitCode {
-    if mode.is_json() {
-        emit_json(
-            mode,
-            &serde_json::json!({
-                "merged": report.merged,
-                "skipped_conflict": report.skipped_conflict,
-                "legacy_renamed": report.legacy_renamed,
-            }),
-        );
-    } else {
-        if report.merged.is_empty() && report.skipped_conflict.is_empty() {
-            emit_line(mode, "无遗留 ~/.hermes/mcp.json 需要迁移");
-        } else {
-            emit_line(
-                mode,
-                format!(
-                    "已合并 {} 条, 跳过 {} 条",
-                    report.merged.len(),
-                    report.skipped_conflict.len()
-                ),
-            );
-            for name in &report.merged {
-                emit_line(mode, format!("  merged: {name}"));
-            }
-            for msg in &report.skipped_conflict {
-                emit_line(mode, format!("  skip: {msg}"));
-            }
-        }
-        if let Some(bak) = &report.legacy_renamed {
-            emit_line(mode, format!("遗留文件已重命名为 {bak}"));
-        }
-    }
-    ExitCode::SUCCESS
-}
-
-// ── 平台 ID 解析 ────────────────────────────────────────────────
-
-fn parse_platform(s: &str) -> Result<PlatformId, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "cursor" => Ok(PlatformId::Cursor),
-        "codex" => Ok(PlatformId::Codex),
-        "claude" | "claudecode" | "claude-code" => Ok(PlatformId::Claude),
-        "hermes" => Ok(PlatformId::Hermes),
-        other => Err(format!("未知平台: {other};可选 cursor/codex/claude/hermes")),
-    }
+    emit_error_envelope(
+        mode,
+        exit_code::ARG_ERROR,
+        "legacy Hermes MCP migrate 只读：source-first apply 尚未就绪，拒绝写入或重命名旧 MCP 资产",
+        Some("使用 `ai-config mcp migrate-hermes --dry-run` 盘点；待生成 source-first 计划后再执行单项 apply"),
+    );
+    ExitCode::from(exit_code::ARG_ERROR)
 }
 
 // ── 工具:从 mcp.json 读 servers ─────────────────────────────────
@@ -637,59 +694,27 @@ impl CliErrorExt for anyhow::Error {
     }
 }
 
-fn mcp_json_path_for_root(root: &Utf8Path) -> Result<Utf8PathBuf, String> {
-    let scan = source::scan_project_root(root).map_err(|e| e.to_string())?;
-    scan.mcp_json
-        .ok_or_else(|| format!("`{}` 不存在", mcp_json::MCP_ASSET_NAME))
-}
-
-fn load_all_servers(root: &Utf8Path) -> anyhow::Result<Vec<McpListEntry>> {
-    let path = mcp_json_path_for_root(root).map_err(|e| anyhow::anyhow!(e))?;
-    let doc = mcp_json::load_mcp_document(root)?
-        .unwrap_or_else(|| serde_json::json!({ "mcpServers": {} }));
-    let mut out = Vec::new();
-    if let Some(servers) = doc.get("mcpServers").and_then(|v| v.as_object()) {
-        for (name, config) in servers {
-            let srv = server_from_config(name, config);
-            out.push(McpListEntry {
-                name: srv.name,
-                transport: format!("{:?}", srv.transport).to_ascii_lowercase(),
-                enabled: true,
-                source_path: path.as_str().to_string(),
-                secret_keys: srv.secret_keys,
-            });
-        }
-    }
+fn load_canonical_servers(root: &Utf8Path) -> anyhow::Result<Vec<McpListEntry>> {
+    let mut out = load_mcp_definitions(root)?
+        .into_iter()
+        .map(|definition| McpListEntry {
+            name: definition.server.name,
+            transport: format!("{:?}", definition.server.transport).to_ascii_lowercase(),
+            enabled: definition.server.enabled,
+            source_path: definition.source_path.to_string(),
+            secret_keys: definition.server.secret_keys,
+        })
+        .collect::<Vec<_>>();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
 
-fn find_server(root: &Utf8Path, name: &str) -> anyhow::Result<Option<(McpServer, Utf8PathBuf)>> {
-    let path = mcp_json_path_for_root(root).map_err(|e| anyhow::anyhow!(e))?;
-    let doc = mcp_json::load_mcp_document(root)?;
-    let Some(doc) = doc else {
-        return Ok(None);
-    };
-    let Some(config) = doc
-        .get("mcpServers")
-        .and_then(|v| v.as_object())
-        .and_then(|m| m.get(name))
-    else {
-        return Ok(None);
-    };
-    Ok(Some((server_from_config(name, config), path)))
-}
-
-fn server_from_config(name: &str, config: &Value) -> McpServer {
-    let transport = if config.get("url").is_some()
-        || config
-            .get("type")
-            .and_then(|v| v.as_str())
-            .is_some_and(|t| t.eq_ignore_ascii_case("http") || t.eq_ignore_ascii_case("sse"))
-    {
-        McpTransport::Http
-    } else {
-        McpTransport::Stdio
-    };
-    McpServer::new(0, name, transport, config.clone())
+fn find_canonical_server(
+    root: &Utf8Path,
+    name: &str,
+) -> anyhow::Result<Option<(McpServer, Utf8PathBuf)>> {
+    Ok(load_mcp_definitions(root)?
+        .into_iter()
+        .find(|definition| definition.server.name == name)
+        .map(|definition| (definition.server, definition.source_path)))
 }

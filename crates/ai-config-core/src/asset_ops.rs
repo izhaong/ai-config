@@ -43,6 +43,7 @@ pub fn deploy_from_platform(
     from_plat: PlatformId,
     to_plat: PlatformId,
 ) -> Result<String, CoreError> {
+    reject_legacy_prompt(kind)?;
     ensure_deploy_target(from_plat)?;
     ensure_deploy_target(to_plat)?;
     if from_plat == to_plat {
@@ -93,6 +94,7 @@ pub fn deploy(
     name: &str,
     plat: PlatformId,
 ) -> Result<String, CoreError> {
+    reject_legacy_prompt(kind)?;
     ensure_deploy_target(plat)?;
     ensure_platform_supports(scope, plat, kind)?;
     match kind {
@@ -102,6 +104,7 @@ pub fn deploy(
         AssetKind::Rule | AssetKind::Command | AssetKind::Agent => {
             deploy_materialized(scope, kind, name, plat)
         }
+        AssetKind::Prompt => Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into())),
     }
 }
 
@@ -112,6 +115,7 @@ pub fn retract(
     name: &str,
     plat: PlatformId,
 ) -> Result<String, CoreError> {
+    reject_legacy_prompt(kind)?;
     if plat == PlatformId::AiConfig {
         return retract_aiconfig_platform(scope, kind, name);
     }
@@ -120,9 +124,13 @@ pub fn retract(
     match kind {
         AssetKind::Mcp => retract_mcp(scope, name, plat),
         AssetKind::Hook => retract_hook(scope, name, plat),
+        AssetKind::Prompt => Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into())),
         _ => {
             let dest = resolve_platform_retract_dest(scope, plat, kind, name)?;
-            remove_native_platform_copy(&dest)?;
+            let expected_src = locate_source(scope.default_root, scope.asset_root, kind, name)
+                .ok()
+                .map(|src| link_src_for_create(kind, &src));
+            remove_native_platform_copy(&dest, expected_src.as_deref())?;
             Ok(format!("{kind:?} `{name}` ← {plat:?} OK ({dest})"))
         }
     }
@@ -134,6 +142,7 @@ pub fn get_detail(
     kind: AssetKind,
     name: &str,
 ) -> Result<AssetFileDetail, CoreError> {
+    reject_legacy_prompt(kind)?;
     match kind {
         AssetKind::Mcp => get_mcp_detail(scope, name),
         AssetKind::Skill => {
@@ -187,6 +196,7 @@ pub fn get_detail(
                     .unwrap_or_default(),
             })
         }
+        AssetKind::Prompt => Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into())),
     }
 }
 
@@ -197,6 +207,7 @@ pub fn save_content(
     name: &str,
     content: &str,
 ) -> Result<String, CoreError> {
+    reject_legacy_prompt(kind)?;
     match kind {
         AssetKind::Mcp => save_mcp(scope, name, content),
         AssetKind::Skill => {
@@ -220,6 +231,7 @@ pub fn save_content(
             fs::write(&path, content).map_err(CoreError::Io)?;
             Ok(format!("hook `{name}` 已保存"))
         }
+        AssetKind::Prompt => Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into())),
     }
 }
 
@@ -231,6 +243,7 @@ pub fn retract_source(
     kind: AssetKind,
     name: &str,
 ) -> Result<String, CoreError> {
+    reject_legacy_prompt(kind)?;
     retract(scope, kind, name, PlatformId::AiConfig)
 }
 
@@ -243,6 +256,7 @@ pub fn delete_source(
     kind: AssetKind,
     name: &str,
 ) -> Result<String, CoreError> {
+    reject_legacy_prompt(kind)?;
     asset_scope::retract_all_platforms_best_effort(
         scope.default_root,
         scope.asset_root,
@@ -264,9 +278,24 @@ fn retract_aiconfig_platform(
     ))
 }
 
+fn reject_legacy_prompt(kind: AssetKind) -> Result<(), CoreError> {
+    if kind == AssetKind::Prompt {
+        return Err(CoreError::InvalidPath(
+            "Prompt 仅能经 source-first projection planner；旧 lifecycle 已禁用".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// 收回平台副本：仅允许收回 marker 或 legacy symlink 可证明管理的目标。
-fn remove_native_platform_copy(dest: &Utf8Path) -> Result<(), CoreError> {
-    materialize::retract(dest)
+fn remove_native_platform_copy(
+    dest: &Utf8Path,
+    expected_src: Option<&Utf8Path>,
+) -> Result<(), CoreError> {
+    match expected_src {
+        Some(src) => materialize::retract_linked_to(dest, src),
+        None => materialize::retract(dest),
+    }
 }
 
 /// 计算平台收回路径：有源时按源映射；无源时按平台目录（外部 / synced 安装）。
@@ -301,6 +330,9 @@ fn platform_native_dest(
             return Err(CoreError::InvalidPath(
                 "MCP 收回需要 ai-config 源中的条目".into(),
             ));
+        }
+        AssetKind::Prompt => {
+            return Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into()))
         }
     };
     Ok(dest)
@@ -349,6 +381,7 @@ fn remove_source_entry(
             }
             Ok(format!("hook `{name}` 已从源删除 ({path_str})"))
         }
+        AssetKind::Prompt => Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into())),
     }
 }
 
@@ -358,6 +391,7 @@ pub fn read_platform_preview(
     platform_path: &Utf8Path,
     fallback_name: &str,
 ) -> Result<AssetFileDetail, CoreError> {
+    reject_legacy_prompt(kind)?;
     if kind == AssetKind::Mcp {
         let config = mcp_json::get_server_config_from_deploy_file(platform_path, fallback_name)?;
         let content = serde_json::to_string_pretty(&config).map_err(|e| CoreError::Io(e.into()))?;
@@ -451,6 +485,7 @@ fn platform_asset_paths(
         }
         AssetKind::Mcp => Err(CoreError::InvalidPath("MCP 不支持平台间直拷".into())),
         AssetKind::Hook => Err(CoreError::InvalidPath("Hook 不支持平台间直拷".into())),
+        AssetKind::Prompt => Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into())),
     }
 }
 
@@ -635,6 +670,7 @@ fn platform_read_path(kind: AssetKind, platform_path: &Utf8Path) -> Result<Utf8P
                 )))
             }
         }
+        AssetKind::Prompt => Err(CoreError::InvalidPath("Prompt 旧 lifecycle 已禁用".into())),
     }
 }
 
@@ -827,6 +863,7 @@ fn parse_description(kind: AssetKind, src: &Utf8Path) -> String {
             .ok()
             .map(|c| hook::parse_script_description(&c))
             .unwrap_or_default(),
+        AssetKind::Prompt => String::new(),
     }
 }
 
@@ -835,6 +872,45 @@ mod deploy_from_platform_tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn prompt_legacy_mutators_fail_before_touching_platform_files() {
+        let tmp = TempDir::new().unwrap();
+        let home = Utf8Path::from_path(tmp.path()).unwrap();
+        let asset_root = home.join(".ai-config");
+        fs::create_dir_all(&asset_root).unwrap();
+        let sentinel = asset_root.join("keep.txt");
+        fs::write(&sentinel, "keep").unwrap();
+        let scope = ScopeRoots {
+            default_root: &asset_root,
+            asset_root: &asset_root,
+            deploy_base: home,
+        };
+
+        for result in [
+            deploy(&scope, AssetKind::Prompt, "review", PlatformId::Cursor),
+            deploy_from_platform(
+                &scope,
+                AssetKind::Prompt,
+                "review",
+                PlatformId::Cursor,
+                PlatformId::Claude,
+            ),
+            retract(&scope, AssetKind::Prompt, "review", PlatformId::Cursor),
+            get_detail(&scope, AssetKind::Prompt, "review").map(|_| String::new()),
+            save_content(&scope, AssetKind::Prompt, "review", "changed"),
+            delete_source(&scope, AssetKind::Prompt, "review"),
+            read_platform_preview(AssetKind::Prompt, home, "review").map(|_| String::new()),
+        ] {
+            let err = result.expect_err("Prompt must not enter the legacy lifecycle");
+            assert!(err.to_string().contains("source-first projection planner"));
+        }
+        assert_eq!(fs::read_to_string(&sentinel).unwrap(), "keep");
+        assert!(
+            !home.join(".cursor").exists() && !home.join(".claude").exists(),
+            "rejected Prompt actions must not create platform paths"
+        );
+    }
 
     #[test]
     fn deploy_skill_from_claude_to_cursor_preserves_claude() {
