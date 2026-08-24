@@ -44,18 +44,18 @@ description: 通过 agents-manager CLI 或 MCP 服务器管理 skills/rules/agen
 
 | 工具                | 用途                                 |
 | ------------------- | ------------------------------------ |
-| `agent_manager_list`    | 列出全部纳管资产                     |
-| `agent_manager_show`    | 读取单条资产正文（kind + name）      |
-| `agent_manager_save`    | 保存单条资产正文                     |
-| `agent_manager_deploy`  | 下发到平台（kind + name + platform） |
-| `agent_manager_retract` | 从平台收回                           |
-| `agent_manager_doctor`  | 健康检查                             |
-| `agent_manager_status`  | 各平台链接状态                       |
-| `agent_manager_sync`    | 批量同步                             |
-| `agent_manager_env`     | 资产根扫描摘要                       |
+| `agents_manager_list`    | 列出全部纳管资产                     |
+| `agents_manager_show`    | 读取单条资产正文（kind + name）      |
+| `agents_manager_save`    | 保存单条资产正文                     |
+| `agents_manager_deploy`  | 下发到平台（kind + name + platform） |
+| `agents_manager_retract` | 从平台收回                           |
+| `agents_manager_doctor`  | 健康检查                             |
+| `agents_manager_status`  | 各平台链接状态                       |
+| `agents_manager_sync`    | 批量同步                             |
+| `agents_manager_env`     | 资产根扫描摘要                       |
 
 **kind**：`skill` | `rule` | `agent` | `command` | `mcp`  
-**platform**：`cursor` | `codex` | `claude` | `hermes` | `agentmanager`
+**platform**：`cursor` | `codex` | `claude` | `hermes` | `agentsmanager`
 
 ## 方式二：CLI + `--json`
 
@@ -78,11 +78,11 @@ agents-manager --root /path/to/repo/.agents-manager list --json
 
 ## 工作流建议
 
-1. **先诊断**：`agent_manager_doctor` 或 `agents-manager doctor --json`
-2. **看状态**：`agent_manager_status`
-3. **改源**：`agent_manager_show` → 编辑 → `agent_manager_save`
-4. **下发**：`agent_manager_deploy`（单条）或 `agent_manager_sync`（批量）
-5. **再验证**：`agent_manager_status` / `agent_manager_doctor`
+1. **先诊断**：`agents_manager_doctor` 或 `agents-manager doctor --json`
+2. **看状态**：`agents_manager_status`
+3. **改源**：`agents_manager_show` → 编辑 → `agents_manager_save`
+4. **下发**：`agents_manager_deploy`（单条）或 `agents_manager_sync`（批量）
+5. **再验证**：`agents_manager_status` / `agents_manager_doctor`
 
 ## 约束
 

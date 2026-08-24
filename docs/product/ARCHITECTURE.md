@@ -70,7 +70,7 @@ agents-managerd-core
 ├── config         # 读 ~/.config/agents-manager/config.toml（per-user 全局配置）
 ├── model          # 数据类型：Skill / Rule / McpServer / Agent / SymlinkTarget / SyncStatus
 ├── source         # 资产源解析：扫 skills/ rules/ mcp/ agents/ 目录 → 资产清单
-├── platform       # 5 个平台适配器：AgentManager + Cursor / Codex / Claude / Hermes
+├── platform       # 5 个平台适配器：AgentsManager + Cursor / Codex / Claude / Hermes
 │   └── (trait)    #   skills_dir / rules_dir / agents_dir / mcp_deploy_path
 ├── projection     # source resolver + read-only planner + transactional executor + ownership ledger
 ├── asset_ops      # source CRUD 与只读详情
@@ -181,11 +181,11 @@ mcp/servers/<name>.json (逐项)          secrets.env (0600, git 外)
 
 ## 5. 平台适配器（核心抽象）
 
-`platform` 模块暴露 **5 个** `PlatformAdapter` 实现：**AgentManager**（`asset_root` 下目录）+ 4 个 IDE 目标。
+`platform` 模块暴露 **5 个** `PlatformAdapter` 实现：**AgentsManager**（`asset_root` 下目录）+ 4 个 IDE 目标。
 
 ```rust
 pub trait PlatformAdapter {
-    fn id(&self) -> PlatformId;             // "agentmanager" | "cursor" | "codex" | "claude" | "hermes"
+    fn id(&self) -> PlatformId;             // "agentsmanager" | "cursor" | "codex" | "claude" | "hermes"
     fn skills_dir(&self) -> PathBuf;         // ~/.agents-manager/skills 或 ~/.cursor/skills 等
     fn rules_dir(&self) -> PathBuf;
     fn agents_dir(&self) -> PathBuf;

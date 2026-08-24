@@ -33,7 +33,7 @@
     },
     "claude-code": {
       "vercel_agent_key": "claude-code",
-      "agent_manager_platform_id": "claude",
+      "agents_manager_platform_id": "claude",
       "display_name": "Claude Code",
       "skills_dir_project": ".claude/skills",
       "skills_dir_global": "~/.claude/skills",
@@ -43,7 +43,7 @@
     },
     "hermes-agent": {
       "vercel_agent_key": "hermes-agent",
-      "agent_manager_platform_id": "hermes",
+      "agents_manager_platform_id": "hermes",
       "display_name": "Hermes Agent",
       "skills_dir_project": ".hermes/skills",
       "skills_dir_global": "~/.hermes/skills",
@@ -52,23 +52,23 @@
       }
     }
   },
-  "agent_manager_divergence": {
+  "agents_manager_divergence": {
     "note": "agents-manager project scope uses per-IDE dirs; vercel uses .agents/skills for cursor/codex project",
     "project_scope": {
       "cursor": {
-        "agent_manager": "<repo>/.cursor/skills",
+        "agents_manager": "<repo>/.cursor/skills",
         "vercel": "<repo>/.agents/skills"
       },
       "codex": {
-        "agent_manager": "<repo>/.codex/skills",
+        "agents_manager": "<repo>/.codex/skills",
         "vercel": "<repo>/.agents/skills"
       },
       "claude": {
-        "agent_manager": "<repo>/.claude/skills",
+        "agents_manager": "<repo>/.claude/skills",
         "vercel": "<repo>/.claude/skills"
       },
       "hermes": {
-        "agent_manager": "~/.hermes/skills (always global in agents-manager)",
+        "agents_manager": "~/.hermes/skills (always global in agents-manager)",
         "vercel": "<repo>/.hermes/skills"
       }
     }

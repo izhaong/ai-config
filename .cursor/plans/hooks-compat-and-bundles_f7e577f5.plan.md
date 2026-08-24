@@ -110,7 +110,7 @@ adapter 需要支持：
 
 ```mermaid
 flowchart TD
-  sourceAgentManager[.agents-manager/hooks.json+hooks/] --> adapter[agents-manager-core hook_adapter]
+  sourceAgentsManager[.agents-manager/hooks.json+hooks/] --> adapter[agents-manager-core hook_adapter]
   adapter --> cursorCfg[.cursor/hooks.json+.cursor/hooks/]
   adapter --> codexCfg[.codex/hooks.json+.codex/hooks/]
   adapter --> claudeCfg[.claude/settings.json+.claude/hooks/]

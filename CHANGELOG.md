@@ -124,7 +124,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **agents-manager 平台 icon 收回**：`retract(..., AgentManager)` 仅删 agents-manager 平台目录；源视图浏览时点击 agents-manager icon 不收回。
+- **agents-manager 平台 icon 收回**：`retract(..., AgentsManager)` 仅删 agents-manager 平台目录；源视图浏览时点击 agents-manager icon 不收回。
 - **GUI 侧边栏可拖拽调节**：项目区高度、资产/平台宽度、侧栏总宽可手动调整，布局持久化至 `localStorage`。
 - **Core 收敛**：新增 `asset_scope`、`doctor`、`asset_ops`、`path_independence`、`skills_add`；GUI 经 `command_bridge` 调 core。
 - **产品文档**：PRD **v0.5**、DESIGN **v0.2**、ARCHITECTURE 模块图对齐 `materialize` / `asset_ops`。

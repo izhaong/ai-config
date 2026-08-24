@@ -882,11 +882,11 @@ source-first 要求缩成 CLI-only，T008.5/T008.9 继续保持未完成，直�
 - Modify: `crates/agents-manager-cli/Cargo.toml`, `src/main.rs`, `lifecycle.rs`, `agent_api.rs`, `serve.rs`, `output.rs`
 - Modify tests: `report_json.rs`, `agent_api_cli.rs`, `deploy_retract.rs`
 
-**CLI contract:** `install/sync/uninstall` 默认 plan-only；`--apply` 才写入；`--workspace` 保留。MCP `agent_manager_sync/deploy/retract` 增加 `apply: bool = false`。只有 T007 MCP renderer 与 T008 Hook/Prompt/container renderer 均完成后，才在本任务统一切换 public lifecycle，避免任何 kind 出现功能空窗。
+**CLI contract:** `install/sync/uninstall` 默认 plan-only；`--apply` 才写入；`--workspace` 保留。MCP `agents_manager_sync/deploy/retract` 增加 `apply: bool = false`。只有 T007 MCP renderer 与 T008 Hook/Prompt/container renderer 均完成后，才在本任务统一切换 public lifecycle，避免任何 kind 出现功能空窗。
 
 **执行状态（2026-07-17，已完成）**：CLI `install/sync/uninstall` 默认 plan-only，显式
 `--apply` 才创建持久 SQLite ledger 并执行 direct/MCP/Hook/Prompt；workspace members 共用一次
-预检、lock、undo journal 与最终 ledger transaction。MCP `agent_manager_sync` 复用同一 lifecycle，
+预检、lock、undo journal 与最终 ledger transaction。MCP `agents_manager_sync` 复用同一 lifecycle，
 默认零写；单项 deploy/retract 在安全计划尚未表达前 fail-closed。CLI 与真实 MCP stdio 对同一
 request 的 `schema_version`、`plan_digest`、actions/member identity 完全一致；install 也有默认
 零写与显式 apply 合同。运行期后段失败会把已恢复 action 报为 `rolled_back`、失败 action 报为
@@ -899,7 +899,7 @@ core+CLI 全量测试与严格 clippy 通过；GUI 旁路仍由 T011 单独收�
 - [x] **T009.2 Verify RED**：`projection_lifecycle` 5 条合同先在无 `--apply`/plan 报告/统一编排的旧入口下实际失败，再转 GREEN。
 - [x] **T009.3 Add contexts, clap flags and reports**：CLI/serve 调用层构造可序列化 `ProjectionRequest` 与注入式 `PlannerContext`/`ExecutorContext`；core 不打开 store；apply 只把 plan、context 和 options 交给 core。CLI/MCP 所有 kind 迁移后已删除 lifecycle 的 materialize/MCP/Hook platform loops；GUI 旧 commands 明确留给 T011.4 删除。
 - [x] **T009.4 Define exit/report contract**：0=plan/apply success，3=blocking conflict 或已回滚 transaction failure，4=missing secret skipped，5=filesystem；输出 `failed/rolled_back/not_applied`；JSON error 继续使用 redacted envelope，并遵循既有 output contract 写 stdout。
-- [x] **T009.5 Update MCP schemas**：tool output schema 使用 ProjectionPlan/ApplyReport；`apply` 默认 false；agent 无法绕过 conflict/adopt guard。`agent_manager_sync` 已复用 lifecycle projection；单项 deploy/retract 在计划表达完成前 fail-closed，禁止旧直写旁路。
+- [x] **T009.5 Update MCP schemas**：tool output schema 使用 ProjectionPlan/ApplyReport；`apply` 默认 false；agent 无法绕过 conflict/adopt guard。`agents_manager_sync` 已复用 lifecycle projection；单项 deploy/retract 在计划表达完成前 fail-closed，禁止旧直写旁路。
 - [x] **T009.6 Verify**：指定四组 32 passed；另 `workspace_projection_lifecycle` 4 passed、`cargo test -p agents-manager-core -p agents-manager-cli` 全绿、core+CLI strict clippy 通过。
 - [x] **T009.7 Commit checkpoint**：本任务以 `fix(cli): 完成投影生命周期事务合同` 建立独立 checkpoint；不包含用户 GUI/009 安全止血脏改。
 

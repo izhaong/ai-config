@@ -1,1 +1,1 @@
-.agent-manager/prompts/AGENTS.md
+.agents/prompts/AGENTS.md

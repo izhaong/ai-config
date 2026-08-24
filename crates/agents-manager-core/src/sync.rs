@@ -1,0 +1,847 @@
+//! 同步引擎:source + override + enabled platforms → per-item × per-platform SyncAction。
+//!
+//! ## 关键约束(PRD §3.2 / §4.2 / §8.2)
+//!
+//! - **同 name 覆盖 / 不同 name 附加**:`source::scan_with_override` 已实装合并,
+//!   本模块**只**消费其结果。
+//! - **per-item × per-platform 动作**(`SyncAction`):每个资产名对每个平台产生
+//!   一条 `Create`(skill/rule/agent)或 `RenderMcp`(mcp)动作。
+//! - **事实源唯一**:本函数**只**产 `SyncAction` 流。平台勾选 / 链接当前状态
+//!   **不**在这里读、不在这里改;`store` 是状态机,`link` 是执行器,`sync` 是计划器。
+//!
+//! ## item_id 编号
+//!
+//! `item_id` 由 `(project_id, kind, name)` 用 `DefaultHasher` 派生一个 64-bit
+//! 稳定哈希。同一份资产在不同次 `compute_for_project` 调用里得到**相同**的
+//! `item_id`,这是后续 `store.record()` / `retract_item` 关联唯一目标 ID 的前提。
+//!
+//! ## dest 路径
+//!
+//! - Skill:dest = `<platform>_skills_dir/<name>`(链接整个目录,源是 skill 目录)
+/// - Rule:dest = `<platform>_rules_dir/<name>.mdc`
+/// - Command:dest = `<platform>_commands_dir/<name>.md`
+/// - Agent:dest = `<platform>_agents_dir/<name>.<原 ext>`(沿用源文件后缀,.md / .yaml ...)
+/// - Mcp:**不**产 `Create`,改产 `RenderMcp { project_id, platform }`(整份 mcp.json 原子重渲染)
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+
+use camino::Utf8Path;
+
+use crate::error::CoreError;
+use crate::mcp_json;
+use crate::model::{AssetKind, PlatformId, Project, SyncAction};
+use crate::paths;
+use crate::platform;
+use crate::projection::model::DeploymentScope;
+use crate::projection::planner::{
+    build_projection_plan, PlannerContext, ProjectionOperation, ProjectionPlan, ProjectionRequest,
+};
+use crate::projection::source::{resolve_effective_assets, OverlayRoots};
+use crate::source;
+
+/// 4 个平台(`platform::registry()` 的稳定顺序)。
+fn all_platforms() -> Vec<PlatformId> {
+    vec![
+        PlatformId::Cursor,
+        PlatformId::Codex,
+        PlatformId::Claude,
+        PlatformId::Hermes,
+    ]
+}
+
+/// 将 legacy sync 调用面所需的完整 source-first 输入显式收拢为只读计划请求。
+///
+/// `OverlayRoots` 不能从旧 `paths::SyncRoots` 无损推导：workspace member 需要同时保留
+/// global、workspace 和 project 三层 provenance。因此调用方必须提供完整 overlay。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompatibilityProjectionRoots {
+    pub overlay: OverlayRoots,
+    pub scope_key: String,
+    pub scope: DeploymentScope,
+    pub deploy_base: camino::Utf8PathBuf,
+}
+
+/// 构造 source-first 只读计划的兼容入口。
+///
+/// 旧 `compute_*` / `SyncAction` 仍服务于 T009 之前的 legacy lifecycle（尤其是旧
+/// 整份 `mcp.json` 与 Hook 执行器）。新调用方必须从本函数取得 `ProjectionPlan`，不能
+/// 继续在 `sync` 中自行判断目标状态。该函数只解析 canonical per-server source，绝不
+/// 创建目录、链接、平台配置或 ledger 记录。
+pub fn build_compatibility_plan(
+    roots: &CompatibilityProjectionRoots,
+    operation: ProjectionOperation,
+    context: &PlannerContext<'_>,
+) -> Result<ProjectionPlan, CoreError> {
+    let assets = resolve_effective_assets(&roots.overlay)?;
+    build_projection_plan(
+        &ProjectionRequest {
+            operation,
+            scope_key: roots.scope_key.clone(),
+            scope: roots.scope,
+            deploy_base: roots.deploy_base.clone(),
+            assets,
+            platforms: all_platforms(),
+        },
+        context,
+    )
+}
+
+/// 派发项目 ID + 资产 kind + name → 稳定 64-bit item_id。
+///
+/// 用 `DefaultHasher`(SipHash)— 进程内稳定,**不**保证跨进程/跨 Rust 版本稳定;
+/// `store` 层只在本进程内做 ID 关联,够用。
+fn item_id_for(project_id: u64, kind: AssetKind, name: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    project_id.hash(&mut h);
+    kind.hash(&mut h);
+    name.hash(&mut h);
+    h.finish()
+}
+
+/// 资产 entry 链接 / 渲染目标(平台 × kind 维度的 dest 路径)。
+///
+/// 全局作用域:`deploy_base` 省略时默认 `$HOME`。
+pub fn asset_dest_for(
+    plat: PlatformId,
+    kind: AssetKind,
+    name: &str,
+    src: &Utf8Path,
+) -> Option<camino::Utf8PathBuf> {
+    asset_dest_for_at_base(plat, kind, name, src, &paths::global_deploy_base())
+}
+
+/// 指定下发根目录的 dest(项目作用域传仓库根,全局传 `$HOME`)。
+pub fn asset_dest_for_at_base(
+    plat: PlatformId,
+    kind: AssetKind,
+    name: &str,
+    src: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Option<camino::Utf8PathBuf> {
+    if kind == AssetKind::Prompt {
+        return None;
+    }
+    let plat_root = platform_dest_root(plat, kind, deploy_base)?;
+    let entry_name = match kind {
+        AssetKind::Skill => return Some(plat_root.join(name)),
+        AssetKind::Rule => format!("{name}.mdc"),
+        AssetKind::Command => format!("{name}.md"),
+        AssetKind::Mcp => return None,
+        AssetKind::Hook => {
+            return Some(crate::hook_adapter::platform_scripts_dir(
+                deploy_base,
+                plat,
+                name,
+            ))
+        }
+        AssetKind::Agent => {
+            if src.is_dir() {
+                return Some(plat_root.join(name));
+            }
+            let ext = src
+                .extension()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "md".to_string());
+            format!("{name}.{ext}")
+        }
+        AssetKind::Prompt => return None,
+    };
+    Some(plat_root.join(entry_name))
+}
+
+/// Agent deploy 时 symlink 的源路径(目录链目录,单文件链文件)。
+pub fn agent_link_src(src: &Utf8Path) -> camino::Utf8PathBuf {
+    src.to_path_buf()
+}
+
+/// `Create` 动作执行链接时使用的源路径(skill 链目录而非 `SKILL.md`)。
+pub fn link_src_for_create(kind: AssetKind, src: &Utf8Path) -> camino::Utf8PathBuf {
+    match kind {
+        AssetKind::Skill => src
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| src.to_path_buf()),
+        AssetKind::Agent => agent_link_src(src),
+        AssetKind::Rule | AssetKind::Command | AssetKind::Mcp | AssetKind::Hook => {
+            src.to_path_buf()
+        }
+        AssetKind::Prompt => src.to_path_buf(),
+    }
+}
+
+fn dest_for(
+    plat: PlatformId,
+    kind: AssetKind,
+    name: &str,
+    src: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Option<camino::Utf8PathBuf> {
+    asset_dest_for_at_base(plat, kind, name, src, deploy_base)
+}
+
+fn platform_dest_root(
+    plat: PlatformId,
+    kind: AssetKind,
+    deploy_base: &Utf8Path,
+) -> Option<camino::Utf8PathBuf> {
+    if !plat.is_deploy_target() {
+        return None;
+    }
+    let adapter = platform::for_scope(plat, deploy_base).ok()?;
+    Some(match kind {
+        AssetKind::Skill => adapter.skills_dir(),
+        AssetKind::Rule => adapter.rules_dir(),
+        AssetKind::Command => adapter.commands_dir(),
+        AssetKind::Agent => adapter.agents_dir(),
+        AssetKind::Mcp => return None,
+        AssetKind::Hook => match plat {
+            PlatformId::Cursor => deploy_base.join(".cursor/hooks"),
+            PlatformId::Codex => deploy_base.join(".codex/hooks"),
+            PlatformId::Claude => deploy_base.join(".claude/hooks"),
+            PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
+            PlatformId::AgentsManager => deploy_base.join("hooks"),
+        },
+        AssetKind::Prompt => return None,
+    })
+}
+
+/// 计算一个项目的同步动作集。
+///
+/// 流程:
+/// 1. `source::scan_with_override(project_root, default_root)` 拿合并后资产清单
+/// 2. 对每条 (kind, name, src) × 4 platforms:
+///    - MCP → `RenderMcp { project_id, platform }`(per-platform,不乘 kind 因子)
+///    - 其它 → `Create { item_id, platform, dest }`(若平台 `supports(kind)`)
+/// 3. 返回 `Vec<SyncAction>`
+///
+/// **不**读 SQLite 状态,**不**跳过"已存在"链接:那个属于 `link::apply` 幂等的事
+/// (PRD §10 A-3)。**不**做平台勾选过滤:那是 store 的事(PRD §8.2)。
+pub fn compute_for_project(
+    project: &Project,
+    default_root: &Utf8Path,
+) -> Result<Vec<SyncAction>, CoreError> {
+    let (repo_root, asset_root) = paths::resolve_project_roots(&project.root_path);
+    let deploy_base = if repo_root == asset_root && paths::is_asset_root(&asset_root) {
+        paths::global_deploy_base()
+    } else {
+        paths::project_deploy_base(&repo_root)
+    };
+    compute_actions(project, default_root, &asset_root, &deploy_base)
+}
+
+/// 显式指定资产根与下发根（workspace 子仓继承父仓 `.agents-manager` 时使用）。
+pub fn compute_for_sync_roots(
+    project: &Project,
+    roots: &paths::SyncRoots,
+) -> Result<Vec<SyncAction>, CoreError> {
+    compute_actions(
+        project,
+        &roots.global_default,
+        &roots.asset_root,
+        &roots.deploy_base,
+    )
+}
+
+fn compute_actions(
+    project: &Project,
+    default_root: &Utf8Path,
+    asset_root: &Utf8Path,
+    deploy_base: &Utf8Path,
+) -> Result<Vec<SyncAction>, CoreError> {
+    let merged = source::scan_with_override(asset_root, default_root)?;
+    let mut out: Vec<SyncAction> = Vec::new();
+    let platforms = all_platforms();
+
+    for kind in [
+        AssetKind::Skill,
+        AssetKind::Rule,
+        AssetKind::Mcp,
+        AssetKind::Agent,
+        AssetKind::Command,
+        AssetKind::Hook,
+    ] {
+        // 从合并后的路径列表抽取 (name, src) 对(name = 资产名,与 source 内部判定一致)
+        let entries: Vec<(String, camino::Utf8PathBuf)> = match kind {
+            AssetKind::Skill => merged
+                .skills
+                .iter()
+                .filter_map(|p| {
+                    p.parent()
+                        .and_then(|p| p.file_name())
+                        .map(|n| (n.to_string(), p.clone()))
+                })
+                .collect(),
+            AssetKind::Rule => merged
+                .rules
+                .iter()
+                .filter_map(|p| p.file_stem().map(|n| (n.to_string(), p.clone())))
+                .collect(),
+            AssetKind::Mcp => {
+                if let Some(path) = &merged.mcp_json {
+                    vec![(mcp_json::MCP_ASSET_NAME.to_string(), path.clone())]
+                } else {
+                    vec![]
+                }
+            }
+            AssetKind::Agent => merged
+                .agents
+                .iter()
+                .filter_map(|p| {
+                    if p.is_dir() {
+                        p.file_name().map(|n| (n.to_string(), p.clone()))
+                    } else {
+                        p.file_stem().map(|n| (n.to_string(), p.clone()))
+                    }
+                })
+                .collect(),
+            AssetKind::Command => merged
+                .commands
+                .iter()
+                .filter_map(|p| p.file_stem().map(|n| (n.to_string(), p.clone())))
+                .collect(),
+            AssetKind::Hook => {
+                let mut seen = std::collections::HashSet::new();
+                merged
+                    .hooks
+                    .iter()
+                    .filter_map(|item| {
+                        if !seen.insert(item.script_filename.clone()) {
+                            return None;
+                        }
+                        Some((item.script_filename.clone(), item.script_path.clone()))
+                    })
+                    .collect()
+            }
+            AssetKind::Prompt => vec![],
+        };
+
+        for (name, src) in entries {
+            let item_id = item_id_for(project.id, kind, &name);
+            for plat in &platforms {
+                if !platform::supports_at_scope(*plat, kind, deploy_base) {
+                    continue;
+                }
+                if kind == AssetKind::Hook {
+                    let spec = match crate::hook::load_spec(asset_root, &name) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    };
+                    if !crate::hook::enabled_on_platform(&spec, *plat) {
+                        continue;
+                    }
+                    out.push(SyncAction::DeployHook {
+                        item_id,
+                        platform: *plat,
+                        name: name.clone(),
+                        src: src.clone(),
+                        asset_root: asset_root.to_path_buf(),
+                        deploy_base: deploy_base.to_path_buf(),
+                    });
+                    continue;
+                }
+                match kind {
+                    AssetKind::Mcp => {
+                        out.push(SyncAction::RenderMcp {
+                            project_id: project.id,
+                            platform: *plat,
+                        });
+                    }
+                    _ => {
+                        let dest = match dest_for(*plat, kind, &name, &src, deploy_base) {
+                            Some(d) => d,
+                            None => continue,
+                        };
+                        out.push(SyncAction::Create {
+                            item_id,
+                            platform: *plat,
+                            dest,
+                            src: src.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+/// 全局视图:对所有已注册项目求并集并去重(ARCHITECTURE §7)。
+///
+/// 去重键:`(variant_tag, key, PlatformId)` —
+/// - Skill/Rule/Agent:key = item_id
+/// - Mcp:key = project_id
+///
+/// 用 `HashSet` 因为 `PlatformId` 未 derive `Ord`(只 derive `Hash` + `Eq`)。
+pub fn compute_global(
+    projects: &[Project],
+    default_root: &Utf8Path,
+) -> Result<Vec<SyncAction>, CoreError> {
+    let mut seen: HashSet<(u8, u64, PlatformId)> = HashSet::new();
+    let mut out: Vec<SyncAction> = Vec::new();
+
+    for project in projects {
+        for action in compute_for_project(project, default_root)? {
+            let key = match &action {
+                SyncAction::Create {
+                    item_id, platform, ..
+                } => (0, *item_id, *platform),
+                SyncAction::Linked { item_id, platform } => (1, *item_id, *platform),
+                SyncAction::RenderMcp {
+                    project_id,
+                    platform,
+                } => (2, *project_id, *platform),
+                SyncAction::Retract {
+                    item_id, platform, ..
+                } => (3, *item_id, *platform),
+                SyncAction::Unlink { item_id, platform } => (4, *item_id, *platform),
+                SyncAction::DeployHook {
+                    item_id, platform, ..
+                } => (5, *item_id, *platform),
+            };
+            if seen.insert(key) {
+                out.push(action);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 单条收回(PRD §4.2):item_id × platform → `Retract` 动作。
+///
+/// **不**做"读 store 找到 src / dest"的事:调用方必须提供已知的目标路径。
+/// 这是事实源唯一约束的本模块版本 —— sync 只产动作,不动 store。
+///
+/// `dest` 由 caller 传(`link::apply` 知道真实目标位置);sync 不会去 FS 上查。
+pub fn retract_item(item_id: u64, platform: PlatformId, dest: camino::Utf8PathBuf) -> SyncAction {
+    SyncAction::Retract {
+        item_id,
+        platform,
+        dest,
+    }
+}
+
+/// 从某平台收回某项目所有(PRD 场景 E)。
+///
+/// 流程:重跑 `compute_for_project` → 把所有 `Create` 翻成 `Retract`(同 dest),
+/// `RenderMcp` 在这里**不**产出(MCP 收回属于"移除 mcpServers 中本工具负责条目",
+/// 那是 `template::retract` 的事,不在本模块产品表面)。
+pub fn retract_all(
+    project: &Project,
+    default_root: &Utf8Path,
+    platform: PlatformId,
+) -> Result<Vec<SyncAction>, CoreError> {
+    let creates = compute_for_project(project, default_root)?;
+    let mut out: Vec<SyncAction> = Vec::new();
+    for action in creates {
+        match action {
+            SyncAction::Create {
+                item_id,
+                dest,
+                platform: p,
+                ..
+            } if p == platform => out.push(SyncAction::Retract {
+                item_id,
+                platform: p,
+                dest,
+            }),
+            // 过滤掉其它平台 / MCP render
+            SyncAction::RenderMcp { platform: p, .. } if p == platform => {
+                // platform 收回 MCP 由 template 模块单独处理(产物不同);本模块产品表面
+                // 不含 MCP retract(PRD §4.2 "收回"= 删除链接 / 移除 mcpServer,后者
+                // 走 Unlink 路径,本函数当前不实现)
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::projection::fingerprint::directory_digest;
+    use crate::projection::ledger::MemoryProjectionLedger;
+    use crate::projection::model::{DeploymentScope, SourceLayer};
+    use crate::projection::planner::{ProjectionActionKind, ProjectionOperation};
+    use crate::projection::source::OverlayRoots;
+    use camino::Utf8PathBuf;
+    use std::fs;
+
+    /// 准备一个临时项目根,带 .agents-manager/{skills,rules,mcp/servers,agents}
+    /// 全部各 1 条;并返回 `default_root`(同 tmpdir 父目录,但不带 .agents-manager)。
+    fn make_project_with_default() -> (tempfile::TempDir, Utf8PathBuf, Utf8PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+
+        let default = root.join("global");
+        fs::create_dir_all(default.join("skills/foo")).unwrap();
+        fs::write(default.join("skills/foo/SKILL.md"), "SKILL").unwrap();
+        fs::create_dir_all(default.join("rules")).unwrap();
+        fs::write(default.join("rules/r-one.mdc"), "R1").unwrap();
+        fs::write(default.join("mcp.json"), r#"{"mcpServers":{}}"#).unwrap();
+        fs::create_dir_all(default.join("agents")).unwrap();
+        fs::write(default.join("agents/reviewer.md"), "AGENT").unwrap();
+        fs::create_dir_all(default.join("commands")).unwrap();
+        fs::write(default.join("commands/gitea-ops.md"), "CMD").unwrap();
+
+        // 项目仓根(无 `.agents-manager/` 时 scan 回落到 default_root 合并)
+        (tmp, default, root.join("proj"))
+    }
+
+    fn make_project() -> Project {
+        Project {
+            id: 42,
+            name: "demo".into(),
+            root_path: Utf8PathBuf::from("/tmp/nonexistent"),
+            registered_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn compute_for_project_emits_13_actions_for_1_skill_1_rule_1_mcp_1_agent() {
+        let (_tmp, default, project_root) = make_project_with_default();
+        let project = Project {
+            id: 7,
+            name: "demo".into(),
+            root_path: project_root,
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = compute_for_project(&project, &default).unwrap();
+
+        // 1 skill × 4 + 1 rule × 3(Cursor/Claude/Hermes) + 1 mcp × 4(RenderMcp)
+        //   + 1 agent × 3(无 Hermes) + 1 command × 2(Cursor/Claude)
+        // → 4 + 3 + 4 + 3 + 2 = 16
+        let creates: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, SyncAction::Create { .. }))
+            .collect();
+        let renders: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, SyncAction::RenderMcp { .. }))
+            .collect();
+        assert_eq!(
+            creates.len(),
+            12,
+            "skill 4 + rule 3 + agent 3 + command 2 = 12"
+        );
+        assert_eq!(renders.len(), 4, "mcp 4 platforms = 4 RenderMcp");
+        assert_eq!(actions.len(), 16);
+    }
+
+    #[test]
+    fn compatibility_plan_preserves_three_layer_source_and_reports_foreign_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let global = root.join("global");
+        let workspace = root.join("workspace");
+        let repo = root.join("repo");
+        fs::create_dir_all(global.join("skills/global-review")).unwrap();
+        fs::write(global.join("skills/global-review/SKILL.md"), "global").unwrap();
+        fs::create_dir_all(workspace.join("skills/review")).unwrap();
+        fs::write(workspace.join("skills/review/SKILL.md"), "workspace").unwrap();
+        fs::create_dir_all(repo.join(".agents-manager/skills/review")).unwrap();
+        fs::write(repo.join(".agents-manager/skills/review/SKILL.md"), "project").unwrap();
+        fs::create_dir_all(repo.join(".agents/skills/review")).unwrap();
+        fs::write(repo.join(".agents/skills/review/SKILL.md"), "foreign").unwrap();
+        let roots = CompatibilityProjectionRoots {
+            overlay: OverlayRoots {
+                global,
+                workspace: Some(workspace),
+                project: repo.join(".agents-manager"),
+            },
+            scope_key: "project:/fixture".to_owned(),
+            scope: DeploymentScope::Project,
+            deploy_base: repo.clone(),
+        };
+        let ledger = MemoryProjectionLedger::default();
+        let before = directory_digest(&root).unwrap();
+
+        let plan = build_compatibility_plan(
+            &roots,
+            ProjectionOperation::Sync,
+            &crate::projection::planner::PlannerContext::new(&ledger),
+        )
+        .unwrap();
+
+        let shared_target = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action
+                    .target
+                    .as_ref()
+                    .is_some_and(|target| target.path == repo.join(".agents/skills/review"))
+            })
+            .unwrap();
+        assert!(matches!(
+            shared_target.kind,
+            ProjectionActionKind::ReportOnly
+        ));
+        assert_eq!(shared_target.state.as_deref(), Some("foreign"));
+        assert_eq!(shared_target.members[0].source.layer, SourceLayer::Project);
+        assert_eq!(directory_digest(&root).unwrap(), before);
+    }
+
+    #[test]
+    fn asset_dest_for_directory_agent_uses_dir_dest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = Utf8PathBuf::from_path_buf(tmp.path().join("reviewer")).unwrap();
+        std::fs::create_dir_all(&src).unwrap();
+        let dest = asset_dest_for(PlatformId::Cursor, AssetKind::Agent, "reviewer", &src).unwrap();
+        assert!(dest.as_str().ends_with(".cursor/agents/reviewer"));
+        assert!(!dest.as_str().ends_with(".md"));
+    }
+
+    #[test]
+    fn asset_dest_for_file_agent_preserves_extension() {
+        let src = Utf8Path::new("/tmp/agents/reviewer.yaml");
+        let dest = asset_dest_for(PlatformId::Codex, AssetKind::Agent, "reviewer", src).unwrap();
+        assert!(dest.as_str().ends_with(".codex/subagents/reviewer.yaml"));
+    }
+
+    #[test]
+    fn compute_for_project_project_overrides_default_same_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let repo = default.join("myproj");
+        let project_asset = repo.join(".agents-manager");
+        fs::create_dir_all(default.join("skills/foo")).unwrap();
+        fs::write(default.join("skills/foo/SKILL.md"), "DEFAULT").unwrap();
+        fs::create_dir_all(project_asset.join("skills/foo")).unwrap();
+        fs::write(project_asset.join("skills/foo/SKILL.md"), "PROJECT").unwrap();
+
+        let project = Project {
+            id: 11,
+            name: "myproj".into(),
+            root_path: repo.clone(),
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = compute_for_project(&project, &default).unwrap();
+        let creates: Vec<_> = actions
+            .iter()
+            .filter_map(|a| match a {
+                SyncAction::Create { dest, .. } => Some(dest.as_str().to_string()),
+                _ => None,
+            })
+            .collect();
+        // 4 platforms × 1 skill = 4 Create
+        assert_eq!(creates.len(), 4);
+        // dest 路径**不**含 src 信息 — 但因为项目覆盖了默认,我们验证源清单是项目版
+        // (行为由 source::scan_with_override 单测覆盖,这里只验证 emit 数量)
+    }
+
+    #[test]
+    fn compute_for_project_create_dest_under_repo_root() {
+        let _env_guard = crate::test_env::EnvGuard::unset("HERMES_SKILLS_DIR");
+
+        let (_tmp, default, repo) = make_project_with_default();
+        let project = Project {
+            id: 1,
+            name: "p".into(),
+            root_path: repo.clone(),
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = compute_for_project(&project, &default).unwrap();
+        for a in &actions {
+            if let SyncAction::Create { dest, platform, .. } = a {
+                if *platform == PlatformId::Hermes && dest.as_str().contains(".hermes/skills/") {
+                    continue;
+                }
+                assert!(
+                    dest.starts_with(&repo),
+                    "dest {dest} 应在项目根 {repo} 下(非 $HOME；Hermes skills 例外)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compute_for_project_skill_dest_is_directory() {
+        let (_tmp, default, project_root) = make_project_with_default();
+        let project = Project {
+            id: 1,
+            name: "p".into(),
+            root_path: project_root,
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = compute_for_project(&project, &default).unwrap();
+        let skill_creates: Vec<_> = actions
+            .iter()
+            .filter_map(|a| match a {
+                SyncAction::Create { dest, .. } if dest.as_str().ends_with("skills/foo") => {
+                    Some(dest.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(skill_creates.len(), 4, "skill foo 4 平台各 1 条 Create");
+    }
+
+    #[test]
+    fn compute_for_project_rule_uses_mdc_extension() {
+        let (_tmp, default, project_root) = make_project_with_default();
+        let project = Project {
+            id: 1,
+            name: "p".into(),
+            root_path: project_root,
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = compute_for_project(&project, &default).unwrap();
+        let rule_creates: Vec<_> = actions
+            .iter()
+            .filter_map(|a| match a {
+                SyncAction::Create { dest, .. } if dest.as_str().ends_with("rules/r-one.mdc") => {
+                    Some(dest.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        // Cursor + Claude + Hermes(项目 `.cursor/rules`)；Codex 不消费 rule
+        assert_eq!(rule_creates.len(), 3);
+    }
+
+    #[test]
+    fn compute_for_project_mcp_emits_render_mcp_not_create() {
+        let (_tmp, default, project_root) = make_project_with_default();
+        let project = Project {
+            id: 99,
+            name: "p".into(),
+            root_path: project_root,
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = compute_for_project(&project, &default).unwrap();
+        let renders: Vec<_> = actions
+            .iter()
+            .filter_map(|a| match a {
+                SyncAction::RenderMcp {
+                    project_id,
+                    platform,
+                } => Some((*project_id, *platform)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(renders.len(), 4);
+        assert!(renders.iter().all(|(pid, _)| *pid == 99));
+        // 4 platforms 全在
+        let plats: std::collections::HashSet<_> = renders.iter().map(|(_, p)| *p).collect();
+        assert_eq!(plats.len(), 4);
+        assert!(plats.contains(&PlatformId::Cursor));
+        assert!(plats.contains(&PlatformId::Codex));
+        assert!(plats.contains(&PlatformId::Claude));
+        assert!(plats.contains(&PlatformId::Hermes));
+    }
+
+    #[test]
+    fn compute_global_2_projects_each_1_skill_yields_8_actions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let default = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
+        let p1_repo = default.join("p1");
+        let p2_repo = default.join("p2");
+        let p1_asset = p1_repo.join(".agents-manager");
+        let p2_asset = p2_repo.join(".agents-manager");
+        fs::create_dir_all(p1_asset.join("skills/shared")).unwrap();
+        fs::write(p1_asset.join("skills/shared/SKILL.md"), "FROM-P1").unwrap();
+        fs::create_dir_all(p2_asset.join("skills/shared")).unwrap();
+        fs::write(p2_asset.join("skills/shared/SKILL.md"), "FROM-P2").unwrap();
+
+        let p1 = Project {
+            id: 1,
+            name: "p1".into(),
+            root_path: p1_repo,
+            registered_at: chrono::Utc::now(),
+        };
+        let p2 = Project {
+            id: 2,
+            name: "p2".into(),
+            root_path: p2_repo,
+            registered_at: chrono::Utc::now(),
+        };
+
+        let actions = compute_global(&[p1, p2], &default).unwrap();
+        let creates: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, SyncAction::Create { .. }))
+            .collect();
+        // 每个项目 1 skill × 4 platforms = 4;两个项目 = 8。
+        // 即便 skill name 相同(都是 "shared"),item_id 因 project_id 不同而不冲突。
+        assert_eq!(creates.len(), 8, "2 projects × 1 skill × 4 platforms = 8");
+
+        // 两个不同 item_id(不同 project)
+        let item_ids: std::collections::HashSet<u64> = creates
+            .iter()
+            .filter_map(|a| match a {
+                SyncAction::Create { item_id, .. } => Some(*item_id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(item_ids.len(), 2, "两个项目对应两个不同 item_id");
+    }
+
+    #[test]
+    fn compute_global_dedupes_when_two_projects_share_same_item_id() {
+        // 同 project_id(罕见,理论可能),item_id 完全相同 → 去重
+        // 模拟:用一个 project 跑两次
+        let (_tmp, default, project_root) = make_project_with_default();
+        let project = Project {
+            id: 1,
+            name: "p".into(),
+            root_path: project_root,
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = compute_global(&[project.clone(), project.clone()], &default).unwrap();
+        // 重复跑同 project,所有 (item_id, platform) 都应被去重 → 数量等于单次
+        let single = compute_for_project(&project, &default).unwrap();
+        assert_eq!(actions.len(), single.len());
+    }
+
+    #[test]
+    fn retract_item_produces_retract_action() {
+        let dest = Utf8PathBuf::from(".cursor/skills/foo");
+        let action = retract_item(123, PlatformId::Cursor, dest.clone());
+        assert!(action.is_retract());
+        assert_eq!(action.platform(), PlatformId::Cursor);
+        assert_eq!(action.dest(), Some(&dest));
+        if let SyncAction::Retract { item_id, .. } = action {
+            assert_eq!(item_id, 123);
+        } else {
+            panic!("expected Retract");
+        }
+    }
+
+    #[test]
+    fn retract_all_converts_creates_to_retracts() {
+        let (_tmp, default, project_root) = make_project_with_default();
+        let project = Project {
+            id: 5,
+            name: "p".into(),
+            root_path: project_root,
+            registered_at: chrono::Utc::now(),
+        };
+        let actions = retract_all(&project, &default, PlatformId::Cursor).unwrap();
+        assert!(!actions.is_empty());
+        for a in &actions {
+            assert!(a.is_retract(), "all should be Retract: {a:?}");
+            assert_eq!(a.platform(), PlatformId::Cursor);
+        }
+        // 每条 Create 都翻成 Retract(skill 1 + rule 1 + agent 1 + command 1 = 4 on Cursor)
+        assert_eq!(actions.len(), 4);
+    }
+
+    #[test]
+    fn item_id_is_stable_across_calls() {
+        let id1 = item_id_for(7, AssetKind::Skill, "foo");
+        let id2 = item_id_for(7, AssetKind::Skill, "foo");
+        let id3 = item_id_for(7, AssetKind::Rule, "foo");
+        let id4 = item_id_for(8, AssetKind::Skill, "foo");
+        assert_eq!(id1, id2, "同输入同输出");
+        assert_ne!(id1, id3, "kind 不同 item_id 不同");
+        assert_ne!(id1, id4, "project_id 不同 item_id 不同");
+    }
+
+    // silence unused warnings on the helper used in the comment-only test
+    #[allow(dead_code)]
+    fn _unused() {
+        let _ = make_project();
+    }
+}
