@@ -1,11 +1,11 @@
 [package]
-name = "ai-config-core"
+name = "agent-manager-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "ai-config 业务逻辑核心:model / source / platform / link / template / secrets / sync / error"
+description = "agent-manager 业务逻辑核心:model / source / platform / link / template / secrets / sync / error"
 
 [dependencies]
 serde.workspace = true

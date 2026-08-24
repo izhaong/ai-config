@@ -229,7 +229,7 @@ pub fn compute_for_project(
     compute_actions(project, default_root, &asset_root, &deploy_base)
 }
 
-/// 显式指定资产根与下发根（workspace 子仓继承父仓 `.ai-config` 时使用）。
+/// 显式指定资产根与下发根（workspace 子仓继承父仓 `.agent-manager` 时使用）。
 pub fn compute_for_sync_roots(
     project: &Project,
     roots: &paths::SyncRoots,
@@ -468,8 +468,8 @@ mod tests {
     use camino::Utf8PathBuf;
     use std::fs;
 
-    /// 准备一个临时项目根,带 .ai-config/{skills,rules,mcp/servers,agents}
-    /// 全部各 1 条;并返回 `default_root`(同 tmpdir 父目录,但不带 .ai-config)。
+    /// 准备一个临时项目根,带 .agent-manager/{skills,rules,mcp/servers,agents}
+    /// 全部各 1 条;并返回 `default_root`(同 tmpdir 父目录,但不带 .agent-manager)。
     fn make_project_with_default() -> (tempfile::TempDir, Utf8PathBuf, Utf8PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
@@ -485,7 +485,7 @@ mod tests {
         fs::create_dir_all(default.join("commands")).unwrap();
         fs::write(default.join("commands/gitea-ops.md"), "CMD").unwrap();
 
-        // 项目仓根(无 `.ai-config/` 时 scan 回落到 default_root 合并)
+        // 项目仓根(无 `.agent-manager/` 时 scan 回落到 default_root 合并)
         (tmp, default, root.join("proj"))
     }
 
@@ -540,15 +540,15 @@ mod tests {
         fs::write(global.join("skills/global-review/SKILL.md"), "global").unwrap();
         fs::create_dir_all(workspace.join("skills/review")).unwrap();
         fs::write(workspace.join("skills/review/SKILL.md"), "workspace").unwrap();
-        fs::create_dir_all(repo.join(".ai-config/skills/review")).unwrap();
-        fs::write(repo.join(".ai-config/skills/review/SKILL.md"), "project").unwrap();
+        fs::create_dir_all(repo.join(".agent-manager/skills/review")).unwrap();
+        fs::write(repo.join(".agent-manager/skills/review/SKILL.md"), "project").unwrap();
         fs::create_dir_all(repo.join(".agents/skills/review")).unwrap();
         fs::write(repo.join(".agents/skills/review/SKILL.md"), "foreign").unwrap();
         let roots = CompatibilityProjectionRoots {
             overlay: OverlayRoots {
                 global,
                 workspace: Some(workspace),
-                project: repo.join(".ai-config"),
+                project: repo.join(".agent-manager"),
             },
             scope_key: "project:/fixture".to_owned(),
             scope: DeploymentScope::Project,
@@ -605,7 +605,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let default = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         let repo = default.join("myproj");
-        let project_asset = repo.join(".ai-config");
+        let project_asset = repo.join(".agent-manager");
         fs::create_dir_all(default.join("skills/foo")).unwrap();
         fs::write(default.join("skills/foo/SKILL.md"), "DEFAULT").unwrap();
         fs::create_dir_all(project_asset.join("skills/foo")).unwrap();
@@ -738,8 +738,8 @@ mod tests {
         let default = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         let p1_repo = default.join("p1");
         let p2_repo = default.join("p2");
-        let p1_asset = p1_repo.join(".ai-config");
-        let p2_asset = p2_repo.join(".ai-config");
+        let p1_asset = p1_repo.join(".agent-manager");
+        let p2_asset = p2_repo.join(".agent-manager");
         fs::create_dir_all(p1_asset.join("skills/shared")).unwrap();
         fs::write(p1_asset.join("skills/shared/SKILL.md"), "FROM-P1").unwrap();
         fs::create_dir_all(p2_asset.join("skills/shared")).unwrap();

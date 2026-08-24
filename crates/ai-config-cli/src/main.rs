@@ -1,4 +1,4 @@
-//! ai-config 命令行入口(对齐 plan §2.3.1)。
+//! agent-manager 命令行入口(对齐 plan §2.3.1)。
 //!
 //! Phase 1 实装 11 个顶层子命令:install / uninstall / sync / status / list / show /
 //! doctor / secrets / skill / rule / mcp / daemon / gui / completion。
@@ -27,10 +27,10 @@ mod serve;
 
 use output::OutputMode;
 
-/// ai-config — 写一套 skills / rules / mcp / agents,在 4 个 AI 编码 IDE 同步分发
+/// agent-manager — 写一套 skills / rules / mcp / agents,在 4 个 AI 编码 IDE 同步分发
 /// (PRD v1.0 一句话定位)
 #[derive(Debug, Parser)]
-#[command(name = "ai-config", version, about, long_about = None)]
+#[command(name = "agent-manager", version, about, long_about = None)]
 struct Cli {
     /// 人类可读 / 机器可解析切换(PRD §9.1)
     #[arg(long, global = true)]
@@ -239,7 +239,7 @@ enum MigrateCmd {
     Plan,
     /// Adopt explicitly selected equivalent targets from a reviewed migration plan.
     SourceFirst {
-        /// JSON file emitted by `ai-config migrate plan --json`.
+        /// JSON file emitted by `agent-manager migrate plan --json`.
         #[arg(long)]
         plan: String,
         /// Stable action ID to adopt. May be repeated; only AdoptEquivalent actions are valid.
@@ -251,7 +251,7 @@ enum MigrateCmd {
     },
     /// Restore a completed explicit import when its canonical result has not drifted.
     Rollback {
-        /// Transaction ID returned by `ai-config import --apply`.
+        /// Transaction ID returned by `agent-manager import --apply`.
         transaction_id: String,
     },
 }
@@ -274,7 +274,7 @@ fn main() -> ExitCode {
         return match serve::run(default_root) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
-                eprintln!("ai-config serve: {e}");
+                eprintln!("agent-manager serve: {e}");
                 ExitCode::from(5)
             }
         };
@@ -284,7 +284,7 @@ fn main() -> ExitCode {
 
     if !mode.is_quiet() && !mode.is_json() {
         eprintln!(
-            "ai-config v{} (Phase 1 业务子命令:install/uninstall/sync/status/list/show/doctor/secrets/skill/rule/mcp/daemon)",
+            "agent-manager v{} (Phase 1 业务子命令:install/uninstall/sync/status/list/show/doctor/secrets/skill/rule/mcp/daemon)",
             env!("CARGO_PKG_VERSION")
         );
     }
@@ -453,7 +453,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// 解析资产根目录:优先级 `--root` > `AI_CONFIG_ROOT` > `~/.ai-config`。
+/// 解析资产根目录:优先级 `--root` > `AI_CONFIG_ROOT` > `~/.agent-manager`。
 /// 命令入口只解析路径；初始化/播种必须由显式写操作负责。
 fn resolve_root(flag: Option<&str>) -> Utf8PathBuf {
     let raw = match flag {
@@ -468,7 +468,7 @@ fn resolve_root(flag: Option<&str>) -> Utf8PathBuf {
 
 fn emit_completion<W: Write>(shell: clap_complete::Shell, writer: &mut W) -> io::Result<()> {
     let mut generated = Vec::new();
-    clap_complete::generate(shell, &mut Cli::command(), "ai-config", &mut generated);
+    clap_complete::generate(shell, &mut Cli::command(), "agent-manager", &mut generated);
     match writer.write_all(&generated) {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
         result => result,

@@ -1,7 +1,7 @@
 import type { Platform, PlatformAssetEntry } from "../types";
 import { hasSourceEntry, isSourcePlatform } from "../types";
 
-/** 详情应从 ai-config 源读取（否则走平台路径只读预览） */
+/** 详情应从 agent-manager 源读取（否则走平台路径只读预览） */
 export function shouldLoadFromSource(
   entry: PlatformAssetEntry,
   activePlatform: Platform,

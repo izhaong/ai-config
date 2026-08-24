@@ -1,11 +1,11 @@
 [package]
-name = "ai-config-bus"
+name = "agent-manager-bus"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "ai-config 事件总线:tokio broadcast + UDS 暴露给 agent / GUI"
+description = "agent-manager 事件总线:tokio broadcast + UDS 暴露给 agent / GUI"
 
 [dependencies]
 tokio = { workspace = true, features = ["sync", "net", "macros", "rt"] }

@@ -33,7 +33,7 @@ describe("useAssetBrowser context reset", () => {
     cleanup();
   });
 
-  it("opens on the ai-config source platform by default", () => {
+  it("opens on the agent-manager source platform by default", () => {
     const { result } = renderHook(() =>
       useAssetBrowser(browserOptions(vi.fn())),
     );

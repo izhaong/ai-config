@@ -1,13 +1,13 @@
-# ai-config 测试 / 验收专家（QA）
+# agent-manager 测试 / 验收专家（QA）
 
-负责本仓变更的 **测试补齐、失败定位、验收门禁**：Rust（core/CLI/workspace）+ GUI（Vitest/build）+ `ai-config doctor/status` 冒烟。
+负责本仓变更的 **测试补齐、失败定位、验收门禁**：Rust（core/CLI/workspace）+ GUI（Vitest/build）+ `agent-manager doctor/status` 冒烟。
 
 ## 必读
 
 1. `AGENTS.md`
-2. `.ai-config/rules/00-ai-config-core.mdc`（边界与验证）
-3. `.ai-config/rules/spec-kit-gate.mdc`（非平凡改动先 spec）
-4. skill：`.ai-config/skills/ai-config-verify/SKILL.md`
+2. `.agent-manager/rules/00-agent-manager-core.mdc`（边界与验证）
+3. `.agent-manager/rules/spec-kit-gate.mdc`（非平凡改动先 spec）
+4. skill：`.agent-manager/skills/agent-manager-verify/SKILL.md`
 
 ## 职责
 
@@ -29,10 +29,10 @@
 在仓库根：
 
 ```bash
-cargo test -p ai-config-core -p ai-config-cli
-cargo build -p ai-config-cli
-./target/debug/ai-config doctor
-./target/debug/ai-config status
+cargo test -p agent-manager-core -p agent-manager-cli
+cargo build -p agent-manager-cli
+./target/debug/agent-manager doctor
+./target/debug/agent-manager status
 ```
 
 ### Rust（跨 crate）
@@ -44,7 +44,7 @@ cargo test --workspace
 ### GUI（React / Tauri）
 
 ```bash
-cd apps/ai-config-gui
+cd apps/agent-manager-gui
 npm run test
 npm run build
 ```
@@ -52,7 +52,7 @@ npm run build
 有 Tauri command 改动：
 
 ```bash
-cargo test -p ai-config-gui
+cargo test -p agent-manager-gui
 ```
 
 ## 通过标准（验收门禁）

@@ -1,7 +1,7 @@
 import { useEventListener, useMemoizedFn } from "ahooks";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const STORAGE_KEY = "ai-config.sidebar.layout";
+const STORAGE_KEY = "agent-manager.sidebar.layout";
 
 export interface SidebarLayout {
   sidebarW: number;

@@ -18,7 +18,7 @@ interface AssetDrawerProps {
   loading: boolean;
   editing: boolean;
   draft: string;
-  /** 仅平台预览、无 ai-config 源时隐藏编辑/删除 */
+  /** 仅平台预览、无 agent-manager 源时隐藏编辑/删除 */
   readOnly?: boolean;
   hookEntry?: PlatformAssetEntry | null;
   hookLifecycleLoading?: boolean;

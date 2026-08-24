@@ -1,4 +1,4 @@
-//! ai-config 本机状态记录(SQLite)。
+//! agent-manager 本机状态记录(SQLite)。
 //!
 //! ## 模块边界(对齐 ARCHITECTURE §3 / PRD §8.2 #2 事实源唯一)
 //!
@@ -8,9 +8,9 @@
 //!
 //! ## 默认路径(PRD §6.1 本机状态)
 //!
-//! - macOS:`~/Library/Application Support/ai-config/store.sqlite`
-//! - Linux:`~/.config/ai-config/store.sqlite`(`$XDG_CONFIG_HOME` 优先)
-//! - Windows:`%APPDATA%\ai-config\store.sqlite`
+//! - macOS:`~/Library/Application Support/agent-manager/store.sqlite`
+//! - Linux:`~/.config/agent-manager/store.sqlite`(`$XDG_CONFIG_HOME` 优先)
+//! - Windows:`%APPDATA%\agent-manager\store.sqlite`
 //!
 //! 走 `dirs` crate,跨平台一致;测试用 `Store::open_at(...)` 注入临时路径。
 
@@ -78,7 +78,7 @@ impl Store {
             })?,
         };
         store.migrate()?;
-        tracing::info!(path = %store.path, "ai-config store 已就绪");
+        tracing::info!(path = %store.path, "agent-manager store 已就绪");
         Ok(store)
     }
 
@@ -194,18 +194,18 @@ fn immutable_sqlite_uri(path: &Path) -> Result<String, StoreError> {
 
 // ── 默认路径 ─────────────────────────────────────────────────────
 
-/// `$XDG_DATA_HOME/ai-config/store.sqlite` 或 OS 约定,fallback 到 `~/.ai-config/store.sqlite`。
+/// `$XDG_DATA_HOME/agent-manager/store.sqlite` 或 OS 约定,fallback 到 `~/.agent-manager/store.sqlite`。
 ///
 /// 优先级:
-/// 1. `$XDG_DATA_HOME/ai-config/store.sqlite`(Linux)
+/// 1. `$XDG_DATA_HOME/agent-manager/store.sqlite`(Linux)
 /// 2. `dirs::data_dir()`(OS 默认:macOS=`~/Library/Application Support`,Win=`%APPDATA%`)
-/// 3. `~/.ai-config/store.sqlite`(sandbox / chroot fallback)
+/// 3. `~/.agent-manager/store.sqlite`(sandbox / chroot fallback)
 pub fn default_path() -> Result<PathBuf, StoreError> {
     if let Some(base) = dirs::data_dir() {
-        return Ok(base.join("ai-config").join("store.sqlite"));
+        return Ok(base.join("agent-manager").join("store.sqlite"));
     }
     let home = dirs::home_dir().ok_or(StoreError::DataDirUnknown)?;
-    Ok(home.join(".ai-config").join("store.sqlite"))
+    Ok(home.join(".agent-manager").join("store.sqlite"))
 }
 
 // ── 本地错误 ─────────────────────────────────────────────────────
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn default_path_is_under_data_dir_or_home() {
         let p = default_path().expect("default_path");
-        assert!(p.ends_with("ai-config/store.sqlite") || p.ends_with("ai-config\\store.sqlite"));
+        assert!(p.ends_with("agent-manager/store.sqlite") || p.ends_with("agent-manager\\store.sqlite"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-config-bus"
+name = "agent-manager-bus"
 version = "0.4.1"
 dependencies = [
  "anyhow",
@@ -43,11 +43,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-config-cli"
+name = "agent-manager-cli"
 version = "0.4.1"
 dependencies = [
- "ai-config-core",
- "ai-config-store",
+ "agent-manager-core",
+ "agent-manager-store",
  "anyhow",
  "assert_cmd",
  "camino",
@@ -68,7 +68,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-config-core"
+name = "agent-manager-core"
 version = "0.4.1"
 dependencies = [
  "anyhow",
@@ -92,13 +92,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-config-daemon"
+name = "agent-manager-daemon"
 version = "0.4.1"
 dependencies = [
- "ai-config-bus",
- "ai-config-core",
- "ai-config-store",
- "ai-config-watcher",
+ "agent-manager-bus",
+ "agent-manager-core",
+ "agent-manager-store",
+ "agent-manager-watcher",
  "anyhow",
  "chrono",
  "clap",
@@ -111,12 +111,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-config-gui"
+name = "agent-manager-gui"
 version = "0.4.1"
 dependencies = [
- "ai-config-core",
- "ai-config-store",
- "ai-config-watcher",
+ "agent-manager-core",
+ "agent-manager-store",
+ "agent-manager-watcher",
  "camino",
  "reqwest 0.12.28",
  "serde",
@@ -134,19 +134,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-config-gui-bin"
+name = "agent-manager-gui-bin"
 version = "0.4.1"
 dependencies = [
- "ai-config-gui",
+ "agent-manager-gui",
  "tauri",
  "tauri-build",
 ]
 
 [[package]]
-name = "ai-config-store"
+name = "agent-manager-store"
 version = "0.4.1"
 dependencies = [
- "ai-config-core",
+ "agent-manager-core",
  "anyhow",
  "camino",
  "chrono",
@@ -161,7 +161,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ai-config-watcher"
+name = "agent-manager-watcher"
 version = "0.4.1"
 dependencies = [
  "anyhow",

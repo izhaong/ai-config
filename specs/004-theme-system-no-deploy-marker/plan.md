@@ -15,5 +15,5 @@
 ## Todos
 
 - [x] T001 GUI 主题默认 system（验证：theme.test + build）
-- [x] T002 materialize 停止写 marker（验证：cargo test -p ai-config-core）
-- [x] T003 删除仓内已有 `.ai-config-deploy.json`（验证：grep 无新增）
+- [x] T002 materialize 停止写 marker（验证：cargo test -p agent-manager-core）
+- [x] T003 删除仓内已有 `.agent-manager-deploy.json`（验证：grep 无新增）

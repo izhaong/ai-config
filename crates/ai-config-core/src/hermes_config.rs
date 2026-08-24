@@ -49,7 +49,7 @@ fn read_config_yaml(path: &Utf8Path) -> Result<Option<YamlValue>, CoreError> {
                 yaml_err(
                     path,
                     format!("config.yaml 解析失败: {e}"),
-                    "修复 YAML 或从 config.yaml.ai-config.bak.* 恢复",
+                    "修复 YAML 或从 config.yaml.agent-manager.bak.* 恢复",
                 )
             })?;
             Ok(Some(v))
@@ -75,7 +75,7 @@ fn backup_config_if_exists(path: &Utf8Path) -> Result<(), CoreError> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let bak = path.with_extension(format!("yaml.ai-config.bak.{ts}"));
+    let bak = path.with_extension(format!("yaml.agent-manager.bak.{ts}"));
     std::fs::copy(path.as_std_path(), bak.as_std_path()).map_err(CoreError::Io)?;
     Ok(())
 }
@@ -344,7 +344,7 @@ pub fn migrate_legacy_hermes_mcp_json(home: &Utf8Path) -> Result<HermesMigrateRe
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let bak = legacy.with_extension(format!("json.ai-config.bak.{ts}"));
+        let bak = legacy.with_extension(format!("json.agent-manager.bak.{ts}"));
         std::fs::rename(legacy.as_std_path(), bak.as_std_path()).map_err(CoreError::Io)?;
         report.legacy_renamed = Some(bak.to_string());
     }

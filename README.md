@@ -1,13 +1,13 @@
-# ai-config
+# agent-manager
 
-[![CI](https://img.shields.io/github/actions/workflow/status/izhaong/ai-config/ci.yml?branch=develop&label=CI)](https://github.com/izhaong/ai-config/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/izhaong/ai-config?label=release)](https://github.com/izhaong/ai-config/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/izhaong/agent-manager/ci.yml?branch=develop&label=CI)](https://github.com/izhaong/agent-manager/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/izhaong/agent-manager?label=release)](https://github.com/izhaong/agent-manager/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.78%2B-orange.svg)](https://www.rust-lang.org/)
 
-**Unified skills, rules, agents, and MCP management for multi-agent IDEs** — one user asset tree (`~/.ai-config/`), synced to **Cursor**, **Codex**, **Claude Code**, and **Hermes**.
+**Unified skills, rules, agents, and MCP management for multi-agent IDEs** — one user asset tree (`~/.agent-manager/`), synced to **Cursor**, **Codex**, **Claude Code**, and **Hermes**.
 
-> **中文简介**：在多 Agent IDE 之间统一管理 Skills、Rules、Agents 与 MCP；用户资产存放在 `~/.ai-config/`（含单一明文 `mcp.json`），本仓库只提供 Rust CLI / Tauri GUI 与项目模板，不包含你的私有 skills 内容。
+> **中文简介**：在多 Agent IDE 之间统一管理 Skills、Rules、Agents 与 MCP；用户资产存放在 `~/.agent-manager/`（含单一明文 `mcp.json`），本仓库只提供 Rust CLI / Tauri GUI 与项目模板，不包含你的私有 skills 内容。
 
 ---
 
@@ -25,24 +25,24 @@
 ## Architecture
 
 ```text
-~/.ai-config/                 # user asset root (not in git)
+~/.agent-manager/                 # user asset root (not in git)
 ├── skills/<name>/SKILL.md
 ├── rules/*.mdc
 ├── agents/
 └── mcp.json                  # single plaintext MCP catalog → copied/merged to IDE configs
 
-~/.config/ai-config/
+~/.config/agent-manager/
 └── secrets.env               # secrets only (0600); never commit
 
-ai-config (this repo)
-├── crates/ai-config-core     # sync, templates, platforms
-├── crates/ai-config-cli      # `ai-config` binary
-├── apps/ai-config-gui        # Tauri desktop (optional)
+agent-manager (this repo)
+├── crates/agent-manager-core     # sync, templates, platforms
+├── crates/agent-manager-cli      # `agent-manager` binary
+├── apps/agent-manager-gui        # Tauri desktop (optional)
 ├── templates/project/        # scaffold for new repos
 └── manifests/                # plugin / asset manifests
 ```
 
-Install creates symlinks from each IDE’s skill (and rule) paths into `~/.ai-config/`. MCP deploy reads **`~/.ai-config/mcp.json`** and writes the target IDE file (e.g. full copy to Cursor).
+Install creates symlinks from each IDE’s skill (and rule) paths into `~/.agent-manager/`. MCP deploy reads **`~/.agent-manager/mcp.json`** and writes the target IDE file (e.g. full copy to Cursor).
 
 Details: [docs/product/ARCHITECTURE.md](docs/product/ARCHITECTURE.md) · [AGENTS.md](AGENTS.md)
 
@@ -51,35 +51,35 @@ Details: [docs/product/ARCHITECTURE.md](docs/product/ARCHITECTURE.md) · [AGENTS
 ## Quick start
 
 ```bash
-git clone https://github.com/izhaong/ai-config.git
-cd ai-config
+git clone https://github.com/izhaong/agent-manager.git
+cd agent-manager
 
-cargo build -p ai-config-cli --release
-./target/release/ai-config install
+cargo build -p agent-manager-cli --release
+./target/release/agent-manager install
 ```
 
-First run ensures `~/.ai-config/{skills,rules,agents,mcp.json}`. Legacy `~/.ai-config/mcp/servers/` is merged into `mcp.json` when present.
+First run ensures `~/.agent-manager/{skills,rules,agents,mcp.json}`. Legacy `~/.agent-manager/mcp/servers/` is merged into `mcp.json` when present.
 
 **Sync everything once:**
 
 ```bash
-./target/release/ai-config sync
+./target/release/agent-manager sync
 ```
 
 **Deploy MCP to one platform:**
 
 ```bash
-./target/release/ai-config mcp deploy mcp.json cursor
+./target/release/agent-manager mcp deploy mcp.json cursor
 ```
 
 **Optional Hermes skills dir:**
 
 ```bash
 export HERMES_SKILLS_DIR="$HOME/.hermes/skills"
-./target/release/ai-config install
+./target/release/agent-manager install
 ```
 
-Put real API keys in `~/.config/ai-config/secrets.env` (see `templates/project` examples). Never commit secrets.
+Put real API keys in `~/.config/agent-manager/secrets.env` (see `templates/project` examples). Never commit secrets.
 
 ---
 
@@ -103,15 +103,15 @@ Put real API keys in `~/.config/ai-config/secrets.env` (see `templates/project` 
 Global flags: `--json`, `--quiet`, `--root <PATH>` (or `AI_CONFIG_ROOT`).
 
 ```bash
-ai-config --help
-ai-config mcp --help
+agent-manager --help
+agent-manager mcp --help
 ```
 
 ---
 
 ## Relationship to zh-cloud
 
-[zh-cloud](https://github.com/izhaong/zh-cloud) is a larger monorepo; **ai-config** can live beside it as an optional submodule or standalone clone. This repository is **independently open-sourced** — you do not need zh-cloud to use the CLI. Internal Gitea development may continue in parallel; see **Remotes** below.
+[zh-cloud](https://github.com/izhaong/zh-cloud) is a larger monorepo; **agent-manager** can live beside it as an optional submodule or standalone clone. This repository is **independently open-sourced** — you do not need zh-cloud to use the CLI. Internal Gitea development may continue in parallel; see **Remotes** below.
 
 ---
 
@@ -119,14 +119,14 @@ ai-config mcp --help
 
 ```bash
 cargo fmt
-cargo clippy -p ai-config-core -p ai-config-cli -p ai-config-store -p ai-config-daemon -p ai-config-bus -p ai-config-watcher -- -D warnings
-cargo test -p ai-config-core -p ai-config-cli -p ai-config-store
+cargo clippy -p agent-manager-core -p agent-manager-cli -p agent-manager-store -p agent-manager-daemon -p agent-manager-bus -p agent-manager-watcher -- -D warnings
+cargo test -p agent-manager-core -p agent-manager-cli -p agent-manager-store
 ```
 
-**GUI (Tauri)** — bilingual UI (中文 / English), language switcher in the top bar; locale files under `apps/ai-config-gui/src/i18n/locales/`. While the app is running, it watches `~/.ai-config/{skills,rules,agents}` and `mcp.json` (plus registered project asset roots) and refreshes the asset list and per-platform link status automatically (~200ms debounce).
+**GUI (Tauri)** — bilingual UI (中文 / English), language switcher in the top bar; locale files under `apps/agent-manager-gui/src/i18n/locales/`. While the app is running, it watches `~/.agent-manager/{skills,rules,agents}` and `mcp.json` (plus registered project asset roots) and refreshes the asset list and per-platform link status automatically (~200ms debounce).
 
 ```bash
-cd apps/ai-config-gui && npm install && npm run tauri:dev
+cd apps/agent-manager-gui && npm install && npm run tauri:dev
 ```
 
 CI runs on **Ubuntu + macOS**; GUI (Tauri) desktop bundles are built on **tagged releases** (`vX.Y.Z`). See [CONTRIBUTING.md](CONTRIBUTING.md#releases-github).
@@ -141,11 +141,11 @@ This project is developed on Gitea and mirrored to GitHub.
 
 | Remote   | URL                                                                   |
 | -------- | --------------------------------------------------------------------- |
-| `origin` | `https://gitea.example.com/your-org/ai-config.git` (primary internal) |
-| `github` | `https://github.com/izhaong/ai-config.git` (public mirror)            |
+| `origin` | `https://gitea.example.com/your-org/agent-manager.git` (primary internal) |
+| `github` | `https://github.com/izhaong/agent-manager.git` (public mirror)            |
 
 ```bash
-git remote add github https://github.com/izhaong/ai-config.git   # once
+git remote add github https://github.com/izhaong/agent-manager.git   # once
 git push -u github develop
 git push github docs/github-open-source   # feature branches as needed
 ```
@@ -162,9 +162,9 @@ git push origin develop && git push github develop
 
 | Issue                     | Action                                    |
 | ------------------------- | ----------------------------------------- |
-| Cursor cannot see a skill | Run `ai-config install`, restart Cursor   |
-| MCP missing env vars      | Fill `secrets.env`, then `ai-config sync` |
-| Empty skill list          | Add folders under `~/.ai-config/skills/`  |
+| Cursor cannot see a skill | Run `agent-manager install`, restart Cursor   |
+| MCP missing env vars      | Fill `secrets.env`, then `agent-manager sync` |
+| Empty skill list          | Add folders under `~/.agent-manager/skills/`  |
 
 ---
 

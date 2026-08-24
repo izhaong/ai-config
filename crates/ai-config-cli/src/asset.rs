@@ -1,4 +1,4 @@
-//! `ai-config skill ...` / `rule ...` / `agent ...` 共享子命令(PRD §5.1 必做)。
+//! `agent-manager skill ...` / `rule ...` / `agent ...` 共享子命令(PRD §5.1 必做)。
 //!
 //! 维度划分(与 §2 / §11.2 一致):
 //! - **skill**:`skills/<name>/SKILL.md`(目录)
@@ -91,7 +91,7 @@ fn run_show(mode: OutputMode, root: &Utf8Path, kind: AssetKind, name: &str) -> E
     };
     let Some(e) = entry else {
         let msg = format!("{} `{name}` 找不到", kind.label());
-        let hint = format!("跑 `ai-config {} list` 看全部", kind.label());
+        let hint = format!("跑 `agent-manager {} list` 看全部", kind.label());
         emit_error_envelope(mode, exit_code::PARTIAL_FAILURE, &msg, Some(&hint));
         return ExitCode::from(exit_code::PARTIAL_FAILURE);
     };
@@ -131,7 +131,7 @@ fn run_reveal(mode: OutputMode, root: &Utf8Path, kind: AssetKind, name: &str) ->
     };
     let Some(e) = entry else {
         let msg = format!("{} `{name}` 找不到", kind.label());
-        let hint = format!("跑 `ai-config {} list` 看全部", kind.label());
+        let hint = format!("跑 `agent-manager {} list` 看全部", kind.label());
         emit_error_envelope(mode, exit_code::PARTIAL_FAILURE, &msg, Some(&hint));
         return ExitCode::from(exit_code::PARTIAL_FAILURE);
     };

@@ -1,10 +1,10 @@
-# ai-config 应用图标
+# agent-manager 应用图标
 
 四色方块 + 同步弧线，对应 Cursor / Codex / Claude / Hermes 四平台分发。
 
 ## 重新生成
 
-在 `apps/ai-config-gui` 目录：
+在 `apps/agent-manager-gui` 目录：
 
 ```bash
 # 源图须为正方形 PNG（建议 1024×1024）

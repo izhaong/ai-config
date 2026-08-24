@@ -3,17 +3,17 @@
 **Feature Branch**: `006-install-project-merge`  
 **Created**: 2026-06-26  
 **Status**: Complete  
-**Input**: Gitea #22 — `AI_CONFIG_ROOT=<repo> ai-config install` 破坏项目 MCP / hooks / 命令
+**Input**: Gitea #22 — `AI_CONFIG_ROOT=<repo> agent-manager install` 破坏项目 MCP / hooks / 命令
 
 ## User Scenarios
 
 ### US1 - 项目 install 不破坏手写配置 (P1)
 
-**Given** 父仓已有 `.cursor/hooks.json`、`.claude/settings.json`（含 `mcpServers`）与完整 MCP 列表，**When** `AI_CONFIG_ROOT=<repo> ai-config install`，**Then** 仅合并 ai-config 托管条目，用户 hooks / MCP / 命令不被整文件覆盖或误删。
+**Given** 父仓已有 `.cursor/hooks.json`、`.claude/settings.json`（含 `mcpServers`）与完整 MCP 列表，**When** `AI_CONFIG_ROOT=<repo> agent-manager install`，**Then** 仅合并 agent-manager 托管条目，用户 hooks / MCP / 命令不被整文件覆盖或误删。
 
 ### US2 - 正确解析项目作用域 (P1)
 
-**Given** `AI_CONFIG_ROOT` 指向仓库根（非 `~/.ai-config`），**When** install，**Then** 资产源 = `<repo>/.ai-config` 合并 `~/.ai-config`，下发目标 = `<repo>/.cursor` 等（非 `$HOME`）。
+**Given** `AI_CONFIG_ROOT` 指向仓库根（非 `~/.agent-manager`），**When** install，**Then** 资产源 = `<repo>/.agent-manager` 合并 `~/.agent-manager`，下发目标 = `<repo>/.cursor` 等（非 `$HOME`）。
 
 ### US3 - Claude 共享 `.cursor/hooks/` (P2)
 
@@ -23,7 +23,7 @@
 
 - **FR-001**: `resolve_sync_roots` 区分全局 / 项目 install 的 repo、asset、global default
 - **FR-002**: `load_context` 使用 `scan_with_override(asset, global)` + 正确 `compute_for_project`
-- **FR-003**: hook merge 仅移除 `managedBy: ai-config` 条目，禁止子串误伤 `.cursor/hooks/`
+- **FR-003**: hook merge 仅移除 `managedBy: agent-manager` 条目，禁止子串误伤 `.cursor/hooks/`
 - **FR-004**: 项目作用域对非托管 skill/rule/command/agent 目标文件跳过覆盖
 - **FR-005**: `merge_claude_settings` 显式保留顶层 `mcpServers`
 - **FR-006**: 项目 Claude hook 命令路径检测共享 `.cursor/hooks/`
@@ -31,4 +31,4 @@
 ## Success Criteria
 
 - **SC-001**: 单测覆盖 hook 误删防护、settings mcpServers 保留、项目根解析
-- **SC-002**: `cargo test -p ai-config-core -p ai-config-cli` 通过
+- **SC-002**: `cargo test -p agent-manager-core -p agent-manager-cli` 通过

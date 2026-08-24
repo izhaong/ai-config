@@ -114,7 +114,7 @@ mod tests {
     fn source_delete_preserves_unmanaged_platform_skill_directory() {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = root.join(".ai-config");
+        let asset_root = root.join(".agent-manager");
         let source = asset_root.join("skills/demo/SKILL.md");
         fs::create_dir_all(source.parent().unwrap().as_std_path()).unwrap();
         fs::write(
@@ -147,7 +147,7 @@ mod tests {
     fn source_delete_preserves_platform_skill_symlink_to_foreign_source() {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = root.join(".ai-config");
+        let asset_root = root.join(".agent-manager");
         let source = asset_root.join("skills/demo/SKILL.md");
         fs::create_dir_all(source.parent().unwrap().as_std_path()).unwrap();
         fs::write(
@@ -187,7 +187,7 @@ mod tests {
     fn source_delete_preserves_same_name_platform_mcp_without_ownership_record() {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = root.join(".ai-config");
+        let asset_root = root.join(".agent-manager");
         fs::create_dir_all(asset_root.as_std_path()).unwrap();
         fs::write(
             asset_root.join("mcp.json").as_std_path(),

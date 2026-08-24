@@ -1,4 +1,4 @@
-//! `ai-config serve` — MCP stdio 服务器，供 IDE Agent 外部控制资产。
+//! `agent-manager serve` — MCP stdio 服务器，供 IDE Agent 外部控制资产。
 
 use std::sync::Arc;
 
@@ -148,7 +148,7 @@ impl AiConfigMcpServer {
         ))
     }
 
-    #[tool(description = "保存单条资产正文到 ai-config 源目录")]
+    #[tool(description = "保存单条资产正文到 agent-manager 源目录")]
     async fn ai_config_save(
         &self,
         Parameters(params): Parameters<SaveParam>,
@@ -206,14 +206,14 @@ impl AiConfigMcpServer {
 
 #[tool_handler(
     router = self.tool_router,
-    name = "ai-config",
-    instructions = "Manage ai-config assets across Cursor, Codex, Claude Code, and Hermes. Prefer ai_config_doctor before sync/deploy. Never expose secrets values."
+    name = "agent-manager",
+    instructions = "Manage agent-manager assets across Cursor, Codex, Claude Code, and Hermes. Prefer ai_config_doctor before sync/deploy. Never expose secrets values."
 )]
 impl ServerHandler for AiConfigMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "ai-config MCP: list/show/save/deploy/retract assets; doctor/status/sync for health and distribution.",
+                "agent-manager MCP: list/show/save/deploy/retract assets; doctor/status/sync for health and distribution.",
             )
     }
 }
@@ -287,7 +287,7 @@ mod tests {
 
     fn projection_fixture() -> TempDir {
         let repo = TempDir::new().expect("temporary project");
-        let source = repo.path().join(".ai-config");
+        let source = repo.path().join(".agent-manager");
         fs::create_dir_all(source.join("skills/demo")).expect("skill parent");
         fs::write(source.join("skills/demo/SKILL.md"), "# canonical demo\n")
             .expect("canonical skill");
@@ -454,7 +454,7 @@ mod tests {
         let _secret_dir = EnvVarGuard::set("AI_CONFIG_SECRETS_DIR", secrets.path());
 
         let repo = projection_fixture();
-        let source = repo.path().join(".ai-config/mcp/servers/catalog.json");
+        let source = repo.path().join(".agent-manager/mcp/servers/catalog.json");
         fs::create_dir_all(source.parent().expect("MCP source parent")).expect("MCP source parent");
         fs::write(
             source,

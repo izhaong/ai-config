@@ -1,16 +1,16 @@
 ---
-description: ai-config Rust crate 分层、依赖选型、错误处理与测试约定
+description: agent-manager Rust crate 分层、依赖选型、错误处理与测试约定
 globs: "**/*.rs"
 alwaysApply: false
 ---
 
-# Rust（ai-config workspace）
+# Rust（agent-manager workspace）
 
 ## 分层
 
-- **core**：纯 Rust lib，无 Tauri / 无 clap；单元测试与集成测试放 `ai-config-core/tests/` 或模块内 `#[cfg(test)]`。
+- **core**：纯 Rust lib，无 Tauri / 无 clap；单元测试与集成测试放 `agent-manager-core/tests/` 或模块内 `#[cfg(test)]`。
 - **cli**：解析参数 → 调 core → 格式化输出；避免在 `main.rs` 写业务。
-- **gui**（`apps/ai-config-gui/src/lib.rs`）：Tauri command 薄层，错误映射为前端可读字符串。
+- **gui**（`apps/agent-manager-gui/src/lib.rs`）：Tauri command 薄层，错误映射为前端可读字符串。
 
 ## 依赖选型（优先 crates.io 高星、维护活跃）
 
@@ -54,9 +54,9 @@ alwaysApply: false
 - **新功能 / 新 public API**：与实现同步补测试（同一改动内）；未补不得标完成。
 - 改 core 逻辑须补或更新测试；路径类用 tempdir。
 - 覆盖：**主路径 + 至少一条边界**（缺源、跨平台、收回、项目作用域等按领域选）。
-- GUI 只经 core 的能力：优先 `ai-config-core` 单测，避免在 Tauri 层重复测业务。
-- CLI 集成：行为变更时更新 `crates/ai-config-cli/tests/` 或 lifecycle 单测。
-- 提交前：`cargo test -p ai-config-core -p ai-config-cli`（最小集）；跨 crate 改动跑 `cargo test --workspace`。
+- GUI 只经 core 的能力：优先 `agent-manager-core` 单测，避免在 Tauri 层重复测业务。
+- CLI 集成：行为变更时更新 `crates/agent-manager-cli/tests/` 或 lifecycle 单测。
+- 提交前：`cargo test -p agent-manager-core -p agent-manager-cli`（最小集）；跨 crate 改动跑 `cargo test --workspace`。
 
 ## 禁止
 

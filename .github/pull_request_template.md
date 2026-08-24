@@ -11,8 +11,8 @@
 ## Test plan
 
 - [ ] `cargo fmt --check`
-- [ ] `cargo test -p ai-config-core -p ai-config-cli`
-- [ ] Manual: `ai-config install` / `sync` (if behavior changed)
+- [ ] `cargo test -p agent-manager-core -p agent-manager-cli`
+- [ ] Manual: `agent-manager install` / `sync` (if behavior changed)
 
 ## Checklist
 

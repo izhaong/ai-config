@@ -44,7 +44,7 @@ $ARGUMENTS
 
 - 顺序：**core → CLI → Tauri → GUI → CHANGELOG → verify**
 - 一项 Todo ≈ 一个 PR 内可 review 的单元（避免「改 hook」这种笼统项）
-- 末项固定：`cargo test -p ai-config-core -p ai-config-cli`（及 GUI/doctor 若涉及）
+- 末项固定：`cargo test -p agent-manager-core -p agent-manager-cli`（及 GUI/doctor 若涉及）
 - 格式：`- [ ] T00n [scope] 动词 + 对象（验证：命令或 test 名）`
 
 4. Todos 即 Cursor Plan 的执行清单；**不生成独立 `tasks.md`**。
@@ -52,6 +52,6 @@ $ARGUMENTS
 
 ## 约束
 
-- 业务逻辑落在 `ai-config-core`
+- 业务逻辑落在 `agent-manager-core`
 - Karpathy：最简单可行路径；plan 可写备选方案与取舍，但实现只选一条
 - **禁止**仅 3 行根因 + 模块表 + 5 条笼统 Todo 交差

@@ -44,7 +44,7 @@ alwaysApply: true
    - 无 `plan.md` 或无 `## Todos` → **详细**技术方案 + Todos（`- [ ] T00n …（验证：…）`）；末项 verify
    - **plan 详细度**（模板见 `plan-template.md`、命令见 `speckit.plan`）：须含 Summary、根因（文件/函数级）、影响面与 FR 追溯、方案设计、边界表、测试策略、回滚；禁止仅模块表 + 笼统 Todo
 4. **实现** — 按 Todos 顺序；每项完成 → `plan.md` 勾 `- [x]`
-5. **验证** — [ai-config-verify](../skills/ai-config-verify/SKILL.md)
+5. **验证** — [agent-manager-verify](../skills/agent-manager-verify/SKILL.md)
 
 有 `plan.md ## Todos` 前**禁止**写业务代码。
 
@@ -69,4 +69,4 @@ alwaysApply: true
 ## 与 Claude Code / 全局规则
 
 - Claude 读 `AGENTS.md` + 本规则；落盘结构相同，语义对齐 Cursor Plan/Todo。
-- 本仓 `.ai-config/rules/spec-kit-gate.mdc` + `gitflow-spec-kit.mdc` 为 **ai-config 权威**；与 `~/.cursor/rules/spec-kit-sdd-gate.mdc` 一致，冲突时以本仓为准。
+- 本仓 `.agent-manager/rules/spec-kit-gate.mdc` + `gitflow-spec-kit.mdc` 为 **agent-manager 权威**；与 `~/.cursor/rules/spec-kit-sdd-gate.mdc` 一致，冲突时以本仓为准。

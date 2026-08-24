@@ -7,8 +7,8 @@
  *     --version 0.3.1 \
  *     --tag v0.3.1 \
  *     --platform darwin-aarch64 \
- *     --asset ai-config.app.tar.gz \
- *     --sig ../../target/release/bundle/macos/ai-config.app.tar.gz.sig \
+ *     --asset agent-manager.app.tar.gz \
+ *     --sig ../../target/release/bundle/macos/agent-manager.app.tar.gz.sig \
  *     --out latest.json
  *
  * Merge another platform into an existing file:
@@ -21,7 +21,7 @@ const { values } = parseArgs({
   options: {
     version: { type: "string" },
     tag: { type: "string" },
-    repo: { type: "string", default: "izhaong/ai-config" },
+    repo: { type: "string", default: "izhaong/agent-manager" },
     platform: { type: "string" },
     asset: { type: "string" },
     sig: { type: "string" },
@@ -46,7 +46,7 @@ const tag = required("tag", values.tag);
 const platform = required("platform", values.platform);
 const asset = required("asset", values.asset);
 const sigPath = required("sig", values.sig);
-const repo = values.repo ?? "izhaong/ai-config";
+const repo = values.repo ?? "izhaong/agent-manager";
 const outPath = values.out ?? "latest.json";
 
 if (!existsSync(sigPath)) {

@@ -735,7 +735,7 @@ mod tests {
   "version": 1,
   "hooks": {
     "afterShellExecution": [
-      { "command": "./hooks/demo.sh", "matcher": "ai-config" }
+      { "command": "./hooks/demo.sh", "matcher": "agent-manager" }
     ]
   }
 }"#,

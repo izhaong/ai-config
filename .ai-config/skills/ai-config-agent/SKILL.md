@@ -1,16 +1,16 @@
 ---
-name: ai-config-agent
-description: 通过 ai-config CLI 或 MCP 服务器管理 skills/rules/agents/commands/MCP 资产，在多 IDE 平台间同步下发。用户要操作 ai-config 资产、同步到 Cursor/Codex/Claude/Hermes、或排查链接状态时激活。
+name: agent-manager-agent
+description: 通过 agent-manager CLI 或 MCP 服务器管理 skills/rules/agents/commands/MCP 资产，在多 IDE 平台间同步下发。用户要操作 agent-manager 资产、同步到 Cursor/Codex/Claude/Hermes、或排查链接状态时激活。
 ---
 
-# ai-config Agent 外部控制
+# agent-manager Agent 外部控制
 
 ## 何时使用
 
-- 列出 / 读取 / 编辑 `~/.ai-config/` 或 `<project>/.ai-config/` 下的资产
+- 列出 / 读取 / 编辑 `~/.agent-manager/` 或 `<project>/.agent-manager/` 下的资产
 - 下发（deploy）或收回（retract）到 Cursor、Codex、Claude Code、Hermes
 - 跑 `doctor` / `status` / `sync` 排查同步问题
-- 用户提到「ai-config MCP」「外部控制 ai-config」
+- 用户提到「agent-manager MCP」「外部控制 agent-manager」
 
 ## 方式一：MCP（推荐，IDE 原生集成）
 
@@ -19,8 +19,8 @@ description: 通过 ai-config CLI 或 MCP 服务器管理 skills/rules/agents/co
 ```json
 {
   "mcpServers": {
-    "ai-config": {
-      "command": "ai-config",
+    "agent-manager": {
+      "command": "agent-manager",
       "args": ["serve"]
     }
   }
@@ -32,9 +32,9 @@ description: 通过 ai-config CLI 或 MCP 服务器管理 skills/rules/agents/co
 ```json
 {
   "mcpServers": {
-    "ai-config": {
-      "command": "/path/to/ai-config/target/debug/ai-config",
-      "args": ["serve", "--root", "/path/to/project/.ai-config"]
+    "agent-manager": {
+      "command": "/path/to/agent-manager/target/debug/agent-manager",
+      "args": ["serve", "--root", "/path/to/project/.agent-manager"]
     }
   }
 }
@@ -62,23 +62,23 @@ description: 通过 ai-config CLI 或 MCP 服务器管理 skills/rules/agents/co
 所有子命令支持机器可读输出：
 
 ```bash
-ai-config list --json
-ai-config doctor --json
-ai-config status --json
-ai-config sync --json
-ai-config skill show my-skill --json
-ai-config mcp deploy my-server cursor
+agent-manager list --json
+agent-manager doctor --json
+agent-manager status --json
+agent-manager sync --json
+agent-manager skill show my-skill --json
+agent-manager mcp deploy my-server cursor
 ```
 
 项目作用域：
 
 ```bash
-ai-config --root /path/to/repo/.ai-config list --json
+agent-manager --root /path/to/repo/.agent-manager list --json
 ```
 
 ## 工作流建议
 
-1. **先诊断**：`ai_config_doctor` 或 `ai-config doctor --json`
+1. **先诊断**：`ai_config_doctor` 或 `agent-manager doctor --json`
 2. **看状态**：`ai_config_status`
 3. **改源**：`ai_config_show` → 编辑 → `ai_config_save`
 4. **下发**：`ai_config_deploy`（单条）或 `ai_config_sync`（批量）
@@ -88,4 +88,4 @@ ai-config --root /path/to/repo/.ai-config list --json
 
 - **不**在输出中暴露 `secrets.env` 明文值
 - GUI 给人类；Agent **优先** MCP 或 CLI `--json`
-- 项目资产根为 `<repo>/.ai-config/`，与 `~/.ai-config/` 结构相同
+- 项目资产根为 `<repo>/.agent-manager/`，与 `~/.agent-manager/` 结构相同

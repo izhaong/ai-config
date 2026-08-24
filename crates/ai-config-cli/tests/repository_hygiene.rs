@@ -34,17 +34,17 @@ fn repository_tracks_only_canonical_source_assets() {
     let paths = tracked_paths(&root);
 
     assert!(
-        root.join(".ai-config/prompts/AGENTS.md").is_file(),
+        root.join(".agent-manager/prompts/AGENTS.md").is_file(),
         "canonical project prompt is required"
     );
     assert_eq!(
         std::fs::read_link(root.join("AGENTS.md"))
             .expect("root AGENTS.md must be a tracked source link"),
-        Path::new(".ai-config/prompts/AGENTS.md")
+        Path::new(".agent-manager/prompts/AGENTS.md")
     );
     assert!(
-        !paths.iter().any(|path| path == ".ai-config/mcp.json"),
-        "monolithic MCP source is forbidden; use .ai-config/mcp/servers/<name>.json"
+        !paths.iter().any(|path| path == ".agent-manager/mcp.json"),
+        "monolithic MCP source is forbidden; use .agent-manager/mcp/servers/<name>.json"
     );
 
     let forbidden_prefixes = [

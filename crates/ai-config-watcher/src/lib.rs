@@ -1,4 +1,4 @@
-//! ai-config 资产目录文件监听：`notify` + `notify-debouncer-mini`（200ms）。
+//! agent-manager 资产目录文件监听：`notify` + `notify-debouncer-mini`（200ms）。
 //!
 //! 监听每个资产根下的 `skills/`、`rules/`、`agents/` 与 `mcp.json`。
 
@@ -12,7 +12,7 @@ use thiserror::Error;
 
 const DEBOUNCE_MS: u64 = 200;
 
-/// 需要监听的资产根目录列表（`~/.ai-config` 或项目 `.ai-config` 等价路径）。
+/// 需要监听的资产根目录列表（`~/.agent-manager` 或项目 `.agent-manager` 等价路径）。
 #[derive(Debug, Clone, Default)]
 pub struct WatchRoots {
     pub asset_roots: Vec<Utf8PathBuf>,

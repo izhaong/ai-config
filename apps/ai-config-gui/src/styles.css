@@ -5,7 +5,7 @@
  */
 @custom-variant dark (&:is(.dark *));
 
-/* ai-config GUI 样式 — Phase 3 初版,黑底 + 等宽字体 + 3 栏布局
+/* agent-manager GUI 样式 — Phase 3 初版,黑底 + 等宽字体 + 3 栏布局
  * 配色暗系,与 Tauri webview 风格一致;`--bg / --fg / --accent` 等 CSS 变量
  * 后续 W9/W10 接业务时再扩展。
  */

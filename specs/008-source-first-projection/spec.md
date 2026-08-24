@@ -5,13 +5,13 @@
 **Created**: 2026-07-12
 
 **Status**: Approved（2026-07-16 补齐平台资产契约）
-**Input**: 将 ai-config 作为 skills、rules、commands、agents、入口提示词、hooks 与 MCP 的统一管理源；平台只消费逐项链接或经 adapter 生成的单向投影，解决多份副本、来源竞争、错误平台路径、外部资产误覆盖与 secrets 混入资产仓的问题。
+**Input**: 将 agent-manager 作为 skills、rules、commands、agents、入口提示词、hooks 与 MCP 的统一管理源；平台只消费逐项链接或经 adapter 生成的单向投影，解决多份副本、来源竞争、错误平台路径、外部资产误覆盖与 secrets 混入资产仓的问题。
 
 ## User Scenarios & Testing
 
 ### User Story 1 - 从唯一来源维护并投影资产 (Priority: P1)
 
-作为同时使用多个 Agent/IDE 平台的用户，我希望只在 ai-config 的统一资产源中维护内容，再将当前作用域解析出的有效资产安全投影到目标平台，从而不再手工维护多份副本。
+作为同时使用多个 Agent/IDE 平台的用户，我希望只在 agent-manager 的统一资产源中维护内容，再将当前作用域解析出的有效资产安全投影到目标平台，从而不再手工维护多份副本。
 
 **Why this priority**: 单一事实源是消除重复、漂移和来源混乱的前提，也是状态、迁移和平台适配的共同基础。
 
@@ -29,15 +29,15 @@
 
 ### User Story 2 - 只读审计并保护外部资产 (Priority: P1)
 
-作为拥有平台内置插件、手工配置和其他管理工具资产的用户，我希望 ai-config 能识别它们但默认不接管，使状态检查、同步和卸载都不会破坏现有环境。
+作为拥有平台内置插件、手工配置和其他管理工具资产的用户，我希望 agent-manager 能识别它们但默认不接管，使状态检查、同步和卸载都不会破坏现有环境。
 
-**Why this priority**: 当前电脑已经存在 `~/.ai-config`、`.cc-switch`、平台插件和平台本地目录等多个来源；在无法证明所有权时覆盖或删除，会直接造成数据损失。
+**Why this priority**: 当前电脑已经存在 `~/.agent-manager`、`.cc-switch`、平台插件和平台本地目录等多个来源；在无法证明所有权时覆盖或删除，会直接造成数据损失。
 
 **Independent Test**: 准备托管链接、同内容普通副本、异内容同名资产、第三方软链和平台内置资产，运行 `status`、plan、apply 与 uninstall；验证分类准确且所有外部内容保持不变。
 
 **Acceptance Scenarios**:
 
-1. **Given** 平台存在一个没有 ai-config 所有权证据的资产，**When** 用户运行 `status`，**Then** 系统将其报告为 `foreign`，且不产生任何文件系统或持久状态写入。
+1. **Given** 平台存在一个没有 agent-manager 所有权证据的资产，**When** 用户运行 `status`，**Then** 系统将其报告为 `foreign`，且不产生任何文件系统或持久状态写入。
 2. **Given** 外部资产与源中的同名资产内容完全相同，**When** 系统判断状态，**Then** 可报告 `equivalent`，但不得将其视为托管资产。
 3. **Given** 外部资产与源中的同名资产内容不同，**When** 用户预览投影，**Then** 系统报告 `conflict` 并跳过该项，而不是覆盖目标。
 4. **Given** 托管链接指向错误来源或生成物被平台侧改写，**When** 用户运行 `status`，**Then** 系统报告 `drifted` 和修复建议，但不自动修复。
@@ -58,7 +58,7 @@
 1. **Given** `mcp/servers/<name>.json` 使用 secret 引用且安全存储中存在对应值，**When** 用户应用投影，**Then** 各平台获得符合其原生格式的 MCP 条目。
 2. **Given** MCP 引用了缺失 secret，**When** 用户预览或应用，**Then** 仅该 MCP 项被阻止，错误只显示缺失 key 名和修复方式。
 3. **Given** secret 文件权限过宽，**When** 用户运行 doctor 或应用 MCP 投影，**Then** 系统报告风险并拒绝使用该文件中的值。
-4. **Given** 目标配置含外部 MCP 条目，**When** ai-config 更新或收回一个托管 server，**Then** 只修改该 server，不改动其他条目。
+4. **Given** 目标配置含外部 MCP 条目，**When** agent-manager 更新或收回一个托管 server，**Then** 只修改该 server，不改动其他条目。
 5. **Given** 当前资产根含单体 `mcp.json`，**When** 用户运行 source-first 迁移，**Then** 系统先备份、拆分并校验逐 server 源；明文值只在显式授权后写入 0600 secret 存储并替换为引用。
 
 ---
@@ -108,7 +108,7 @@
 - MCP 同名但 transport、command、env、headers 或启用状态不同。
 - secret 引用缺失、命名非法、权限过宽、值冲突或含特殊字符。
 - 一个目标配置同时包含托管、外部和同名冲突条目。
-- 项目根已存在非 ai-config 管理的 `AGENTS.md` 或 `CLAUDE.md`。
+- 项目根已存在非 agent-manager 管理的 `AGENTS.md` 或 `CLAUDE.md`。
 - 卸载时托管容器内仍有外部子项。
 - 单个平台失败而其他平台已成功。
 - Windows 无法创建 Unix 等价软链，需要显式 copy fallback。
@@ -134,7 +134,7 @@
 
 #### 统一源结构与投影类型
 
-全局源固定为 `~/.ai-config/`，项目源固定为 `<repo>/.ai-config/`；两者目录结构必须同构。平台目录不是 source layer。
+全局源固定为 `~/.agent-manager/`，项目源固定为 `<repo>/.agent-manager/`；两者目录结构必须同构。平台目录不是 source layer。
 
 ```text
 <asset_root>/
@@ -163,9 +163,9 @@
 
 Canonical skill 是 `skills/<name>/` 整目录，`SKILL.md` 必须存在；脚本、参考资料、模板和资源均随该目录作为一个资产单元。禁止链接整个 `skills/` 根。
 
-| 平台 | 用户全局目标 | 项目目标 | 加载/调用语义 | ai-config 投影决策 |
+| 平台 | 用户全局目标 | 项目目标 | 加载/调用语义 | agent-manager 投影决策 |
 | --- | --- | --- | --- | --- |
-| Cursor | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持嵌套项目 skills。 | 与 Codex 共用 `shared_target + direct_link`。`.cursor/skills` 仍是官方支持的 alternate location；为避免同一 skill 被投影两次，ai-config 只盘点/兼容该位置，不作为新默认目标。 |
+| Cursor | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持嵌套项目 skills。 | 与 Codex 共用 `shared_target + direct_link`。`.cursor/skills` 仍是官方支持的 alternate location；为避免同一 skill 被投影两次，agent-manager 只盘点/兼容该位置，不作为新默认目标。 |
 | Codex | `~/.agents/skills/<name>/` | `<repo>/.agents/skills/<name>/`，按 CWD 到 repo root 发现 | 默认允许 implicit invocation；用户可 `$skill-name`；支持链接后的 skill 目录。 | 与 Cursor 共用 `shared_target + direct_link`。`~/.codex/skills` 和 `<repo>/.codex/skills` 只作 legacy inventory。 |
 | Claude | `~/.claude/skills/<name>/` | `<repo>/.claude/skills/<name>/` | 默认按描述自动选择；用户可 `/skill-name`；支持父级、嵌套目录和目录软链。 | `direct_link`。 |
 | Hermes | `~/.hermes/config.yaml` 的 `skills.external_dirs` | 无官方 project-scoped skill target | 自动进入 skill index，也可 `/skill-name`；本地 `~/.hermes/skills` 优先于 external dir 同名项。 | 全局为 `external_directory`，指向 canonical global skills root；项目为 `unsupported`，不得把项目 skill 写进全局 Hermes 命名空间。 |
@@ -176,7 +176,7 @@ Cursor 与 Codex 对 `.agents/skills` 的可见性是物理共享的：同一个
 
 本资产中的 Rule 指“注入模型上下文的指导规则”，不是 shell 权限、审批或执行策略。Canonical rule 使用 `rules/<name>.mdc` 保存正文和可规范化的 description/path/always 语义；adapter 必须无损转换平台触发语义，不能仅改扩展名后假定兼容。
 
-| 平台 | 用户全局目标 | 项目目标 | 格式/加载语义 | ai-config 投影决策 |
+| 平台 | 用户全局目标 | 项目目标 | 格式/加载语义 | agent-manager 投影决策 |
 | --- | --- | --- | --- | --- |
 | Cursor | 官方 User Rules 存于 Cursor Customize/账号设置，无稳定文件目标 | `<repo>/.cursor/rules/<name>.mdc` | `.mdc`；支持 Always、Agent Decides、路径匹配和手动引用。 | 全局平台投影 `unsupported`；项目 `generated` 或在字节级兼容时 `direct_link`。不得假造 `~/.cursor/rules` 为权威官方目标。 |
 | Codex | 无独立 instruction-rule 目录 | 无独立 instruction-rule 目录；项目指导由 `AGENTS.md` 链承载 | `~/.codex/rules/*.rules` 与 `<repo>/.codex/rules/*.rules` 是 Starlark **命令执行策略**，不是提示规则。 | instruction Rule 在全局/项目均为 `unsupported`；需要进入 Codex 的通用指导必须显式纳入 canonical Prompt/AGENTS 方案。绝对禁止把 `.mdc` 写入 `.codex/rules`。 |
@@ -187,7 +187,7 @@ Cursor 与 Codex 对 `.agents/skills` 的可见性是物理共享的：同一个
 
 Canonical MCP 必须是 `mcp/servers/<name>.json` 的逐 server 资产，只保存可共享字段和 secret 引用。平台 MCP 文件都是聚合容器，必须 `generated` merge，禁止软链整份配置或以整文件为所有权单位。
 
-| 平台 | 用户全局目标 | 项目目标 | 平台格式 | ai-config 投影决策 |
+| 平台 | 用户全局目标 | 项目目标 | 平台格式 | agent-manager 投影决策 |
 | --- | --- | --- | --- | --- |
 | Cursor | `~/.cursor/mcp.json` | `<repo>/.cursor/mcp.json` | JSON `mcpServers` | 按 server 名生成/更新具名条目。 |
 | Codex | `~/.codex/config.toml` | `<repo>/.codex/config.toml`（仅 trusted project） | TOML `[mcp_servers.<name>]` | 按 server 名生成/更新 TOML table；不得写 `.codex/mcp.json`。 |
@@ -200,7 +200,7 @@ Canonical MCP 必须是 `mcp/servers/<name>.json` 的逐 server 资产，只保�
 
 Canonical agent 使用 `agents/<name>.md` 表达名称、描述、指令和可移植能力约束。平台格式不同，adapter 必须显式转换；不能把同一 Markdown 盲目复制到所有目录。
 
-| 平台 | 用户全局目标 | 项目目标 | 格式/调用语义 | ai-config 投影决策 |
+| 平台 | 用户全局目标 | 项目目标 | 格式/调用语义 | agent-manager 投影决策 |
 | --- | --- | --- | --- | --- |
 | Cursor | `~/.cursor/agents/<name>.md` | `<repo>/.cursor/agents/<name>.md` | Markdown + YAML frontmatter；按描述自动委派，也可自然语言指定。Cursor 兼容读取 Claude/Codex agent 目录，但 native 目录优先。 | `generated`；不得默认投影到兼容目录。 |
 | Codex | `~/.codex/agents/<name>.toml` | `<repo>/.codex/agents/<name>.toml` | TOML，至少含 `name`、`description`、`developer_instructions`；用户可要求 delegation，规则/skill 也可触发。 | `generated`；禁止使用 `.codex/subagents`。 |
@@ -213,7 +213,7 @@ Canonical agent 使用 `agents/<name>.md` 表达名称、描述、指令和可�
 
 Canonical command 是 `commands/<name>.md`，语义固定为“用户显式调用的可复用 prompt”。若平台会自动调用同格式内容，adapter 必须加上 explicit-only 控制；command 与 skill 同名时必须在 plan 阶段报告冲突或遵循平台已公开的确定优先级。
 
-| 平台 | 用户全局目标 | 项目目标 | 调用语义 | ai-config 投影决策 |
+| 平台 | 用户全局目标 | 项目目标 | 调用语义 | agent-manager 投影决策 |
 | --- | --- | --- | --- | --- |
 | Cursor | `~/.cursor/commands/<name>.md` | `<repo>/.cursor/commands/<name>.md`（项目根） | `/name` 显式调用；嵌套项目 commands 不属于当前官方稳定目标。 | `direct_link`；新需求若需要自动判断，应建 Skill 而不是 Command。 |
 | Codex | deprecated legacy `~/.codex/prompts/<name>.md` | 无 project-scoped custom prompt | legacy 通过 `/prompts:name` 显式调用；官方要求新可复用 prompt 使用 Skill。 | 全局/项目均 `unsupported`；`.codex/prompts` 只作 migration inventory，可建议转换为 Skill。禁止创建 `.codex/commands`。 |
@@ -224,7 +224,7 @@ Canonical command 是 `commands/<name>.md`，语义固定为“用户显式调�
 
 Canonical Hook 由 `hooks.json` 中的具名绑定和 `hooks/` 下的一个合法脚本单元组成。脚本单元只允许“单文件”或“单目录整包”；配置绑定必须由 adapter 合并，脚本/整包可逐项链接。禁止只同步脚本不生成绑定，也禁止只写绑定却引用平台外散落文件。
 
-| 平台 | 用户全局目标 | 项目目标 | 平台格式 | ai-config 投影决策 |
+| 平台 | 用户全局目标 | 项目目标 | 平台格式 | agent-manager 投影决策 |
 | --- | --- | --- | --- | --- |
 | Cursor | `~/.cursor/hooks.json` + `~/.cursor/hooks/` | `<repo>/.cursor/hooks.json` + `<repo>/.cursor/hooks/` | JSON，camelCase lifecycle events；项目 Hook 可供 Cloud Agent 使用，用户 Hook 不进入 Cloud Agent。 | 配置 `generated` + 脚本单元 `direct_link`。 |
 | Codex | `~/.codex/hooks.json` 或 `~/.codex/config.toml` + `~/.codex/hooks/` | `<repo>/.codex/hooks.json` 或 `<repo>/.codex/config.toml` + `<repo>/.codex/hooks/` | JSON/TOML，PascalCase events；项目 Hook 仅 trusted project 加载，并需独立 trust review。 | 新投影固定选择 `hooks.json` 作为单一表示；配置 `generated` + 脚本单元 `direct_link`，不得在同一 scope 同时生成 inline `[hooks]`。 |
@@ -248,11 +248,11 @@ Hook adapter 必须完成事件名、matcher、输入输出和阻断语义的显
 
 #### 单一事实源与作用域
 
-- **FR-001**: 用户级权威源必须为 `~/.ai-config/`；项目覆盖源必须为 `<repo>/.ai-config/`；平台目录不得自动成为事实源。
+- **FR-001**: 用户级权威源必须为 `~/.agent-manager/`；项目覆盖源必须为 `<repo>/.agent-manager/`；平台目录不得自动成为事实源。
 - **FR-002**: 有效资产解析顺序必须固定为 `project override > workspace default > global`，同类型同名采用整项覆盖，异名采用并集。
 - **FR-003**: 每次 list、status、plan、apply 和 import 都必须显示资产的实际 source layer 和绝对源路径。
 - **FR-004**: MCP server 必须作为独立资产存放于 `mcp/servers/<name>.json`；平台聚合配置不得成为权威源。
-- **FR-005**: 入口提示词必须作为 `prompts/<name>.md` 存放在对应 `.ai-config/` source layer；项目根 `AGENTS.md` 必须是指向 canonical prompt 的逐项链接或可证明所有权的最小生成入口，`CLAUDE.md` 等平台专用入口仅保留 import/reference 与平台差异，不维护多份手工正文。
+- **FR-005**: 入口提示词必须作为 `prompts/<name>.md` 存放在对应 `.agent-manager/` source layer；项目根 `AGENTS.md` 必须是指向 canonical prompt 的逐项链接或可证明所有权的最小生成入口，`CLAUDE.md` 等平台专用入口仅保留 import/reference 与平台差异，不维护多份手工正文。
 
 #### 单向投影与平台适配
 
@@ -286,8 +286,8 @@ Hook adapter 必须完成事件名、matcher、输入输出和阻断语义的显
 
 #### Secrets 与 MCP
 
-- **FR-027**: canonical MCP 只能保存 secret 引用，ai-config 不得把真实 token/env/header 值写入资产源或 Git 跟踪文件。
-- **FR-028**: 真实 secret 只能保存于 `~/.config/ai-config/secrets.env`，工具写入后权限必须为 0600。
+- **FR-027**: canonical MCP 只能保存 secret 引用，agent-manager 不得把真实 token/env/header 值写入资产源或 Git 跟踪文件。
+- **FR-028**: 真实 secret 只能保存于 `~/.config/agent-manager/secrets.env`，工具写入后权限必须为 0600。
 - **FR-029**: 日志、status、doctor、diff、SQLite、事件、CLI JSON、MCP API 和 GUI 均不得显示 secret 明文。
 - **FR-030**: 目标平台必须消费明文时，只能在 apply 阶段写入不可避免的目标配置；渲染结果不得反向作为源。
 - **FR-031**: 缺失或权限不安全的 secret 必须把受影响 MCP 项标为 non-executable `skipped`，但不得阻塞不依赖该 key 的其他项；错误仅显示 key 名和修复方式。
@@ -295,11 +295,11 @@ Hook adapter 必须完成事件名、matcher、输入输出和阻断语义的显
 
 #### 迁移、仓库卫生与外部来源
 
-- **FR-033**: migration audit 必须识别 legacy marker、legacy ai-config symlink、无 marker 硬拷贝、错误来源软链、`.cc-switch` 软链、平台 plugin/builtin 和损坏条目。
+- **FR-033**: migration audit 必须识别 legacy marker、legacy agent-manager symlink、无 marker 硬拷贝、错误来源软链、`.cc-switch` 软链、平台 plugin/builtin 和损坏条目。
 - **FR-034**: 同内容普通副本只能列为显式迁移候选，不能自动获得所有权。
 - **FR-035**: 迁移 apply 必须先备份，再写 canonical source 并校验，最后建立 projection；失败时保留原目标。
 - **FR-036**: 工具仓只追踪 canonical 项目资产；生成的 `.cursor/.codex/.claude/.hermes` 平台投影和机器绝对路径不得进入 Git。
-- **FR-037**: `.cc-switch`、插件缓存、平台内置资产和其他管理工具必须视为 external；ai-config 只报告交集和冲突，不擅自清理。
+- **FR-037**: `.cc-switch`、插件缓存、平台内置资产和其他管理工具必须视为 external；agent-manager 只报告交集和冲突，不擅自清理。
 - **FR-038**: 第一阶段不得依赖 daemon、watcher、event bus 或未完成的 SQLite item/target 状态才能保证正确性。
 - **FR-039**: CLI、MCP server 与 GUI 必须调用同一 core planner/executor，不得分别实现状态或写入语义；对同一规范化请求，三个入口必须产生相同 schema version、action ordering 和 plan digest。
 - **FR-040**: `PlatformCapability` 必须以本节六类资产契约为数据来源，并能区分 source scope、deployment scope、consumer set、target path、format、projection mode、trust requirement 与 legacy inventory path。
@@ -314,7 +314,7 @@ Hook adapter 必须完成事件名、matcher、输入输出和阻断语义的显
 - **Platform Capability**: 平台在指定 scope 对资产类型的支持模式和原生目标位置。
 - **Projection**: Effective Asset 在平台上的托管表现，分为 direct link、generated entry 或 copy fallback。
 - **Projection State**: 当前目标的所有权与健康状态，不以内容相等代替所有权。
-- **Foreign Artifact**: 平台目标中存在但无 ai-config 所有权证据的资产或配置条目。
+- **Foreign Artifact**: 平台目标中存在但无 agent-manager 所有权证据的资产或配置条目。
 - **Projection Plan**: 只读计算出的 action 集合及其 preconditions；只有显式 apply 才能产生变化。
 - **Import Proposal**: 从平台到指定 source layer 的规范化候选，包含 diff、冲突和敏感信息检查。
 - **Migration Candidate**: 历史资产盘点结果及建议动作，在显式选择前不具有托管所有权。
@@ -322,9 +322,9 @@ Hook adapter 必须完成事件名、matcher、输入输出和阻断语义的显
 
 ### Assumptions
 
-- ai-config 是纳管 skills、rules、commands、agents、入口提示词、hooks 和 MCP 的严格唯一源。
+- agent-manager 是纳管 skills、rules、commands、agents、入口提示词、hooks 和 MCP 的严格唯一源。
 - `prompts/AGENTS.md` 是项目通用入口正文的默认 canonical 名称；现有项目可配置其他名称，但根入口仍只是 projection。
-- `.cc-switch` 可继续负责 Provider/账号切换，但不应写入与 ai-config 相同的托管命名空间。
+- `.cc-switch` 可继续负责 Provider/账号切换，但不应写入与 agent-manager 相同的托管命名空间。
 - 项目同名覆盖采用整项替换，不做字段级自动合并。
 - 状态和 plan 始终只读，任何写入都由显式 apply 触发。
 - 平台要求保存的已渲染 secret 不属于事实源，且不得反向 import。

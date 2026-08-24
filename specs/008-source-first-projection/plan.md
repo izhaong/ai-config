@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. All execution tracking stays in this file under `## Todos`; do not create `tasks.md`.
 
-**Goal:** 将 ai-config 重构为 skills、rules、commands、agents、入口提示词、hooks 与 MCP 的唯一事实源，并以“同格式逐项链接、异构格式安全生成”的单向投影替换五平台对等硬拷贝。
+**Goal:** 将 agent-manager 重构为 skills、rules、commands、agents、入口提示词、hooks 与 MCP 的唯一事实源，并以“同格式逐项链接、异构格式安全生成”的单向投影替换五平台对等硬拷贝。
 
 **Architecture:** Core 先把 `global → workspace → project` 解析为带 provenance 的 effective assets，再由平台 adapter 生成只读 `ProjectionPlan`。Apply 阶段只创建精确软链或修改具名生成条目；正确链接本身可证明所有权，生成物由可丢失但安全降级的 projection ledger 辅助证明，ledger 缺失时一律保守视为 foreign。CLI、MCP server 和 GUI 只调用同一 planner/executor。
 
@@ -16,13 +16,13 @@
 
 ## Global Constraints
 
-- `~/.ai-config/` 是 user-global 唯一源；`<repo>/.ai-config/` 是 project override；平台目录永远不是自动回流源。
+- `~/.agent-manager/` 是 user-global 唯一源；`<repo>/.agent-manager/` 是 project override；平台目录永远不是自动回流源。
 - Effective precedence 固定为 `project > workspace > global`，同 kind + name 整项覆盖，异名并集。
 - Direct assets 只允许逐项链接，禁止链接整个 `skills/`、`rules/`、`agents/`、`commands/`、`prompts/` 或 `hooks/` 根目录。
-- 内容相等只表示 `equivalent`，不能单独证明 ai-config 所有权。
+- 内容相等只表示 `equivalent`，不能单独证明 agent-manager 所有权。
 - `list`、`status`、`doctor`、inventory 和 dry-run plan 必须零写入。
 - Foreign、第三方软链、插件/builtin 和 `.cc-switch` 资产默认只报告，不覆盖、不删除、不 adopt。
-- MCP canonical source 必须是 `mcp/servers/<name>.json` + secret references；真实 secret 只在 `~/.config/ai-config/secrets.env`，权限 0600。
+- MCP canonical source 必须是 `mcp/servers/<name>.json` + secret references；真实 secret 只在 `~/.config/agent-manager/secrets.env`，权限 0600。
 - Plan/JSON/log/GUI/ledger/backup manifest 不得包含 secret 明文；含 secret 的目标备份必须位于 0700 目录且文件为 0600。
 - Windows fallback 必须显式显示为 `copied`；绝不伪装成 `managed_link`。
 - 第一阶段安全正确性不得依赖 daemon、watcher、event bus 或 ledger 可用；ledger 丢失必须安全降级为“不删除”。
@@ -72,25 +72,25 @@ uninstall / retract
 
 | 根因 | 当前位置 | 影响 |
 | --- | --- | --- |
-| 强制硬拷贝、无事务覆盖 | `crates/ai-config-core/src/materialize.rs::deploy` | 产生多份事实、失败后可能留下半份目标 |
+| 强制硬拷贝、无事务覆盖 | `crates/agent-manager-core/src/materialize.rs::deploy` | 产生多份事实、失败后可能留下半份目标 |
 | 无 marker 普通目标也可删除 | `materialize.rs::retract`、`asset_ops::remove_native_platform_copy` | 无法证明所有权仍会删除 |
 | 内容相等误作 managed | `materialize.rs::check` | 外部安装可被 retract/uninstall |
-| link helper 直接替换普通目标 | `crates/ai-config-core/src/link.rs::link/remove_dest_path` | 错源或 foreign 可被覆盖 |
+| link helper 直接替换普通目标 | `crates/agent-manager-core/src/link.rs::link/remove_dest_path` | 错源或 foreign 可被覆盖 |
 | status/doctor/list 扫描有副作用 | `source.rs::scan_project_root`、`paths.rs::discover_global_asset_root` | 声称只读但可能迁移/播种/写 hook |
-| 项目 MCP 丢失 deploy_base | `crates/ai-config-cli/src/lifecycle.rs::execute_all_actions` | project sync 可写到 HOME |
+| 项目 MCP 丢失 deploy_base | `crates/agent-manager-cli/src/lifecycle.rs::execute_all_actions` | project sync 可写到 HOME |
 | MCP 整文件模型与逐 server 模型并存 | `mcp_json.rs`、`template.rs`、`mcp.rs` | overlay、secrets、retract 语义冲突 |
 | Codex/Claude adapter 过期 | `platform.rs::{CodexAdapter,ClaudeAdapter}` | 写到平台不消费的位置 |
 | 五平台互拷 | `asset_ops::deploy_from_platform`、`sync_conflict.rs`、GUI toggle | 反向/横向复制扩大状态机 |
-| store/daemon 未完成却进入产品语义 | `ai-config-store/src/schema.rs`、daemon/bus/watcher | 增加状态源但不能提供可靠所有权 |
+| store/daemon 未完成却进入产品语义 | `agent-manager-store/src/schema.rs`、daemon/bus/watcher | 增加状态源但不能提供可靠所有权 |
 
 ### 目标数据流
 
 ```text
-~/.ai-config (global canonical)
+~/.agent-manager (global canonical)
             +
-<workspace>/.ai-config (optional workspace defaults)
+<workspace>/.agent-manager (optional workspace defaults)
             +
-<repo>/.ai-config (project override)
+<repo>/.agent-manager (project override)
             │
             ▼
 source::resolve_effective_assets  ── read only, keeps provenance
@@ -114,7 +114,7 @@ transactional executor
 | 项 | 值 |
 | --- | --- |
 | Language | Rust workspace edition 2021；TypeScript/React GUI |
-| 主要 Crate | `ai-config-core`、`ai-config-store`、`ai-config-cli`、`ai-config-gui` |
+| 主要 Crate | `agent-manager-core`、`agent-manager-store`、`agent-manager-cli`、`agent-manager-gui` |
 | 关键现有模块 | `source`、`paths`、`platform`、`link`、`materialize`、`sync`、`asset_ops`、`platform_scan`、`mcp_json`、`template`、`hook_adapter` |
 | 新模块 | `projection/*`、`mcp/*`、`migration`、store `projection_repo` |
 | 测试 | Core unit/integration + CLI integration + GUI Vitest + Tauri Rust tests |
@@ -123,7 +123,7 @@ transactional executor
 
 ## Constitution Check
 
-- [x] 业务判断、规划和 apply 逻辑仅在 `ai-config-core`。
+- [x] 业务判断、规划和 apply 逻辑仅在 `agent-manager-core`。
 - [x] CLI/MCP/GUI 仅传参、确认和展示，不复制 planner/executor。
 - [x] 平台差异收敛在 adapter 与 `mcp/*` renderer。
 - [x] 所有 destructive 操作均有所有权证明、precondition 和回滚。
@@ -136,7 +136,7 @@ transactional executor
 ### Core projection 边界
 
 ```text
-crates/ai-config-core/src/projection/
+crates/agent-manager-core/src/projection/
 ├── mod.rs          # 对外 re-export；不含业务实现
 ├── model.rs        # ProjectionId/Mode/State/Action/Plan/Report
 ├── source.rs       # global/workspace/project effective resolver
@@ -150,7 +150,7 @@ crates/ai-config-core/src/projection/
 ### MCP 边界
 
 ```text
-crates/ai-config-core/src/mcp/
+crates/agent-manager-core/src/mcp/
 ├── mod.rs
 ├── source.rs       # mcp/servers/*.json、overlay、secret reference validation
 ├── adapter.rs      # GeneratedConfigAdapter + mutation model
@@ -179,7 +179,7 @@ crates/ai-config-core/src/mcp/
 | GUI TS | `src/types.ts`, `api/tauriAssets.ts`, `hooks/useAssetOperations.ts` | Modify | 使用统一状态和计划 |
 | GUI UI | asset components + conflict modal | Modify | source-first 操作，不再平台互拷 |
 | docs | PRD/ARCHITECTURE/DESIGN/README/HERMES/CHANGELOG/constitution | Modify | 冻结新产品语义 |
-| repo | `.ai-config/*`, `.gitignore`, generated platform dirs | Migrate/Delete | 本仓 dogfood canonical source，去除实体副本 |
+| repo | `.agent-manager/*`, `.gitignore`, generated platform dirs | Migrate/Delete | 本仓 dogfood canonical source，去除实体副本 |
 
 ## 核心 API / 类型
 
@@ -491,7 +491,7 @@ Planner 必须先规范化 target path，再按 `target.path` 聚合所有 gener
 
 | 维度 | Global | Workspace | Project/member |
 | --- | --- | --- | --- |
-| source root | `~/.ai-config` | `<workspace>/.ai-config` | `<repo>/.ai-config` |
+| source root | `~/.agent-manager` | `<workspace>/.agent-manager` | `<repo>/.agent-manager` |
 | deploy base | `$HOME` | workspace root | repo root |
 | 同名优先级 | 低 | 中 | 高 |
 | 缺失资产 | — | 继承 global | 继承 workspace/global |
@@ -511,7 +511,7 @@ Planner 必须先规范化 target path，再按 `target.path` 聚合所有 gener
 
 Legacy `.codex/skills`、`.codex/mcp.json`、`.claude/mcp.json` 只进入 inventory，不再作为 deploy target。
 
-`Prompt` 不由四个平台各生成一份：planner 为它创建唯一 `ProjectionSurface::ProjectEntry`，把 `<repo>/AGENTS.md` 精确链接到 effective `.ai-config/prompts/AGENTS.md`。各平台 adapter 只声明是否消费该 shared entry；Claude 额外生成最小 `CLAUDE.md` entry。若根入口已是普通文件或其他来源链接，状态为 Equivalent/Foreign/Conflict，必须显式 import/adopt，绝不模板覆盖。
+`Prompt` 不由四个平台各生成一份：planner 为它创建唯一 `ProjectionSurface::ProjectEntry`，把 `<repo>/AGENTS.md` 精确链接到 effective `.agent-manager/prompts/AGENTS.md`。各平台 adapter 只声明是否消费该 shared entry；Claude 额外生成最小 `CLAUDE.md` entry。若根入口已是普通文件或其他来源链接，状态为 Equivalent/Foreign/Conflict，必须显式 import/adopt，绝不模板覆盖。
 
 ### 3. Ownership and ledger
 
@@ -524,15 +524,15 @@ Legacy `.codex/skills`、`.codex/mcp.json`、`.claude/mcp.json` 只进入 invent
 - 有 record 但目标变化：`Drifted`；默认禁止 update/retract，需显式 repair plan。
 - ledger 丢失：generated entry 退化为 `Foreign`，不删除。
 
-SQLite `projections` 表由 `ai-config-store` 实现，但 core 只依赖 `ProjectionLedger` trait；core 测试使用 `MemoryProjectionLedger`。读失败时 planner 安全降级为“不证明 generated ownership”；apply 阶段 `apply_batch` 必须在一个 SQLite transaction 内提交全部 upsert/remove，任何写失败都视为 transaction failure 并触发文件系统回滚，不能静默降级。
+SQLite `projections` 表由 `agent-manager-store` 实现，但 core 只依赖 `ProjectionLedger` trait；core 测试使用 `MemoryProjectionLedger`。读失败时 planner 安全降级为“不证明 generated ownership”；apply 阶段 `apply_batch` 必须在一个 SQLite transaction 内提交全部 upsert/remove，任何写失败都视为 transaction failure 并触发文件系统回滚，不能静默降级。
 
 ### 4. Plan/apply transaction
 
 Dry-run 不创建目录、锁、DB、backup 或日志。`ReportOnly::Conflict` 是 blocking；默认 apply 发现任一 blocking action 时整份计划零写入，用户只能调整选择后重新生成新 plan，不能在 apply 时临时跳过 precondition。`Unsupported`、`OrphanCandidate` 和 `MissingDependency` 是明确的 non-executable skipped item，其中缺失 secret 的 member 不进入 generated batch，不影响不依赖该 key 的 member。`AdoptEquivalent` 也是默认 non-executable candidate，只有 `ApplyOptions` 同时携带当前 plan digest 与该 action_id 时才进入 executable set；未选择 candidate 保持不变。其余 executable actions 按整份计划全原子执行：
 
-1. 获取 `~/.config/ai-config/apply.lock` 排他锁。
+1. 获取 `~/.config/agent-manager/apply.lock` 排他锁。
 2. 验证 plan schema、digest、每条 source/target precondition。
-3. 在 `~/.config/ai-config/backups/<transaction-id>/` 建立 0700 transaction 目录。
+3. 在 `~/.config/agent-manager/backups/<transaction-id>/` 建立 0700 transaction 目录。
 4. 快照所有待修改 target 的文件、目录、symlink target、mode 和 hash；含 secret 的文件强制 0600。
 5. 在目标同目录创建临时 link/file/tree。
 6. 原子 rename；逐项验证状态。
@@ -569,7 +569,7 @@ Canonical layout：
 
 - `toml_edit = 0.25`（当前 lock 0.25.12）用于 Codex，保留 comments、unknown tables 和非 MCP 配置。
 - `yaml-edit = 0.2.3` 用于 Hermes lossless edit；semantic parse 仍用于结果校验。
-- Cursor/Claude 使用 JSON object-level merge，保留非 ai-config server 和顶层字段。
+- Cursor/Claude 使用 JSON object-level merge，保留非 agent-manager server 和顶层字段。
 - Source migration 默认 dry-run；`--extract-secrets --apply` 才把 literal env/header 写入 0600 secrets 文件并替换为引用。
 - env key 直接作为 secret key；header 生成 `<SERVER>_<HEADER>` uppercase key。派生 key 冲突或现有值不同则整项 conflict，不输出值。
 - URL 中嵌入凭据不自动抽取，只 redacted 报告并阻止迁移。
@@ -582,12 +582,12 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 
 ### 7. GUI source-first interaction
 
-- ai-config source icon 永远只读，不再可“retract source”。
+- agent-manager source icon 永远只读，不再可“retract source”。
 - `ManagedLink/ManagedGenerated`：可 plan update/retract。
 - `Missing`：可 plan create。
 - `Equivalent`：只允许基于 plan digest + action_id 显式 adopt with backup。
 - `Foreign/Conflict/Drifted`：只允许 diff、import 或 repair plan，不允许直接覆盖。
-- 删除平台到平台 copy；平台视图唯一反向操作为“Import to ai-config”。
+- 删除平台到平台 copy；平台视图唯一反向操作为“Import to agent-manager”。
 - 所有批量按钮先展示 plan summary、conflicts、backup 路径和 secret key names。
 
 ## 边界与风险
@@ -642,7 +642,7 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 
 - 每个 T00x 为独立 commit/PR review 单元；任一 tranche 可整体 revert，不依赖后续 tranche。
 - 真实 HOME cutover 前保留 legacy 代码的 inventory/read 支持，但关闭其 apply。
-- 每次 apply 都生成 transaction backup + manifest；`ai-config migrate rollback <transaction-id>` 仅在 post-apply fingerprint 未漂移时自动恢复。
+- 每次 apply 都生成 transaction backup + manifest；`agent-manager migrate rollback <transaction-id>` 仅在 post-apply fingerprint 未漂移时自动恢复。
 - 目标在 apply 后被用户修改时 rollback 返回 `rollback_conflict`，不得覆盖；force restore 不在本 feature 自动开放。
 - MCP source schema migration 保留原 `mcp.json` 备份至少一个发布周期；不自动改写 Git 历史。
 - ledger 损坏时删除 ledger 即可安全降级；系统不根据 content equality 推断可删除 ownership。
@@ -653,43 +653,43 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 
 **Files:**
 
-- Modify: `crates/ai-config-core/src/materialize.rs`
-- Modify: `crates/ai-config-core/src/link.rs`
-- Modify: `crates/ai-config-core/src/asset_ops.rs`
-- Modify: `crates/ai-config-core/src/asset_scope.rs`
-- Modify: `crates/ai-config-core/src/mcp_json.rs`
-- Modify: `crates/ai-config-core/src/source.rs`
-- Modify: `crates/ai-config-core/src/paths.rs`
-- Modify: `crates/ai-config-core/src/doctor.rs`
-- Modify: `crates/ai-config-cli/src/lifecycle.rs`
-- Test: `crates/ai-config-cli/tests/deploy_retract.rs`
+- Modify: `crates/agent-manager-core/src/materialize.rs`
+- Modify: `crates/agent-manager-core/src/link.rs`
+- Modify: `crates/agent-manager-core/src/asset_ops.rs`
+- Modify: `crates/agent-manager-core/src/asset_scope.rs`
+- Modify: `crates/agent-manager-core/src/mcp_json.rs`
+- Modify: `crates/agent-manager-core/src/source.rs`
+- Modify: `crates/agent-manager-core/src/paths.rs`
+- Modify: `crates/agent-manager-core/src/doctor.rs`
+- Modify: `crates/agent-manager-cli/src/lifecycle.rs`
+- Test: `crates/agent-manager-cli/tests/deploy_retract.rs`
 - Test: core module tests adjacent to modified code
 
 **Interfaces:** 保持现有 CLI 表面；只把 destructive fallback 改为 fail-closed，为后续 planner 留安全基线。
 
 - [x] **T001.1 Write failing safety tests**：新增 `retract_refuses_unowned_regular_directory`、`uninstall_preserves_unmanaged_skill_directory`、`uninstall_preserves_platform_mcp_file_and_foreign_servers`、`uninstall_preserves_same_name_foreign_mcp_server`、`doctor_is_read_only`、`project_mcp_uses_project_deploy_base`。测试先快照目标 tree hash 和 mode，再调用命令，断言 foreign 零变化。
-- [x] **T001.2 Verify RED**：运行 `cargo test -p ai-config-core retract_refuses_unowned -- --nocapture` 与 `cargo test -p ai-config-cli --test deploy_retract`；预期至少上述新测试因普通目标被删除、MCP 整文件删除或 scope 错误而失败，且测试过滤结果必须显示至少 1 个用例执行。
+- [x] **T001.2 Verify RED**：运行 `cargo test -p agent-manager-core retract_refuses_unowned -- --nocapture` 与 `cargo test -p agent-manager-cli --test deploy_retract`；预期至少上述新测试因普通目标被删除、MCP 整文件删除或 scope 错误而失败，且测试过滤结果必须显示至少 1 个用例执行。
 - [x] **T001.3 Implement fail-closed guards**：`materialize::retract` 只接受精确 symlink 或 legacy marker；删除 `remove_native_platform_copy`/`remove_platform_copy_best_effort` 的硬删除 fallback；在 T002 ledger/具名 ownership 可用前，MCP retract/uninstall 默认拒绝删除，只有明确 legacy marker 证据才允许移除具名 server，绝不凭同名判断；`RenderMcp` 使用 `ctx.deploy_base`；doctor 移除 `--materialize` 写路径。
 - [x] **T001.4 Make read APIs pure**：从 `scan_project_root` 移除 hook reconcile，从 `discover_global_asset_root` 分离 ensure/seed/migrate；list/status/doctor 只调用纯 read variant。
 - [x] **T001.5 Add secret diagnostics without values**：doctor 仅报告 asset-root 中 literal env/header 数、历史 `mcp-secrets.env*` 路径和 mode；不得读取后输出值。增加 sentinel test 扫描 stdout/stderr/JSON。
-- [x] **T001.6 Verify GREEN**：运行 `cargo test -p ai-config-core -p ai-config-cli`；预期全部通过，且 `git status --short` 只包含本任务源码/测试变更。
+- [x] **T001.6 Verify GREEN**：运行 `cargo test -p agent-manager-core -p agent-manager-cli`；预期全部通过，且 `git status --short` 只包含本任务源码/测试变更。
 - [x] **T001.7 Commit checkpoint**：`git commit -m "fix(core): 封死未托管资产误删与只读写入"`。
-- [x] **T001.8 Audit regression closure**：补充并先验证 RED：删除 source 时保留未托管普通目录、第三方软链接和无 ownership 的同名平台 MCP；`materialize::retract` 无 expected source 时拒绝任何软链接，只有 canonical-equivalent 的精确 legacy symlink 可收回。验证：`cargo test -p ai-config-core source_delete_preserves_ -- --nocapture`、`cargo test -p ai-config-core retract_ -- --nocapture`、`cargo test -p ai-config-core -p ai-config-cli -- --test-threads=1`。
+- [x] **T001.8 Audit regression closure**：补充并先验证 RED：删除 source 时保留未托管普通目录、第三方软链接和无 ownership 的同名平台 MCP；`materialize::retract` 无 expected source 时拒绝任何软链接，只有 canonical-equivalent 的精确 legacy symlink 可收回。验证：`cargo test -p agent-manager-core source_delete_preserves_ -- --nocapture`、`cargo test -p agent-manager-core retract_ -- --nocapture`、`cargo test -p agent-manager-core -p agent-manager-cli -- --test-threads=1`。
 - [x] **T001.9 Follow-up commit checkpoint**：仅提交 T001.8 的安全回归、最小修复和计划记录；不得夹带当前 GUI 或其它 feature 的工作树改动。证据：`ba45589 fix(core): 补齐源删除安全边界`。
-- [x] **T001.10 Hook ownership regression closure**：先复现 Cursor 外部 Hook 仅有第三方 binding 时，`hook_adapter::retract` 仍会删除脚本；现在未发现 `ai-config` managed binding 就整体跳过，配置与脚本都保持不变。验证：`retract_preserves_external_hook_script_without_managed_binding` RED→GREEN，随后 `cargo test -p ai-config-core -p ai-config-cli` 全绿。
+- [x] **T001.10 Hook ownership regression closure**：先复现 Cursor 外部 Hook 仅有第三方 binding 时，`hook_adapter::retract` 仍会删除脚本；现在未发现 `agent-manager` managed binding 就整体跳过，配置与脚本都保持不变。验证：`retract_preserves_external_hook_script_without_managed_binding` RED→GREEN，随后 `cargo test -p agent-manager-core -p agent-manager-cli` 全绿。
 
 ### T002 — 统一 projection model、fingerprint 与 optional ledger
 
 **Files:**
 
-- Create: `crates/ai-config-core/src/projection/mod.rs`
-- Create: `crates/ai-config-core/src/projection/model.rs`
-- Create: `crates/ai-config-core/src/projection/fingerprint.rs`
-- Create: `crates/ai-config-core/src/projection/ownership.rs`
-- Create: `crates/ai-config-store/src/projection_repo.rs`
-- Modify: `crates/ai-config-core/src/lib.rs`, `model.rs`, `error.rs`
-- Modify: `crates/ai-config-store/src/lib.rs`, `schema.rs`
-- Modify: `Cargo.toml`, `crates/ai-config-core/Cargo.toml` (`sha2 = "0.10"`, `hex = "0.4"`)
+- Create: `crates/agent-manager-core/src/projection/mod.rs`
+- Create: `crates/agent-manager-core/src/projection/model.rs`
+- Create: `crates/agent-manager-core/src/projection/fingerprint.rs`
+- Create: `crates/agent-manager-core/src/projection/ownership.rs`
+- Create: `crates/agent-manager-store/src/projection_repo.rs`
+- Modify: `crates/agent-manager-core/src/lib.rs`, `model.rs`, `error.rs`
+- Modify: `crates/agent-manager-store/src/lib.rs`, `schema.rs`
+- Modify: `Cargo.toml`, `crates/agent-manager-core/Cargo.toml` (`sha2 = "0.10"`, `hex = "0.4"`)
 
 **Produces:** 本计划“核心 API/类型”中的全部 model（含 `AssetKind::Prompt`、`ProjectionSurface`）；`ProjectionLedger` trait；`SqliteProjectionRepo`；`MemoryProjectionLedger` test double。
 
@@ -700,18 +700,18 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - [x] **T002.1d Prompt cross-layer migration gate**：只读盘点已确认 Prompt 会经过 core `asset_ops` 的 deploy/retract/read/save/delete、`sync`、`platform_scan`、CLI lifecycle 与 GUI 操作分支。`AssetKind::Prompt` 进入旧枚举时必须在全部旧 lifecycle 分支显式 fail-closed 为 `UnsupportedAsset`，不得扫描、导入、硬拷贝或写任何平台路径；只有 T008 的 canonical `prompts/AGENTS.md` + ProjectEntry projection 与 T009 public lifecycle 同时完成后，才可解除该门禁。当前这些共享文件有并行未提交变更，故本 checkpoint 只冻结约束，不重写其工作树。
 - [x] **T002.1e Planner precondition model**：新增 `SourceLayer`、`DeploymentScope`、`ProjectionTarget` 和 `PathFingerprint`；后者将 semantic digest 与 entry type、link target、Unix mode 分离，已经验证“内容相等但 mode 变动”不会改变 Equivalent 判定，却会阻止旧 plan 继续 apply。
 - [x] **T002.1f Missing/rollback/provenance regressions**：`path_fingerprint` 对不存在目标返回 `FingerprintType::Missing`（不是 IO error），为 create-link plan 保留可重验前置条件；补齐 `EffectiveAsset → SourceRef` provenance、三种 `ProjectionSurface` identity round-trip、不可读/账本 mode 不匹配目标保持 `Foreign`，以及 SQLite batch 第二项真实写失败时第一项也完整回滚的临时数据库证据。
-- [ ] **T002.2 Verify RED**：`cargo test -p ai-config-core projection:: -- --nocapture`，预期因模块/类型不存在失败。
+- [ ] **T002.2 Verify RED**：`cargo test -p agent-manager-core projection:: -- --nocapture`，预期因模块/类型不存在失败。
 - [ ] **T002.3 Implement model and fingerprints**：使用 `sha2` 对排序后的相对路径、entry type 和 bytes 计算 semantic digest；mode 仅作为严格 apply precondition，不能混入 Equivalent 判定；symlink fingerprint 记录 target，不跟随未知 root 外链。
 - [ ] **T002.4 Implement ownership classifier**：签名 `classify_projection(expected, actual, record) -> ProjectionState`；content comparison 与 ownership 分支分离，任何不确定状态返回 Foreign/Conflict 而非 managed。
 - [ ] **T002.5 Implement optional ledger**：新增 `projections(scope_key, kind, name, surface, mode, source_path, target_path, entry_key, fingerprint, applied_at)`；实现 read APIs 与单 SQLite transaction 的 `apply_batch`；core 不直接依赖 store；read error 不得让 classifier 推断可删除，batch 任一 mutation 失败不得留下部分 record。
-- [ ] **T002.6 Verify**：`cargo test -p ai-config-core projection::`、`cargo test -p ai-config-store projection_repo`。
+- [ ] **T002.6 Verify**：`cargo test -p agent-manager-core projection::`、`cargo test -p agent-manager-store projection_repo`。
 - [ ] **T002.7 Commit checkpoint**：`git commit -m "feat(core): 建立投影所有权与健康状态模型"`。
 
 ### T003 — 官方平台契约与纯 target adapter
 
 **Files:**
 
-- Refactor: `crates/ai-config-core/src/platform.rs` into `src/platform/{mod,cursor,codex,claude,hermes}.rs`
+- Refactor: `crates/agent-manager-core/src/platform.rs` into `src/platform/{mod,cursor,codex,claude,hermes}.rs`
 - Create: `docs/reference/platform-contracts.md`
 - Modify: `docs/reference/vercel-skills-agent-paths.md`
 - Test: platform module tests
@@ -730,19 +730,19 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - [x] **T003.1g 需求文档防偏航索引**：新增 `docs/reference/platform-contracts.md`，以 Spec 008 为唯一权威链接，按同一固定资产顺序收录 global/project target、格式、投影模式、legacy inventory 与 unsupported 边界；`docs/README.md` 与旧 `vercel-skills-agent-paths.md` 明确标注硬拷贝/第三方路径只用于历史盘点，禁止据此修改新 adapter。
 - [x] **T003.1h 补齐 user/project 目标矩阵回归**：在原有 fixed-order RED→GREEN 用例基础上，补充 user MCP 三个平台容器、user Agent 三个平台格式及 Cursor user/Claude project Command 的精确 target 断言；`projection::platform_adapter` 34 项通过。其余 trust/source-scope/workspace policy 仍是 T003 未完成的显式缺口，不能据此标记 T003 完成。
 - [x] **T003.1i Workspace deploy-root contract RED→GREEN**：冻结 workspace 不是 HOME fallback：Cursor Rule 与 Claude MCP 使用 workspace root 的 project-compatible target，Hermes workspace MCP/Hook 仍明确 `unsupported`。先验证旧 Cursor Rule 无契约的 RED，再以最小 scope guard 调整为非 user target；`projection::platform_adapter` 35 项通过。
-- [ ] **T003.2 Verify RED**：`cargo test -p ai-config-core platform::`；预期 Codex/Claude 当前旧路径断言失败。
+- [ ] **T003.2 Verify RED**：`cargo test -p agent-manager-core platform::`；预期 Codex/Claude 当前旧路径断言失败。
 - [ ] **T003.3 Implement scoped adapters**：平台对象只返回 capability/target；不创建目录、不读取 secret、不写配置。Codex rules 不映射 `.codex/rules`；Hermes workspace/project skills、MCP、Hook 不再写全局。
 - [ ] **T003.4 Record official contracts**：文档写明 URL、verified date、global/project path、format、symlink guarantee、legacy discovery path；测试 fixture 与文档表保持一致。
-- [ ] **T003.5 Verify**：`cargo test -p ai-config-core platform::`。
+- [ ] **T003.5 Verify**：`cargo test -p agent-manager-core platform::`。
 - [ ] **T003.6 Commit checkpoint**：`git commit -m "feat(platform): 对齐四平台官方资产契约"`。
 
 ### T004 — 纯 source resolver 与三层 overlay
 
 **Files:**
 
-- Create: `crates/ai-config-core/src/projection/source.rs`
-- Modify: `crates/ai-config-core/src/source.rs`, `paths.rs`, `workspace.rs`
-- Test: `crates/ai-config-core/tests/source_overlay.rs`
+- Create: `crates/agent-manager-core/src/projection/source.rs`
+- Modify: `crates/agent-manager-core/src/source.rs`, `paths.rs`, `workspace.rs`
+- Test: `crates/agent-manager-core/tests/source_overlay.rs`
 
 **Produces:** `resolve_effective_assets(&SyncRoots) -> Vec<EffectiveAsset>`，排序键固定为 `(kind, name)`。
 
@@ -751,17 +751,17 @@ Hook 暂保留 canonical `hooks.json + hooks/<asset>` 布局，避免同时做�
 - [x] **T004.3 Implement pure scanners**：skills/rules/agents/commands/prompts/hooks/MCP 每类扫描只读；MCP 同时读取新 per-server source，legacy monolith 只作为 migration candidate，不自动删除。
 - [x] **T004.4 Implement deterministic resolver**：按 global→workspace→project 覆盖 map，保留被覆盖来源用于 diff，但只输出一个 effective asset。
 - [x] **T004.5 Verify read-only invariant**：对临时根运行 resolver 100 次，断言 tree digest 不变；resolver 不创建目录、不写 SQLite。
-- [x] **T004.6 Verify**：`cargo test -p ai-config-core projection::source::tests`（4 passed）与 `cargo test -p ai-config-core projection::`（63 passed）。
+- [x] **T004.6 Verify**：`cargo test -p agent-manager-core projection::source::tests`（4 passed）与 `cargo test -p agent-manager-core projection::`（63 passed）。
 - [x] **T004.7 Commit checkpoint**：已提交 `1f2aad0 feat(core): 新增三层 source resolver`。
 
 ### T005 — 只读 Projection Planner
 
 **Files:**
 
-- Create: `crates/ai-config-core/src/projection/planner.rs`
-- Modify: `crates/ai-config-core/src/projection/mod.rs`
-- Compatibility modify: `crates/ai-config-core/src/sync.rs`
-- Test: `crates/ai-config-core/tests/projection_plan.rs`
+- Create: `crates/agent-manager-core/src/projection/planner.rs`
+- Modify: `crates/agent-manager-core/src/projection/mod.rs`
+- Compatibility modify: `crates/agent-manager-core/src/sync.rs`
+- Test: `crates/agent-manager-core/tests/projection_plan.rs`
 
 **Produces:** `PlannerContext`、`build_projection_plan(request, context)` 与
 `sync::CompatibilityProjectionRoots` / `build_compatibility_plan`。旧
@@ -774,17 +774,17 @@ source-first `ProjectionPlan` 降级后交给硬拷贝 executor；T009 在 T007/
 - [x] **T005.3 Implement planner**：接受注入的 `PlannerContext`，遍历 effective assets × requested platforms，并为 Prompt 去重生成唯一 ProjectEntry surface；调用 adapter target、ledger/secret metadata 与 ownership classifier；按规范化 `target.path` 聚合跨 domain generated intents并校验唯一 container renderer；action/member 包含 SourceRef、target fingerprint、reason code/说明，不包含 body/value；任何 adapter parse/renderer disagreement 错误变为 ReportOnly Conflict。
 - [x] **T005.4 Add operations**：Sync 只创建/更新 desired；Retract 只生成 managed removal；Uninstall 是全 scope Retract；orphan 在普通 Sync 只产 ReportOnly OrphanCandidate，单独 cleanup 请求且有 ownership 证据时才产 CleanupOrphan；Import/Migrate 暂只产明确 ReportOnly Unsupported，后续任务实现。
 - [x] **T005.5 Verify deterministic, read-only and budget**：同 fixture 连续 plan 100 次得到同 digest且文件树与 DB 不变；对 1,000 个发现项运行 release-mode benchmark，记录 100 次样本并断言至少 95 次小于 2 秒。
-- [x] **T005.6 Verify**：`cargo test -p ai-config-core --test projection_plan`（20 passed）；release 模式的 1,000 项 × 100 次 p95 < 2 秒门禁通过。
+- [x] **T005.6 Verify**：`cargo test -p agent-manager-core --test projection_plan`（20 passed）；release 模式的 1,000 项 × 100 次 p95 < 2 秒门禁通过。
 - [x] **T005.7 Commit checkpoint**：`feat(core): 增加只读投影计划器`。
 
 ### T006 — Transactional direct-link executor
 
 **Files:**
 
-- Create: `crates/ai-config-core/src/projection/executor.rs`
-- Refactor: `crates/ai-config-core/src/link.rs`
-- Modify: `crates/ai-config-core/src/asset_ops.rs`, `asset_scope.rs`, `skills_add.rs`
-- Test: `crates/ai-config-core/tests/projection_apply.rs`
+- Create: `crates/agent-manager-core/src/projection/executor.rs`
+- Refactor: `crates/agent-manager-core/src/link.rs`
+- Modify: `crates/agent-manager-core/src/asset_ops.rs`, `asset_scope.rs`, `skills_add.rs`
+- Test: `crates/agent-manager-core/tests/projection_apply.rs`
 
 **Produces:** `apply_projection_plan`、transaction manifest、精确 link/unlink、rollback。
 
@@ -794,19 +794,19 @@ source-first `ProjectionPlan` 降级后交给硬拷贝 executor；T009 在 T007/
 - [x] **T006.4 Implement transaction**：排他锁、blocking preflight、source/target precondition、0700 backup dir、snapshot、apply、postcondition、ledger `apply_batch`、reverse rollback；ledger write error 回滚文件，backup manifest 只记录 hash/mode/path，报告最终状态而非中间成功。
 - [x] **T006.5 Implement explicit copy fallback**：仅 adapter 显式 `copy_fallback_allowed`、Windows policy、用户授权且 link unavailable 时生成；使用 temp path + backup-swap，拒绝 source/target tree symlink；ledger 记录 `CopyFallback` source/target digest，ledger 缺失或 digest 漂移时为 Foreign/Drifted 且不可删除；普通 sync 默认不启用。
 - [x] **T006.6 Verify immediate propagation**：修改 canonical SKILL.md 后平台 direct link 可读取新正文，不再次 sync。
-- [x] **T006.7 Verify**：`cargo test -p ai-config-core --test projection_apply`（25 passed），`projection_plan`（20 passed）与 `projection::platform_adapter`（42 passed）。
+- [x] **T006.7 Verify**：`cargo test -p agent-manager-core --test projection_apply`（25 passed），`projection_plan`（20 passed）与 `projection::platform_adapter`（42 passed）。
 - [x] **T006.8 Commit checkpoint**：`e3a0672 feat(core): 增加显式安全拷贝回退`；此前 direct transaction checkpoints 为 `b6e6adb`、`58ef496`、`57b70a3`。
 
 ### T007 — MCP per-server source、secret migration 与四平台 renderer
 
 **Files:**
 
-- Create: `crates/ai-config-core/src/mcp/{mod,source,adapter,cursor_json,codex_toml,claude_json,hermes_yaml}.rs`
+- Create: `crates/agent-manager-core/src/mcp/{mod,source,adapter,cursor_json,codex_toml,claude_json,hermes_yaml}.rs`
 - Modify: workspace/core `Cargo.toml` (`toml_edit = "0.25"`, `yaml-edit = "0.2.3"`)
-- Modify: `crates/ai-config-core/src/model.rs`, `secrets.rs`, `projection/planner.rs`, `projection/executor.rs`, `platform/*`
-- Modify: `crates/ai-config-cli/src/mcp.rs`
-- Test: `crates/ai-config-core/tests/mcp_projection.rs`
-- Fixtures: `crates/ai-config-core/tests/fixtures/mcp/*`
+- Modify: `crates/agent-manager-core/src/model.rs`, `secrets.rs`, `projection/planner.rs`, `projection/executor.rs`, `platform/*`
+- Modify: `crates/agent-manager-cli/src/mcp.rs`
+- Test: `crates/agent-manager-core/tests/mcp_projection.rs`
+- Fixtures: `crates/agent-manager-core/tests/fixtures/mcp/*`
 
 **Produces:** `load_mcp_definitions`、`GeneratedConfigAdapter` implementations、legacy monolith migration plan。
 
@@ -820,25 +820,25 @@ public lifecycle 切换仍留给 T009。
 
 - [x] **T007.1 Write failing source/security tests**：per-server parse、overlay whole-entry override、disabled/targets filtering、placeholder validation、literal value redacted detection、0600 enforcement、plan/Debug/Serialize 无 sentinel；缺失 secret 只阻塞引用该 key 的 server，错误仅含 key name。
 - [x] **T007.2 Write failing renderer/batch tests**：每个平台同一 target 内两个托管 server + 一个 foreign server + unknown top-level fields 只产生一个 batch/一次替换；同一规范化 path 不允许第二 renderer；Cursor foreign/top-level 保留；Codex comments/unknown TOML 保留；Claude user projects/settings 保留、project `.mcp.json` scoped；Hermes user provider/model/comments 保留且 project MCP Unsupported/global config 零变化；remove only owned unchanged server；drift blocks remove。
-- [x] **T007.3 Verify RED**：`cargo test -p ai-config-core --test mcp_projection`。
+- [x] **T007.3 Verify RED**：`cargo test -p agent-manager-core --test mcp_projection`。
 - [x] **T007.4 Implement canonical source**：每个 JSON 转为现有 `McpServer` domain model；`env` 与 HTTP header value 必须是 `${VAR}` 引用，command/args/URL 等非 secret 字段可保留普通字面量；literal env/header、URL userinfo 和疑似 credential args 返回 redacted migration issue。
 - [x] **T007.5 Implement lossless container renderers**：JSON object merge、`toml_edit`、`yaml-edit`；planner 按规范化 target path 聚合 intents并绑定唯一 container renderer，adapter 每个目标文件只 parse/render 一次；semantic validate 后一次 backup-swap，保留 unknown/foreign；中间 bytes 只在 executor 内存，最终 bytes 只在目标和 0600 backup。
 - [x] **T007.6 Implement explicit secret extraction**：`mcp migrate --extract-secrets --apply` 按 spec 的 key 规则写入 secrets；existing differing value/key collision/URL credential 均 conflict；旧 `mcp.json` 只备份不删除。
 - [x] **T007.7 Route MCP domain CLI without lifecycle cutover**：list/show/add/remove/enable/disable 操作 per-server files；deploy/retract 先接入 core plan 的内部/测试入口但不切换 install/sync public lifecycle，保留 legacy read-only import 一个发布周期；统一公开切换留到 T009。
-- [x] **T007.8 Verify**：`mcp_projection` 35 passed；CLI `mcp_migrate`、`deploy_retract`、`mcp_plan_apply`、`mcp_source_readonly` 共 31 passed；另 `cargo test -p ai-config-core -p ai-config-cli` 全绿。
+- [x] **T007.8 Verify**：`mcp_projection` 35 passed；CLI `mcp_migrate`、`deploy_retract`、`mcp_plan_apply`、`mcp_source_readonly` 共 31 passed；另 `cargo test -p agent-manager-core -p agent-manager-cli` 全绿。
 - [x] **T007.9 Commit checkpoint**：source/renderer/transaction/CLI 分步 checkpoint 至 `eaeb880 feat(cli): 接入 MCP 源投影执行`；全程未切换 public lifecycle。
 
 ### T008 — Hook generated projection 与 canonical Prompt 入口
 
 **Files:**
 
-- Modify: `crates/ai-config-core/src/hook.rs`, `hook_adapter.rs`, `source.rs`, `projection/planner.rs`, `projection/executor.rs`
+- Modify: `crates/agent-manager-core/src/hook.rs`, `hook_adapter.rs`, `source.rs`, `projection/planner.rs`, `projection/executor.rs`
 - Create/refactor focused files: `hook_adapter/{mod,cursor,codex,claude,hermes}.rs`
 - Modify: `templates/project/AGENTS.md`, `CLAUDE.md`, `HERMES.md`
-- Test: `crates/ai-config-core/tests/hook_projection.rs`
-- Test: `crates/ai-config-core/tests/prompt_projection.rs`
+- Test: `crates/agent-manager-core/tests/hook_projection.rs`
+- Test: `crates/agent-manager-core/tests/prompt_projection.rs`
 
-**Produces:** Hook script/bundle direct link + platform config GeneratedMutation；`.ai-config/prompts/AGENTS.md` canonical、root `AGENTS.md` ProjectEntry link、Claude minimal wrapper。
+**Produces:** Hook script/bundle direct link + platform config GeneratedMutation；`.agent-manager/prompts/AGENTS.md` canonical、root `AGENTS.md` ProjectEntry link、Claude minimal wrapper。
 
 **执行状态（2026-07-17，防偏航）**：Prompt canonical source、Hook JSON transaction 与
 Hermes user 的跨域 coordinator 已完成独立 RED→GREEN checkpoint。Hook JSON 覆盖 Cursor、
@@ -850,12 +850,12 @@ public lifecycle 以及 Hermes cross-domain retract/uninstall；在此之前，�
 两份针对同一 `config.yaml` 的计划。
 
 - [x] **T008.1 Write failing Hook tests**：scan zero-write；foreign bindings preserved across platforms；retract only owned binding/link；drift blocks retract；bundle single unit；apply failure restores config+link；project overlay；migration always backup；Hermes project Hook unsupported 且 global config 零变化。
-- [x] **T008.2 Write failing Prompt tests**：project template seeds `.ai-config/prompts/AGENTS.md`；root AGENTS 是精确 link；四平台只产生一个 ProjectEntry action；Claude wrapper 只引用 AGENTS；现有普通 AGENTS/CLAUDE 或外部 link 为 Equivalent/Foreign/Conflict 且零覆盖；prompt overlay 与 repeated apply noop。
+- [x] **T008.2 Write failing Prompt tests**：project template seeds `.agent-manager/prompts/AGENTS.md`；root AGENTS 是精确 link；四平台只产生一个 ProjectEntry action；Claude wrapper 只引用 AGENTS；现有普通 AGENTS/CLAUDE 或外部 link 为 Equivalent/Foreign/Conflict 且零覆盖；prompt overlay 与 repeated apply noop。
 - [x] **T008.3 Write cross-domain container test**：Hermes user `config.yaml` 同时包含 MCP、`skills.external_dirs`、Hook 与 foreign provider/model 时，planner 只生成一个 target batch，container renderer 一次解析/替换并保留全部 foreign/unknown；workspace/project 请求为 Unsupported 且绝不触碰 global config。
 - [x] **T008.4 Verify RED**：`hook_projection` 与 `prompt_projection` 均先实测 RED；Prompt 6/6、Hook JSON 11/11 已转 GREEN，保留 Hermes YAML 跨域 RED 给 T008.3。
 - [ ] **T008.5 Split adapter responsibilities**：Hook/ExternalDirectory/PromptWrapper adapter 只产生 domain intents；每个目标配置只有一个 platform container renderer 负责跨 domain parse/render；ownership/planning/transaction 留 projection 模块；删除 reconcile side effect。
 - [x] **T008.6 Link scripts/bundles**：能直接执行的 script/目录逐项 link；无法链接时显式 unsupported/copy fallback，不再默认复制。
-- [x] **T008.7 Consolidate project entry prompts**：template 把完整正文 seed 到 `.ai-config/prompts/AGENTS.md`；root `AGENTS.md` 由 ProjectEntry link 产生；`CLAUDE.md` 仅 import/reference + Claude-specific short section；Hermes/Cursor/Codex 直接读 AGENTS，禁止复制完整正文。
+- [x] **T008.7 Consolidate project entry prompts**：template 把完整正文 seed 到 `.agent-manager/prompts/AGENTS.md`；root `AGENTS.md` 由 ProjectEntry link 产生；`CLAUDE.md` 仅 import/reference + Claude-specific short section；Hermes/Cursor/Codex 直接读 AGENTS，禁止复制完整正文。
 - [x] **T008.8 Verify**：`hermes_cross_domain_projection` 5 passed、`hook_projection` 11 passed、`prompt_projection` 6 passed、`mcp_projection` 35 passed；并回归 `projection_plan` 20 passed、`projection_apply` 25 passed及 core strict clippy。
 - [ ] **T008.9 Commit checkpoint**：`git commit -m "feat(hooks): 接入事务化生成投影与统一入口"`。
 
@@ -873,13 +873,13 @@ request 的 schema、digest、actions 完全一致。GUI 的 `command_bridge` / 
 source-first 要求缩成 CLI-only，T008.5/T008.9 继续保持未完成，直到 T011 删除最后的 GUI
 旁路；该跨任务门禁不重新打开已经完成的 T009 CLI/MCP 合同。
 
-### T009 — CLI 与 ai-config MCP API 统一走 plan/apply
+### T009 — CLI 与 agent-manager MCP API 统一走 plan/apply
 
 **Files:**
 
-- Create: `crates/ai-config-cli/src/projection.rs`
-- Create: `crates/ai-config-cli/tests/projection_lifecycle.rs`
-- Modify: `crates/ai-config-cli/Cargo.toml`, `src/main.rs`, `lifecycle.rs`, `agent_api.rs`, `serve.rs`, `output.rs`
+- Create: `crates/agent-manager-cli/src/projection.rs`
+- Create: `crates/agent-manager-cli/tests/projection_lifecycle.rs`
+- Modify: `crates/agent-manager-cli/Cargo.toml`, `src/main.rs`, `lifecycle.rs`, `agent_api.rs`, `serve.rs`, `output.rs`
 - Modify tests: `report_json.rs`, `agent_api_cli.rs`, `deploy_retract.rs`
 
 **CLI contract:** `install/sync/uninstall` 默认 plan-only；`--apply` 才写入；`--workspace` 保留。MCP `ai_config_sync/deploy/retract` 增加 `apply: bool = false`。只有 T007 MCP renderer 与 T008 Hook/Prompt/container renderer 均完成后，才在本任务统一切换 public lifecycle，避免任何 kind 出现功能空窗。
@@ -900,26 +900,26 @@ core+CLI 全量测试与严格 clippy 通过；GUI 旁路仍由 T011 单独收�
 - [x] **T009.3 Add contexts, clap flags and reports**：CLI/serve 调用层构造可序列化 `ProjectionRequest` 与注入式 `PlannerContext`/`ExecutorContext`；core 不打开 store；apply 只把 plan、context 和 options 交给 core。CLI/MCP 所有 kind 迁移后已删除 lifecycle 的 materialize/MCP/Hook platform loops；GUI 旧 commands 明确留给 T011.4 删除。
 - [x] **T009.4 Define exit/report contract**：0=plan/apply success，3=blocking conflict 或已回滚 transaction failure，4=missing secret skipped，5=filesystem；输出 `failed/rolled_back/not_applied`；JSON error 继续使用 redacted envelope，并遵循既有 output contract 写 stdout。
 - [x] **T009.5 Update MCP schemas**：tool output schema 使用 ProjectionPlan/ApplyReport；`apply` 默认 false；agent 无法绕过 conflict/adopt guard。`ai_config_sync` 已复用 lifecycle projection；单项 deploy/retract 在计划表达完成前 fail-closed，禁止旧直写旁路。
-- [x] **T009.6 Verify**：指定四组 32 passed；另 `workspace_projection_lifecycle` 4 passed、`cargo test -p ai-config-core -p ai-config-cli` 全绿、core+CLI strict clippy 通过。
+- [x] **T009.6 Verify**：指定四组 32 passed；另 `workspace_projection_lifecycle` 4 passed、`cargo test -p agent-manager-core -p agent-manager-cli` 全绿、core+CLI strict clippy 通过。
 - [x] **T009.7 Commit checkpoint**：本任务以 `fix(cli): 完成投影生命周期事务合同` 建立独立 checkpoint；不包含用户 GUI/009 安全止血脏改。
 
 ### T010 — Explicit import 与 legacy/.cc-switch migration
 
 **Files:**
 
-- Create: `crates/ai-config-core/src/projection/migration.rs`
-- Create: `crates/ai-config-cli/src/migration.rs`
-- Create: `crates/ai-config-cli/tests/projection_migration.rs`
+- Create: `crates/agent-manager-core/src/projection/migration.rs`
+- Create: `crates/agent-manager-cli/src/migration.rs`
+- Create: `crates/agent-manager-cli/tests/projection_migration.rs`
 - Modify: `asset_ops.rs`, `platform_scan.rs`, `main.rs`, `serve.rs`
 
 **CLI contract:**
 
 ```text
-ai-config migrate inventory --json
-ai-config migrate source-first --plan <file> --select <action-id>... [--extract-secrets] [--apply]
-ai-config migrate rollback <transaction-id>
-ai-config import <kind> <name> --from <platform> --to global|project [--replace] [--apply]
-ai-config adopt --plan <file> --select <action-id>... --apply
+agent-manager migrate inventory --json
+agent-manager migrate source-first --plan <file> --select <action-id>... [--extract-secrets] [--apply]
+agent-manager migrate rollback <transaction-id>
+agent-manager import <kind> <name> --from <platform> --to global|project [--replace] [--apply]
+agent-manager adopt --plan <file> --select <action-id>... --apply
 ```
 
 **执行状态（2026-07-17，Skills inventory checkpoint）**：已新增纯 core migration
@@ -1017,7 +1017,7 @@ core 对 Skills/Rules/MCP/Agents 补齐 `global → workspace` 整项覆盖，�
 统一 lstat-only，root/parent symlink、非目录及不可读节点均产生结构化 blocking issue。Hermes 的
 workspace Skills/MCP/Agents 与 Codex instruction Rules 维持 schema v1 精确 unsupported reason，
 不扫描 HOME 平台目录。Workspace lifecycle 使用 `global → workspace → project` source overlay，
-即使成员没有本地 `.ai-config` 也继承 workspace/global defaults；apply 仅写各成员 deploy target，
+即使成员没有本地 `.agent-manager` 也继承 workspace/global defaults；apply 仅写各成员 deploy target，
 继续沿用统一预检、事务与回滚合同。CLI Workspace scope 首轮实际得到 `project` 而 RED；core overlay
 首轮缺少 Workspace unsupported reason 而 RED；Skills/Rules parent 与 canonical root symlink 复审均
 先 RED；lifecycle 空成员缺少 workspace default 也先 RED。最终 migration E2E 23 passed、Workspace
@@ -1044,11 +1044,11 @@ Workspace migration/import、Codex/Claude/Hermes MCP normalize、字段级 norma
 alias 与 MCP server surface 必须继续逐项 RED→GREEN，不能把当前安全切片视为完整 T010。
 
 **执行状态（2026-07-17，legacy MCP 写旁路止血 checkpoint）**：新增 CLI 回归证明历史
-`ai-config mcp migrate <container> --extract-secrets --apply` 在没有 reviewed plan/action ID 时会直接
+`agent-manager mcp migrate <container> --extract-secrets --apply` 在没有 reviewed plan/action ID 时会直接
 写 canonical source、secret store 与 legacy backup，首轮实际得到 exit 0 并创建三类文件。现已删除
 该 490 行 platform-to-source/secret-extraction 写实现；`mcp migrate --dry-run` 只保留 allowlisted
 root 下的只读 server-count 盘点，任何非 dry-run 组合（包括旧的双 flag）均 fail-closed，并引导到
-`ai-config import` / `migrate source-first`。既有正向 legacy 写测试改为更强的零写拒绝合同；最终
+`agent-manager import` / `migrate source-first`。既有正向 legacy 写测试改为更强的零写拒绝合同；最终
 legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI all-target strict clippy
 通过。T010.6 仍未完成：secret extraction 只有经过新计划、严格 secret store 与 apply-time 注入合同
 后才能重新提供；当前不保留任何可调用的旧写回退。
@@ -1059,14 +1059,14 @@ legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI al
 - [x] **T010.4 Implement allowlisted inventory**：只扫描 canonical/global/workspace/project、官方 current/legacy platform roots、`.cc-switch/skills` 和已知 plugin roots；每项记录 provenance/reason，不读取/输出 secret values。
 - [ ] **T010.5 Implement explicit import**：只允许 create-only 或 replace-source-with-backup；预览必须包含 normalized diff、destination layer/path、敏感信息检查；平台原件不删除；source 校验通过后另建 projection plan。
 - [ ] **T010.6 Implement migration/adopt/rollback**：默认 dry-run；legacy marker 只可生成建议，任何 apply 都需 plan digest + selected action IDs；equal ordinary copy 和 `.cc-switch` 必须逐项选择；transaction manifest 保留至少一个发布周期。
-- [ ] **T010.7 Verify**：`cargo test -p ai-config-cli --test projection_migration` 与 `cargo test -p ai-config-cli --test projection_migration_actions`。
+- [ ] **T010.7 Verify**：`cargo test -p agent-manager-cli --test projection_migration` 与 `cargo test -p agent-manager-cli --test projection_migration_actions`。
 - [ ] **T010.8 Commit checkpoint**：`git commit -m "feat(migrate): 增加外部资产盘点与可回滚收敛"`。
 
 ### T011 — GUI/Tauri 从五平台对等改为 source-first
 
 **Files:**
 
-- Modify: `apps/ai-config-gui/src/command_bridge.rs`, `src/lib.rs`
+- Modify: `apps/agent-manager-gui/src/command_bridge.rs`, `src/lib.rs`
 - Modify: `src/types.ts`, `src/api/tauriAssets.ts`, `src/hooks/useAssetOperations.ts`
 - Modify: `src/utils/entryPlatformToggle.ts`, `aggregatePlatformState.ts`, `entryUpdate.ts` and tests
 - Modify: `src/components/assets/PlatformIconButtons.tsx`, `AssetRow.tsx`, `RowSyncActions.tsx`
@@ -1075,34 +1075,34 @@ legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI al
 
 **Produces:** Tauri `projection_plan`、`projection_apply`、`projection_retract`、`import_to_source` commands；TS `ProjectionState` union 与 plan types。
 
-- [ ] **T011.1 Write failing Rust bridge tests**：Tauri bridge 只调用 core；默认 plan-only；无 `materialize`/platform-to-platform implementation；planner ledger read error 安全降级为“不证明 ownership”，apply ledger write error 则中止并回滚；同一规范化 fixture 经 CLI、ai-config MCP API、Tauri bridge 的 schema/action ordering/plan digest 完全一致。
-- [ ] **T011.2 Write failing frontend state tests**：Managed 才可 retract；Missing 可 create；Equivalent 需基于当前 plan digest + action_id adopt confirmation；不同内容 Foreign 不可直接 adopt，只可 import；Conflict/Drifted 只可 diff/import/repair；ai-config icon 不可 retract；无 peer/bulk takeover。
-- [ ] **T011.3 Verify RED**：`cargo test -p ai-config-gui`；`cd apps/ai-config-gui && npm run test -- src/utils/entryPlatformToggle.test.ts src/components/assets/PlatformIconButtons.test.tsx`。
+- [ ] **T011.1 Write failing Rust bridge tests**：Tauri bridge 只调用 core；默认 plan-only；无 `materialize`/platform-to-platform implementation；planner ledger read error 安全降级为“不证明 ownership”，apply ledger write error 则中止并回滚；同一规范化 fixture 经 CLI、agent-manager MCP API、Tauri bridge 的 schema/action ordering/plan digest 完全一致。
+- [ ] **T011.2 Write failing frontend state tests**：Managed 才可 retract；Missing 可 create；Equivalent 需基于当前 plan digest + action_id adopt confirmation；不同内容 Foreign 不可直接 adopt，只可 import；Conflict/Drifted 只可 diff/import/repair；agent-manager icon 不可 retract；无 peer/bulk takeover。
+- [ ] **T011.3 Verify RED**：`cargo test -p agent-manager-gui`；`cd apps/agent-manager-gui && npm run test -- src/utils/entryPlatformToggle.test.ts src/components/assets/PlatformIconButtons.test.tsx`。
 - [ ] **T011.4 Implement thin commands/types**：Rust bridge 构造 request、PlannerContext/ExecutorContext 后调用 core；TS 与 Rust serde names 一致；删除 `cmd_*_deploy_from_platform`、`cmd_apply_sync_choice` 等写路径。
 - [ ] **T011.5 Implement plan modal**：展示 changed/unchanged/conflict/unsupported、source layer、target、backup policy 和 secret key names；普通 apply 传 plan digest，adopt/migration 另传逐项 selected action IDs，禁止“接管整个平台”按钮。
-- [ ] **T011.6 Remove peer-copy UX**：平台视图仅 Import to ai-config；source view 才可投影；列表状态文案不再把 synced/linked 混用。
-- [ ] **T011.7 Verify**：`cargo test -p ai-config-gui`；`cd apps/ai-config-gui && npm run test && npm run build`。
+- [ ] **T011.6 Remove peer-copy UX**：平台视图仅 Import to agent-manager；source view 才可投影；列表状态文案不再把 synced/linked 混用。
+- [ ] **T011.7 Verify**：`cargo test -p agent-manager-gui`；`cd apps/agent-manager-gui && npm run test && npm run build`。
 - [ ] **T011.8 Commit checkpoint**：`git commit -m "refactor(gui): 切换为单一源投影交互"`。
 
 ### T012 — 仓库 dogfood、旧实现清理与文档收敛
 
 **Files:**
 
-- Move canonical project assets into `.ai-config/{skills,rules,agents,commands,prompts,hooks,mcp}`
+- Move canonical project assets into `.agent-manager/{skills,rules,agents,commands,prompts,hooks,mcp}`
 - Remove tracked generated copies under `.cursor/skills`, `.codex/skills`, `.claude/skills` and generated hook/MCP configs
 - Modify: `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `HERMES.md`
-- Modify: `.specify/memory/constitution.md`, `.cursor/rules/00-ai-config-core.mdc`, `hooks-asset-layout.mdc`
+- Modify: `.specify/memory/constitution.md`, `.cursor/rules/00-agent-manager-core.mdc`, `hooks-asset-layout.mdc`
 - Modify: `README.md`, `docs/product/{PRD,ARCHITECTURE,DESIGN}.md`, `CHANGELOG.md`
-- Create: `crates/ai-config-cli/tests/repository_hygiene.rs`
+- Create: `crates/agent-manager-cli/tests/repository_hygiene.rs`
 - Delete after zero references: `materialize.rs`, `sync_conflict.rs`, legacy MCP paths/functions, obsolete path-independence logic
 
-- [x] **T012.1 Write failing hygiene tests**：`git ls-files` fixture 禁止 platform skill/prompt regular copies、generated configs 和 machine absolute paths；canonical project assets 必须唯一；root AGENTS 只能是指向 `.ai-config/prompts/AGENTS.md` 的 tracked symlink（或经明确豁免的最小 bootstrap）；tracked MCP fixture 仅 placeholders。
-- [x] **T012.2 Verify RED**：`cargo test -p ai-config-cli --test repository_hygiene`，预期当前四套 tracked copies 与绝对路径导致失败。
-- [x] **T012.3 Dogfood source-first layout**：保留 `.ai-config` canonical；完整入口正文迁入 `.ai-config/prompts/AGENTS.md`，根 AGENTS 使用 ProjectEntry link；平台 projection 改为本地生成并 gitignored。
+- [x] **T012.1 Write failing hygiene tests**：`git ls-files` fixture 禁止 platform skill/prompt regular copies、generated configs 和 machine absolute paths；canonical project assets 必须唯一；root AGENTS 只能是指向 `.agent-manager/prompts/AGENTS.md` 的 tracked symlink（或经明确豁免的最小 bootstrap）；tracked MCP fixture 仅 placeholders。
+- [x] **T012.2 Verify RED**：`cargo test -p agent-manager-cli --test repository_hygiene`，预期当前四套 tracked copies 与绝对路径导致失败。
+- [x] **T012.3 Dogfood source-first layout**：保留 `.agent-manager` canonical；完整入口正文迁入 `.agent-manager/prompts/AGENTS.md`，根 AGENTS 使用 ProjectEntry link；平台 projection 改为本地生成并 gitignored。
 - [ ] **T012.4 Remove legacy production paths**：`rg` 确认无调用后删除 materialize、peer-copy、doctor materialize、旧 MCP whole-file deploy/retract；legacy inventory reader 保留一个发布周期且严格只读。
 - [ ] **T012.5 Rewrite product truth**：PRD 明确唯一源/单向 projection；ARCHITECTURE 只保留 planner/executor；DESIGN 更新状态/按钮；constitution 把“直接覆盖不备份”改为“foreign fail-closed + generated transaction backup”。
 - [ ] **T012.6 Verify no contradictory terms**：运行 `rg -n "五平台对等|独立硬拷贝|deploy_from_platform|materialize::deploy|\.codex/mcp\.json|\.claude/mcp\.json" README.md docs crates apps`；除 migration/history 章节外预期零命中。
-- [ ] **T012.7 Verify hygiene**：`cargo test -p ai-config-cli --test repository_hygiene`。
+- [ ] **T012.7 Verify hygiene**：`cargo test -p agent-manager-cli --test repository_hygiene`。
 - [ ] **T012.8 Commit checkpoint**：`git commit -m "refactor(core): 删除对等硬拷贝并收敛产品文档"`。
 
 ### T013 — 全量验证、canary 与发布门禁
@@ -1113,12 +1113,12 @@ legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI al
 - No feature implementation beyond fixing verification failures attributable to this feature.
 
 - [ ] **T013.1 Format/lint**：`cargo fmt --all --check`；`cargo clippy --workspace --all-targets -- -D warnings`；预期 exit 0。
-- [ ] **T013.2 Core/CLI/store tests**：`cargo test -p ai-config-core -p ai-config-store -p ai-config-cli -- --test-threads=1`；预期 0 failed。
+- [ ] **T013.2 Core/CLI/store tests**：`cargo test -p agent-manager-core -p agent-manager-store -p agent-manager-cli -- --test-threads=1`；预期 0 failed。
 - [ ] **T013.3 Workspace tests**：`cargo test --workspace -- --test-threads=1`；预期 0 failed。
-- [ ] **T013.4 GUI tests/build**：`cd apps/ai-config-gui && npm run test && npm run build`；随后仓库根 `cargo test -p ai-config-gui`；预期全绿。
+- [ ] **T013.4 GUI tests/build**：`cd apps/agent-manager-gui && npm run test && npm run build`；随后仓库根 `cargo test -p agent-manager-gui`；预期全绿。
 - [ ] **T013.5 Temp-HOME acceptance corpora**：运行 deterministic fixture generator + migration/source-projection/MCP/Hook suites：至少 100 effective assets × 4 平台，逐项核对 target/strategy/unsupported；至少 50 foreign + 10 blocking conflicts，断言 sync/retract/uninstall 零修改；至少 200 legacy/foreign/conflict 混合项，断言分类 100%、未选项数据丢失 0、repeat migration action 0；同时覆盖 missing/correct/wrong/broken link、marker/copy/.cc-switch、四格式、global/workspace/project、stale plan、rollback。
 - [ ] **T013.6 Sentinel secret scan**：以唯一哨兵运行所有 CLI JSON/MCP API/GUI bridge error paths；对 captured stdout/stderr/log/DB/plan/manifest/source 扫描，预期 0 命中。
-- [ ] **T013.7 Real-HOME inventory-only**：`./target/debug/ai-config migrate inventory --json`、`sync --json`、`doctor --json`、`status --json`；执行前后 HOME allowlisted roots tree hash 必须完全一致。
+- [ ] **T013.7 Real-HOME inventory-only**：`./target/debug/agent-manager migrate inventory --json`、`sync --json`、`doctor --json`、`status --json`；执行前后 HOME allowlisted roots tree hash 必须完全一致。
 - [ ] **T013.8 One-skill canary**：经用户再次确认后，只选择一个无 secret、非关键、无 conflict skill 执行 `--apply`；Cursor/Codex/Claude/Hermes 新会话确认发现；第二次 plan changed=0。
 - [ ] **T013.9 Final review**：运行 requesting-code-review；逐项对照 42 条 FR 与 12 条 SC，确认 CLI/MCP/GUI digest contract、1,000-item 性能样本、platform contract snapshot、无 placeholder/接口漂移、rollback 证据齐全。
 - [ ] **T013.10 Commit checkpoint**：`git commit -m "test(projection): 完成单一源迁移验证闭环"`。
@@ -1127,8 +1127,8 @@ legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI al
 
 该段是发布后的运维 runbook，不在实现阶段自动执行：
 
-1. 停止 ai-config daemon/watch 和任何会写 skills 的 `.cc-switch` 功能；保留 Provider 切换。
-2. 对 `~/.ai-config`、平台目录、`.cc-switch/skills`、Codex/Claude 原生 MCP 配置做只读 inventory，保存 redacted plan。
+1. 停止 agent-manager daemon/watch 和任何会写 skills 的 `.cc-switch` 功能；保留 Provider 切换。
+2. 对 `~/.agent-manager`、平台目录、`.cc-switch/skills`、Codex/Claude 原生 MCP 配置做只读 inventory，保存 redacted plan。
 3. 对已进入 Git 的 literal MCP env/header 按潜在泄露处理：人工确认、服务侧轮换；历史重写另行授权。
 4. 先迁移 canonical MCP 到 per-server + secret references，验证 0600 与四平台 renderer；不删旧文件。
 5. 对同名 assets 按 `conflict > external_owned > equivalent > legacy_managed` 顺序人工处理；不批量 take-over `.cc-switch`。

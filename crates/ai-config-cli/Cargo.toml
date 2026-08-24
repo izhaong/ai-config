@@ -1,19 +1,19 @@
 [package]
-name = "ai-config-cli"
+name = "agent-manager-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "ai-config 命令行入口:agent / 人类都用,带 --json 结构化输出"
+description = "agent-manager 命令行入口:agent / 人类都用,带 --json 结构化输出"
 
 [[bin]]
-name = "ai-config"
+name = "agent-manager"
 path = "src/main.rs"
 
 [dependencies]
-ai-config-core = { path = "../ai-config-core" }
-ai-config-store = { path = "../ai-config-store" }
+agent-manager-core = { path = "../agent-manager-core" }
+agent-manager-store = { path = "../agent-manager-store" }
 clap.workspace = true
 clap_complete = "4.5"
 serde.workspace = true

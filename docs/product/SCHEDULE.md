@@ -1,11 +1,11 @@
-# ai-config 桌面端 — 项目排期
+# agent-manager 桌面端 — 项目排期
 
 > 状态：**v0.2** · 2026-06-12（M1 Approved；Q-1..Q-8 拍板同步；crate 命名/前端框架与 plan 对齐）
 > 范围：本项目交付的时间 / 任务 / 依赖 / 资源
-> 上游：`PRD.md` v0.3 Approved（§12.4 决策日志）·`.claude/plans/ai-config/20260612_ai-config_rust-desktop.plan.md`（§8.1 已决 / §8.2 待决）
+> 上游：`PRD.md` v0.3 Approved（§12.4 决策日志）·`.claude/plans/agent-manager/20260612_agent-manager_rust-desktop.plan.md`（§8.1 已决 / §8.2 待决）
 > 下游：`ARCHITECTURE.md`（组件 / 模块边界）·`DESIGN.md`（GUI 信息架构）
 > 修订：每周末更新（一次大迭代后大改一次）
-> **CLI 二进制名**：`ai-config`（2026-06-12 统一；旧 `ai-configd` 措辞已废止，参见 PRD §6.1 退码表）
+> **CLI 二进制名**：`agent-manager`（2026-06-12 统一；旧 `agent-managerd` 措辞已废止，参见 PRD §6.1 退码表）
 
 ---
 
@@ -30,7 +30,7 @@
 | M2 — Phase 0 完成 | W2 | ⬜ | `crates/` workspace + CI + pre-commit 禁 sh + 旧命令仍可用 |
 | M3 — Phase 1 完成 | W5 | ⬜ | CLI 取代 `install.sh` + `scripts/*.mjs`；MCP 整文件 → 逐项重构完成 |
 | M4 — Phase 2 完成 | W7 | ⬜ | 守护进程 + 事件总线 |
-| M5 — Phase 3 完成 | W10 | ⬜ | Tauri GUI 取代 webui；项目级 `.ai-config/` 适配 |
+| M5 — Phase 3 完成 | W10 | ⬜ | Tauri GUI 取代 webui；项目级 `.agent-manager/` 适配 |
 | M6 — GA | W11 | ⬜ | 旧脚本/webui 删除；README 更新；`SCHEDULE.md` 进入"维护期" |
 | M7 — Deprecate Legacy | W23（GA + 3 月） | ⬜ | 老命令完全忽略；旧 DB 迁完可删 |
 
@@ -49,12 +49,12 @@
 | | pre-commit 禁 sh / 禁 mjs | 0.5 | 钩子误报 |
 | | rust-toolchain.toml + 跨平台预编译调研 | 1.0 | tauri-bundler 在 Win 编译链 |
 | | **小计** | **2.5** | |
-| **1 — CLI** | `ai-config-core` 模块（fs / 模板 / 链接） | 4.0 | junction 跨平台 |
-| | `ai-config-cli` 子命令树（11 个顶层） | 3.0 | clap 派生 + 退出码 |
+| **1 — CLI** | `agent-manager-core` 模块（fs / 模板 / 链接） | 4.0 | junction 跨平台 |
+| | `agent-manager-cli` 子命令树（11 个顶层） | 3.0 | clap 派生 + 退出码 |
 | | `mcp` 逐项子命令组 | 2.0 | 旧整文件 → 逐项迁移器 |
 | | `secrets` 子命令组 | 1.5 | 0600 写入 + 引导 |
 | | 行为对齐测试（旧 install.sh vs 新 CLI） | 2.0 | 跨平台 fixture |
-| | **crates.io 发布准备**（Q-1 第二通道）：`cargo login`、`cargo publish --dry-run`、发布 `ai-config = "0.1"`、验证 tarball（Q-1 决策：Phase 1–2 之间上线） | 0.5 | crates.io 账号 + API token 需用户提供 |
+| | **crates.io 发布准备**（Q-1 第二通道）：`cargo login`、`cargo publish --dry-run`、发布 `agent-manager = "0.1"`、验证 tarball（Q-1 决策：Phase 1–2 之间上线） | 0.5 | crates.io 账号 + API token 需用户提供 |
 | | **小计** | **13.0** | |
 | **2 — 守护进程** | `notify` watcher + debouncer | 2.0 | rename 检测 |
 | | 事件总线（broadcast channel） | 1.0 | — |
@@ -79,8 +79,8 @@
 | | `AGENTS.md` / `HERMES.md` 命令引用同步 | 0.5 | — |
 | | `skills/*/SKILL.md` 中提到 `install.sh` 的全部更新 | 1.0 | 全文 grep |
 | | 发版说明（draft for v0.1） | 0.5 | — |
-| | **brew tap 发布**（Q-1 第四通道）：建 `homebrew-zh-cloud` 仓，写 `ai-config.rb` Formula，README 加 `brew install zh-cloud/ai-config/ai-config` 横幅 | 0.5 | 需先发 GH Release |
-| | **自启动集成子命令**（Q-4 决策：M6 之后在 `install` 子命令里集成 launchd / systemd --user / Task Scheduler）：`ai-config install --autostart` 子模式 | 1.0 | launchd plist / systemd user unit 模板 |
+| | **brew tap 发布**（Q-1 第四通道）：建 `homebrew-zh-cloud` 仓，写 `agent-manager.rb` Formula，README 加 `brew install zh-cloud/agent-manager/agent-manager` 横幅 | 0.5 | 需先发 GH Release |
+| | **自启动集成子命令**（Q-4 决策：M6 之后在 `install` 子命令里集成 launchd / systemd --user / Task Scheduler）：`agent-manager install --autostart` 子模式 | 1.0 | launchd plist / systemd user unit 模板 |
 | | **小计** | **4.5** | |
 
 **总计**：≈ **46.0 人天**（净 7.7 周 / 6h·d⁻¹），含 30% 缓冲 ≈ **11 周**。与 §2 里程碑 M6 ≈ W11 一致。
@@ -109,13 +109,13 @@
 ### W2 (2026-06-23 ~ 06-29) — Phase 0 准备
 
 - [ ] 创 `crates/` workspace（**7 个 crate，对齐 plan §2.2.1**）：
-  - `crates/ai-config-core`、`crates/ai-config-cli`、`crates/ai-config-daemon`
-  - `crates/ai-config-bus`、`crates/ai-config-watcher`、`crates/ai-config-store`
-  - `apps/ai-config-gui`（Tauri 壳，Phase 3 才起骨架；本阶段只建空目录）
+  - `crates/agent-manager-core`、`crates/agent-manager-cli`、`crates/agent-manager-daemon`
+  - `crates/agent-manager-bus`、`crates/agent-manager-watcher`、`crates/agent-manager-store`
+  - `apps/agent-manager-gui`（Tauri 壳，Phase 3 才起骨架；本阶段只建空目录）
 - [ ] 根 `Cargo.toml` workspace 片段
 - [ ] CI workflow（GitHub Actions / Gitea Actions 选一）：`cargo test` + `cargo clippy -- -D warnings` + `cargo fmt --check`
 - [ ] Pre-commit 钩子：`git grep -E '\.sh$|\.mjs$|install\.sh' -- ':!**/legacy/**'` 在 commit 前 fail
-- [ ] `.gitignore` 加 `target/` `.ai-config/daemon.sock`
+- [ ] `.gitignore` 加 `target/` `.agent-manager/daemon.sock`
 - [ ] `rust-toolchain.toml` pin stable
 - [ ] 调研 tauri-bundler 跨平台编译链（macOS / Linux / Windows），记录到 plan.md
 
@@ -123,19 +123,19 @@
 
 ### W3 (2026-06-30 ~ 07-06) — Phase 1.a core lib
 
-- [ ] `ai-config-core` 模块：`fs`（链接 + junction 抽象）
-- [ ] `ai-config-core` 模块：`template`（minijinja + 原子 rename）
-- [ ] `ai-config-core` 模块：`config`（TOML / serde）
-- [ ] `ai-config-core` 模块：`error`（thiserror + anyhow）
+- [ ] `agent-manager-core` 模块：`fs`（链接 + junction 抽象）
+- [ ] `agent-manager-core` 模块：`template`（minijinja + 原子 rename）
+- [ ] `agent-manager-core` 模块：`config`（TOML / serde）
+- [ ] `agent-manager-core` 模块：`error`（thiserror + anyhow）
 - [ ] 单元测试：链接幂等 / 模板变量替换 / 0600 写入
 
 ### W4 (2026-07-07 ~ 07-13) — Phase 1.b CLI
 
-- [ ] `ai-config-cli`：clap 派生 11 个顶层子命令
+- [ ] `agent-manager-cli`：clap 派生 11 个顶层子命令
 - [ ] `install` / `uninstall` / `sync` / `status` / `list` / `show` / `doctor`
 - [ ] 全局 `--json` / `--quiet` 实现
 - [ ] 退出码 0/2/3/4/5
-- [ ] 集成测试：干净 `$HOME` 下，`./install.sh --all` 与 `ai-config install --all` 行为对齐
+- [ ] 集成测试：干净 `$HOME` 下，`./install.sh --all` 与 `agent-manager install --all` 行为对齐
 
 ### W5 (2026-07-14 ~ 07-20) — Phase 1.c MCP 逐项 + 迁移
 
@@ -144,11 +144,11 @@
 - [ ] `secrets bootstrap` / `set` / `list` / `unset`
 - [ ] **M3 — Phase 1 完成**
 
-**Phase 1 exit criteria**：4 项 A-1 / A-3 / A-7 / A-8（PRD §7）验收过；旧 `install.sh` 退化为一行 wrapper（`exec cargo run -p ai-config-cli --quiet -- install "$@"`），`scripts/*.mjs` 删除。
+**Phase 1 exit criteria**：4 项 A-1 / A-3 / A-7 / A-8（PRD §7）验收过；旧 `install.sh` 退化为一行 wrapper（`exec cargo run -p agent-manager-cli --quiet -- install "$@"`），`scripts/*.mjs` 删除。
 
 ### W6 (2026-07-21 ~ 07-27) — Phase 2.a 守护进程核心
 
-- [ ] `ai-config-daemon` crate
+- [ ] `agent-manager-daemon` crate
 - [ ] `notify` watcher + `notify-debouncer-mini`（200ms）
 - [ ] 监听 `skills/`、`rules/cursor/`、`mcp/servers/`、`agents/` 四个目录
 - [ ] 事件总线：`tokio::sync::broadcast` channel
@@ -156,10 +156,10 @@
 
 ### W7 (2026-07-28 ~ 08-03) — Phase 2.b IPC + agent CLI
 
-- [ ] Unix socket：`~/.config/ai-config/daemon.sock`
+- [ ] Unix socket：`~/.config/agent-manager/daemon.sock`
 - [ ] JSON 帧协议（4 字节大端长度前缀）
-- [ ] `ai-config events --follow` 订阅 CLI
-- [ ] `ai-config status --watch` 也走 socket
+- [ ] `agent-manager events --follow` 订阅 CLI
+- [ ] `agent-manager status --watch` 也走 socket
 - [ ] 自启动调研（macOS launchd / Linux systemd-user / Windows Task Scheduler）— 只调研不实现
 - [ ] **M4 — Phase 2 完成**
 
@@ -167,7 +167,7 @@
 
 ### W8 (2026-08-04 ~ 08-10) — Phase 3.a Tauri 脚手架
 
-- [ ] `apps/ai-config-gui` crate + Tauri 2 + **React 18**（Q-2 拍板；覆盖原 "Solid" 推荐）
+- [ ] `apps/agent-manager-gui` crate + Tauri 2 + **React 18**（Q-2 拍板；覆盖原 "Solid" 推荐）
 - [ ] 三栏布局（左：项目 / 中：资产类型 / 右：内容）
 - [ ] 路由（项目 / 类型 / 条目）
 - [ ] 与 daemon 通信（Tauri command 调 daemon socket）
@@ -184,7 +184,7 @@
 
 - [ ] **MCP 表格化编辑**（一表行 = 一条 server，右侧 `${VAR}` 联动面板）
 - [ ] secrets 列表（**不**显示明文值）
-- [ ] `webui/data/ai-config.db` → 新 SQLite 一次性迁移器
+- [ ] `webui/data/agent-manager.db` → 新 SQLite 一次性迁移器
 - [ ] GUI 启动时跑一次 `doctor`，问题弹"健康检查"卡片
 - [ ] **M5 — Phase 3 完成**
 
@@ -199,7 +199,7 @@
 - [ ] v0.1 发版说明
 - [ ] **M6 — GA**
 
-**Phase 4 exit criteria**：`git grep -E '\.sh$|\.mjs$|install\.sh' -- ':!target' ':!node_modules'` 在 `ai-config/` 下 0 命中；A-2 / A-12 验收过。
+**Phase 4 exit criteria**：`git grep -E '\.sh$|\.mjs$|install\.sh' -- ':!target' ':!node_modules'` 在 `agent-manager/` 下 0 命中；A-2 / A-12 验收过。
 
 ### W12 ~ W22 (2026-09 ~ 2026-11) — 维护期 / v0.2 准备
 
@@ -287,5 +287,5 @@
 
 ## 9. 变更日志
 
-- **2026-06-12 v0.2** — 同步 8 项已决决策（PRD §12.4）；Solid→React；crate 命名 5→7 与 plan §2.2.1 对齐；补 crates.io / 预编译包 CI / brew tap / i18n 资源骨架 / 自启动集成子任务；CLI 二进制 `ai-configd` 统一为 `ai-config`；总计 41.5→46.0 人天
+- **2026-06-12 v0.2** — 同步 8 项已决决策（PRD §12.4）；Solid→React；crate 命名 5→7 与 plan §2.2.1 对齐；补 crates.io / 预编译包 CI / brew tap / i18n 资源骨架 / 自启动集成子任务；CLI 二进制 `agent-managerd` 统一为 `agent-manager`；总计 41.5→46.0 人天
 - **2026-06-12 v0.1** — 初版（来自 PRD v0.2 同步）

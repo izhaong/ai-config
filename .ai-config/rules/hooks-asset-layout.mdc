@@ -1,6 +1,6 @@
 ---
 description: Hook 资产物理布局——仅允许「单文件」或「单目录整包」，便于跨平台同步；删除为直接移除、不留备份
-globs: "**/{hooks,hooks.json,.ai-config/hooks/**,.cursor/hooks/**,.codex/hooks/**,.claude/hooks/**}/*"
+globs: "**/{hooks,hooks.json,.agent-manager/hooks/**,.cursor/hooks/**,.codex/hooks/**,.claude/hooks/**}/*"
 alwaysApply: false
 ---
 
@@ -14,12 +14,12 @@ alwaysApply: false
 
 | 作用域 | 路径                                                        |
 | ------ | ----------------------------------------------------------- |
-| 全局   | `~/.ai-config/hooks.json` + `~/.ai-config/hooks/`           |
-| 项目   | `<repo>/.ai-config/hooks.json` + `<repo>/.ai-config/hooks/` |
+| 全局   | `~/.agent-manager/hooks.json` + `~/.agent-manager/hooks/`           |
+| 项目   | `<repo>/.agent-manager/hooks.json` + `<repo>/.agent-manager/hooks/` |
 
-**禁止**把可同步的 Hook 源放在 `<repo>/hooks/`、仓库根散落脚本、或仅存在于 `.cursor/` / `.codex/` 而无 `.ai-config` 对应项。
+**禁止**把可同步的 Hook 源放在 `<repo>/hooks/`、仓库根散落脚本、或仅存在于 `.cursor/` / `.codex/` 而无 `.agent-manager` 对应项。
 
-平台目录（`.cursor/hooks.json`、`.codex/hooks.json` 等）由 **deploy / sync / 拷贝** 生成；手工改平台侧后应 **import 回** `.ai-config`，不得长期分叉。
+平台目录（`.cursor/hooks.json`、`.codex/hooks.json` 等）由 **deploy / sync / 拷贝** 生成；手工改平台侧后应 **import 回** `.agent-manager`，不得长期分叉。
 
 ---
 
@@ -62,8 +62,8 @@ alwaysApply: false
 | 反模式                                                         | 原因                                 |
 | -------------------------------------------------------------- | ------------------------------------ |
 | `hooks/a.py` 依赖 `hooks/b.py` 或 `../lib/`                    | 不是单文件，却未收入同一 bundle 目录 |
-| 脚本在 `.ai-config/hooks/`，配置只在 `.cursor/hooks/` 旁路文件 | 平台侧独有，无法备份同步             |
-| 同一逻辑在 `.ai-config` 与 `.cursor` 各改一版                  | 源分裂                               |
+| 脚本在 `.agent-manager/hooks/`，配置只在 `.cursor/hooks/` 旁路文件 | 平台侧独有，无法备份同步             |
+| 同一逻辑在 `.agent-manager` 与 `.cursor` 各改一版                  | 源分裂                               |
 | 多个无关联脚本平铺在 `hooks/` 且互相引用                       | 应拆成多个形态 A，或合并为一个形态 B |
 | 在 `hooks.json` 引用仓库外绝对路径作为主交付物                 | deploy 到其他机器失败                |
 
@@ -71,7 +71,7 @@ alwaysApply: false
 
 ## 平台下发（由 core adapter 负责）
 
-源保持 **Cursor canonical** `hooks.json` + `hooks/`；下发时由 `ai-config-core` 转为各平台原生路径，语义不变：
+源保持 **Cursor canonical** `hooks.json` + `hooks/`；下发时由 `agent-manager-core` 转为各平台原生路径，语义不变：
 
 | 平台   | 配置                      | 脚本                                              |
 | ------ | ------------------------- | ------------------------------------------------- |
@@ -87,10 +87,10 @@ Agent **不得**手写各平台不同目录结构；新平台兼容只改 core a
 ## Agent 编写检查清单
 
 1. 新 Hook：先选 **形态 A** 还是 **形态 B**（文件数 ≥ 2 → 必须 B）。
-2. 所有可同步正文写入 **`.ai-config/hooks/`**（或 `~/.ai-config/hooks/`）。
+2. 所有可同步正文写入 **`.agent-manager/hooks/`**（或 `~/.agent-manager/hooks/`）。
 3. `hooks.json` 绑定使用 canonical 生命周期键名；带事件参数时保留在 `command` 末尾。
 4. 单文件 Hook：可调参数写脚本内常量；多文件 bundle 的配置写在 bundle 目录内源码中。
-5. 完成 deploy 后验证：`ai-config status` / GUI Hook 行生命周期与平台一致。
+5. 完成 deploy 后验证：`agent-manager status` / GUI Hook 行生命周期与平台一致。
 
 ---
 
@@ -98,7 +98,7 @@ Agent **不得**手写各平台不同目录结构；新平台兼容只改 core a
 
 | 资产              | 形态        | 路径                                                 |
 | ----------------- | ----------- | ---------------------------------------------------- |
-| `speak-lifecycle` | A（单脚本） | `.ai-config/hooks/speak-lifecycle.py` + `hooks.json` |
-| `lifecycle-tts`   | B（目录包） | `.ai-config/hooks/lifecycle-tts/`                    |
+| `speak-lifecycle` | A（单脚本） | `.agent-manager/hooks/speak-lifecycle.py` + `hooks.json` |
+| `lifecycle-tts`   | B（目录包） | `.agent-manager/hooks/lifecycle-tts/`                    |
 
 迁移方向：历史「扁平脚本 + 散落配置」应收敛为 A 或 B，不得新增第三种布局。

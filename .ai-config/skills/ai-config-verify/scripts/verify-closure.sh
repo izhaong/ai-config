@@ -3,7 +3,7 @@ set -euo pipefail
 
 mode="${1:-all}"
 repo_root="$(git rev-parse --show-toplevel)"
-debug_bin="$repo_root/target/debug/ai-config"
+debug_bin="$repo_root/target/debug/agent-manager"
 verify_temp_root=""
 verify_sandbox_dir=""
 
@@ -23,12 +23,12 @@ source_checks() {
   (
     cd "$repo_root"
     cargo test --workspace
-    cargo build -p ai-config-cli
+    cargo build -p agent-manager-cli
   )
 
   echo "verify-closure[source]: GUI tests and build"
   (
-    cd "$repo_root/apps/ai-config-gui"
+    cd "$repo_root/apps/agent-manager-gui"
     npm run test
     npm run build
   )
@@ -40,19 +40,19 @@ sandbox_checks() {
   if [[ ! -x "$debug_bin" ]]; then
     (
       cd "$repo_root"
-      cargo build -p ai-config-cli
+      cargo build -p agent-manager-cli
     )
   fi
 
   local sandbox_home asset_root
   verify_temp_root="${TMPDIR:-/tmp}"
-  verify_sandbox_dir="$(mktemp -d "${verify_temp_root%/}/ai-config-verify.XXXXXX")"
+  verify_sandbox_dir="$(mktemp -d "${verify_temp_root%/}/agent-manager-verify.XXXXXX")"
   sandbox_home="$verify_sandbox_dir/home"
-  asset_root="$sandbox_home/.ai-config"
+  asset_root="$sandbox_home/.agent-manager"
 
   cleanup_sandbox() {
     case "$verify_sandbox_dir" in
-      "${verify_temp_root%/}"/ai-config-verify.*)
+      "${verify_temp_root%/}"/agent-manager-verify.*)
         rm -rf -- "$verify_sandbox_dir"
         ;;
       *)
@@ -66,7 +66,7 @@ sandbox_checks() {
   printf '%s\n' \
     '---' \
     'name: closure-probe' \
-    'description: isolated ai-config lifecycle probe' \
+    'description: isolated agent-manager lifecycle probe' \
     '---' \
     '# Closure probe' \
     >"$asset_root/skills/closure-probe/SKILL.md"
@@ -76,7 +76,7 @@ sandbox_checks() {
     "HOME=$sandbox_home"
     "USERPROFILE=$sandbox_home"
     "AI_CONFIG_ROOT=$asset_root"
-    "AI_CONFIG_SECRETS_DIR=$sandbox_home/.config/ai-config"
+    "AI_CONFIG_SECRETS_DIR=$sandbox_home/.config/agent-manager"
     "HERMES_SKILLS_DIR=$sandbox_home/.hermes/skills"
   )
 
@@ -143,9 +143,9 @@ runtime_checks() {
   fi
 
   local installed_bin built_version installed_version
-  installed_bin="$(command -v ai-config || true)"
+  installed_bin="$(command -v agent-manager || true)"
   if [[ -z "$installed_bin" ]]; then
-    echo "verify-closure[runtime]: ai-config is not installed on PATH" >&2
+    echo "verify-closure[runtime]: agent-manager is not installed on PATH" >&2
     exit 3
   fi
 

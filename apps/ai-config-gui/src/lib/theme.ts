@@ -1,4 +1,4 @@
-export const THEME_STORAGE_KEY = "ai-config.theme";
+export const THEME_STORAGE_KEY = "agent-manager.theme";
 
 export const THEME_MODES = ["dark", "light", "system"] as const;
 export type ThemeMode = (typeof THEME_MODES)[number];
@@ -47,7 +47,7 @@ export function setThemeMode(mode: ThemeMode): void {
     /* ignore */
   }
   applyThemeMode(mode);
-  window.dispatchEvent(new CustomEvent("ai-config:theme", { detail: mode }));
+  window.dispatchEvent(new CustomEvent("agent-manager:theme", { detail: mode }));
 }
 
 export function initTheme(): ThemeMode {

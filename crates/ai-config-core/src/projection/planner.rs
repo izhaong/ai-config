@@ -1247,7 +1247,7 @@ fn hermes_cross_domain_retract_reason(
                                 entry
                                     .get(key("managedBy"))
                                     .and_then(serde_yaml::Value::as_str)
-                                    == Some("ai-config")
+                                    == Some("agent-manager")
                                     && entry.get(key("hook")).and_then(serde_yaml::Value::as_str)
                                         == Some(member.id.name.as_str())
                             })
@@ -1333,7 +1333,7 @@ fn hermes_cross_domain_foreign_entry_reason(
                             entry
                                 .get(key("managedBy"))
                                 .and_then(serde_yaml::Value::as_str)
-                                == Some("ai-config")
+                                == Some("agent-manager")
                                 && entry.get(key("hook")).and_then(serde_yaml::Value::as_str)
                                     == Some(member.id.name.as_str())
                         })
@@ -2259,7 +2259,7 @@ fn hook_document_contains_managed_binding(document: &serde_json::Value, name: &s
         .flatten()
         .any(|entry| {
             entry.get("hook").and_then(serde_json::Value::as_str) == Some(name)
-                && entry.get("managedBy").and_then(serde_json::Value::as_str) == Some("ai-config")
+                && entry.get("managedBy").and_then(serde_json::Value::as_str) == Some("agent-manager")
                 || entry
                     .get("hooks")
                     .and_then(serde_json::Value::as_array)
@@ -2267,7 +2267,7 @@ fn hook_document_contains_managed_binding(document: &serde_json::Value, name: &s
                         nested.iter().any(|nested| {
                             nested.get("hook").and_then(serde_json::Value::as_str) == Some(name)
                                 && nested.get("managedBy").and_then(serde_json::Value::as_str)
-                                    == Some("ai-config")
+                                    == Some("agent-manager")
                         })
                     })
         })

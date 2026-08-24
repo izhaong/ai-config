@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "ai-config",
+    "name": "agent-manager",
     "version": "v0.4.0",
     "daemonStopped": "daemon stopped"
   },
@@ -38,10 +38,10 @@
   },
   "git": {
     "settings": {
-      "title": "Git sync (~/.ai-config)",
+      "title": "Git sync (~/.agent-manager)",
       "assetRoot": "Path: {{path}}",
       "remoteUrl": "Remote URL",
-      "remotePlaceholder": "https://gitea.example.com/user/ai-config.git",
+      "remotePlaceholder": "https://gitea.example.com/user/agent-manager.git",
       "branch": "Branch",
       "localHint": "Leave remote empty for local-only Git. Configure a remote to push/pull across machines.",
       "save": "Save",
@@ -62,7 +62,7 @@
     },
     "toast": {
       "gitUnavailable": "Git not found. Install Git and restart the app.",
-      "initializedLocal": "Initialized local Git repo for ~/.ai-config. Add a remote in Settings to sync.",
+      "initializedLocal": "Initialized local Git repo for ~/.agent-manager. Add a remote in Settings to sync.",
       "initializedWithRemote": "Git repo ready; remote applied.",
       "bootstrapFailed": "Git bootstrap failed: {{error}}",
       "configSavedRemote": "Remote settings saved",
@@ -95,7 +95,7 @@
   },
   "linkState": {
     "linked": "Synced",
-    "synced": "Content match (not ai-config deploy)",
+    "synced": "Content match (not agent-manager deploy)",
     "unlinked": "Not synced",
     "broken": "Link broken",
     "missing": "Target missing"
@@ -112,8 +112,8 @@
     "viewingPlatform": "{{platform}} platform",
     "empty": "No {{label}} on this platform",
     "emptyUnsupported": "{{platform}} does not support {{label}}",
-    "importHint": "Import from platform into ai-config source",
-    "importManaged": "Already managed in ai-config source",
+    "importHint": "Import from platform into agent-manager source",
+    "importManaged": "Already managed in agent-manager source",
     "importUnavailable": "Cannot import",
     "unsupportedOnPlatform": "Asset kind not supported on this platform"
   },
@@ -122,10 +122,10 @@
     "inactive": "Inactive",
     "clickDeploy": "Click to deploy",
     "clickRemove": "Click to retract",
-    "clickRemoveSource": "Remove from ai-config source",
+    "clickRemoveSource": "Remove from agent-manager source",
     "aiconfigDeleteNeedsConfirm": "Delete source file (confirmation required)",
     "batchAiconfigUseDeleteButton": "All selected are in source; use the delete button to remove",
-    "clickImportSource": "Import into ai-config source",
+    "clickImportSource": "Import into agent-manager source",
     "partialLinked": "Partially synced",
     "batchClickActivateAll": "Deploy all selected (including inactive)",
     "batchClickMixed": "Retract active, deploy inactive",
@@ -146,11 +146,11 @@
     "batchDeleteTitle": "Select rows on the left, then batch delete",
     "deleteConfirmHint": "Click again to confirm delete (a dialog will appear)",
     "rowDeleteTitle": "Delete {{name}}",
-    "rowUpdateTitle": "Update {{name}} on active platforms from ai-config source",
-    "batchUpdateTitle": "Update selected items on active platforms from ai-config source",
+    "rowUpdateTitle": "Update {{name}} on active platforms from agent-manager source",
+    "batchUpdateTitle": "Update selected items on active platforms from agent-manager source",
     "batchSyncPlatform": "Batch sync to {{platform}} (selected rows)",
     "batchSyncPlatformState": "Batch {{platform}} · {{state}} · {{hint}}",
-    "batchImportSourceState": "Batch ai-config source · {{state}} · {{hint}}",
+    "batchImportSourceState": "Batch agent-manager source · {{state}} · {{hint}}",
     "batchSyncNeedSelection": "Select rows to batch sync first",
     "batchSyncSourceDisabled": "Already on source view",
     "batchDeployPlatform": "Deploy to {{platform}}",
@@ -167,9 +167,9 @@
     "loading": "Loading…",
     "close": "Close",
     "mcp": "No MCP servers yet. Add entries in <code>{{assetRoot}}/mcp.json</code>",
-    "mcpGlobal": "No MCP servers yet. Add entries in <code>~/.ai-config/mcp.json</code>",
+    "mcpGlobal": "No MCP servers yet. Add entries in <code>~/.agent-manager/mcp.json</code>",
     "assets": "No assets yet. Add files under <code>{{assetRoot}}/{{kindDir}}/</code>",
-    "assetsGlobal": "No assets yet. Add files under <code>~/.ai-config/{{kindDir}}/</code>"
+    "assetsGlobal": "No assets yet. Add files under <code>~/.agent-manager/{{kindDir}}/</code>"
   },
   "drawer": {
     "loading": "Loading…",
@@ -178,7 +178,7 @@
     "save": "Save",
     "edit": "Edit",
     "delete": "Delete {{label}}",
-    "readOnlyHint": "Read-only preview (not in ai-config source)"
+    "readOnlyHint": "Read-only preview (not in agent-manager source)"
   },
   "confirm": {
     "defaultConfirm": "Confirm",
@@ -192,9 +192,9 @@
     "batchDelete": "Batch delete",
     "batchRetract": "Batch retract",
     "batchDeleteMessage": "Permanently delete {{count}} {{label}} source file(s) and best-effort retract from all platforms. {{irreversible}}",
-    "batchRetractPlatformMessage": "Retract {{count}} selected item(s) from {{platform}} only (does not delete ai-config source files).",
+    "batchRetractPlatformMessage": "Retract {{count}} selected item(s) from {{platform}} only (does not delete agent-manager source files).",
     "retractEntry": "Retract from platform",
-    "retractEntryPlatformMessage": "Retract \"{{name}}\" from {{platform}} only (does not delete ai-config source files).",
+    "retractEntryPlatformMessage": "Retract \"{{name}}\" from {{platform}} only (does not delete agent-manager source files).",
     "batchDeletePlatformMessage": "(deprecated) use batchRetractPlatformMessage",
     "deleteEntryPlatformMessage": "(deprecated) use retractEntryPlatformMessage",
     "irreversible": "This cannot be undone. Please confirm before deleting.",
@@ -229,7 +229,7 @@
   },
   "copyToProject": {
     "title": "Copy to project",
-    "summary": "Copy {{count}} asset(s) into the target project's .ai-config source",
+    "summary": "Copy {{count}} asset(s) into the target project's .agent-manager source",
     "preview": "Selected: {{names}}",
     "previewMore": "Selected: {{names}} and {{rest}} more",
     "targetLabel": "Target project",
@@ -302,7 +302,7 @@
     "nameDerivedHint": "If empty, will use: {{name}}",
     "rootLabel": "Project root directory",
     "rootPlaceholder": "/path/to/repo",
-    "rootHint": "Repo root; creates <repo>/.ai-config/ (same layout as ~/.ai-config: skills, rules, agents, mcp.json)",
+    "rootHint": "Repo root; creates <repo>/.agent-manager/ (same layout as ~/.agent-manager: skills, rules, agents, mcp.json)",
     "pickFolder": "Choose folder",
     "pickFolderTitle": "Pick project root in file manager",
     "submit": "Register"
@@ -385,11 +385,11 @@
     "batchTogglePartial": "Batch: {{ok}} ok, {{failed}} failed (deploy {{deploy}}, retract {{retract}}, import {{import}}, delete source {{deleted}})",
     "batchToggled": "Batch done: deploy {{deploy}}, retract {{retract}}, import {{import}}, delete source {{deleted}}",
     "batchNoOps": "No batch operations to run",
-    "updateNothing": "Nothing to update (needs ai-config source and at least one active platform)",
+    "updateNothing": "Nothing to update (needs agent-manager source and at least one active platform)",
     "updatedCount": "Updated {{count}} platform copy/copies",
     "updateFailed": "Update failed ({{count}} platform(s))",
     "updatePartial": "Update: {{ok}} ok, {{failed}} failed",
-    "batchAiconfigDeleteBlocked": "Batch ai-config icon cannot delete sources; use the delete button with confirmation",
+    "batchAiconfigDeleteBlocked": "Batch agent-manager icon cannot delete sources; use the delete button with confirmation",
     "batchDeleted": "Processed {{count}} item(s)",
     "selectRowsFirst": "Select rows to operate on first",
     "noBrowsePath": "No path to open in the current view",

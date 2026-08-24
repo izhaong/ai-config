@@ -1134,7 +1134,7 @@ mod hook_inventory_p1_red_tests {
     fn cursor_catalog_lifecycles_are_valid_canonical_hook_bindings() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = global_request(home, &asset_root);
         let lifecycle_names = [
             "beforeReadFile",
@@ -1208,7 +1208,7 @@ mod hook_inventory_p1_red_tests {
     fn malformed_native_hook_container_shapes_are_blocking() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = global_request(home, &asset_root);
         let scalar = home.join(".cursor/hooks.json");
         let array = home.join(".codex/hooks.json");
@@ -1236,7 +1236,7 @@ mod hook_inventory_p1_red_tests {
     fn malformed_native_hook_document_roots_are_blocking() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = global_request(home, &asset_root);
         let cursor = home.join(".cursor/hooks.json");
         let hermes = home.join(".hermes/config.yaml");
@@ -1267,7 +1267,7 @@ mod hook_inventory_p1_red_tests {
     fn platform_hook_binding_cannot_pair_with_a_different_script_root() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = global_request(home, &asset_root);
         let container = home.join(".cursor/hooks.json");
         write(
@@ -1295,7 +1295,7 @@ mod hook_inventory_p1_red_tests {
     fn inventory_recognizes_current_adapter_hook_command_paths() {
         let global_temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(global_temp.path()).unwrap();
-        let global_assets = home.join(".ai-config");
+        let global_assets = home.join(".agent-manager");
         let global_request = global_request(home, &global_assets);
         let cursor_container = home.join(".cursor/hooks.json");
         let codex_container = home.join(".codex/hooks.json");
@@ -1363,7 +1363,7 @@ mod hook_inventory_p1_red_tests {
 
         let project_temp = TempDir::new().unwrap();
         let project = Utf8Path::from_path(project_temp.path()).unwrap();
-        let project_assets = project.join(".ai-config");
+        let project_assets = project.join(".agent-manager");
         let project_request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Project,
@@ -1418,7 +1418,7 @@ mod hook_inventory_p1_red_tests {
     fn claude_only_project_binding_can_use_the_shared_cursor_hook_script_root() {
         let temp = TempDir::new().unwrap();
         let project = Utf8Path::from_path(temp.path()).unwrap();
-        let project_assets = project.join(".ai-config");
+        let project_assets = project.join(".agent-manager");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Project,
@@ -1459,7 +1459,7 @@ mod hook_inventory_p1_red_tests {
     fn unknown_nested_command_does_not_forge_a_platform_hook_binding() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = global_request(home, &asset_root);
         let container = home.join(".cursor/hooks.json");
         write(
@@ -1490,7 +1490,7 @@ mod hook_inventory_p1_red_tests {
     fn platform_hook_binding_digest_is_isolated_from_siblings_and_unknown_fields() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = global_request(home, &asset_root);
         let container = home.join(".cursor/hooks.json");
         for name in ["alpha.sh", "beta.sh"] {
@@ -1555,7 +1555,7 @@ mod hook_inventory_p1_red_tests {
     fn hook_inventory_fingerprints_canonical_bindings_and_nested_platform_matchers() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let source = asset_root.join("hooks/run.sh");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
@@ -1650,7 +1650,7 @@ mod hook_inventory_p1_red_tests {
     fn invalid_hook_lifecycle_and_unresolvable_command_leaf_are_never_canonical_sources() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Global,
@@ -1727,7 +1727,7 @@ mod hook_inventory_p1_red_tests {
 
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Global,
@@ -4123,7 +4123,7 @@ fn is_excluded_agent_entry(name: &str) -> bool {
         || lowercase.ends_with(".swp")
         || lowercase.ends_with('~')
         || lowercase.ends_with(".tmp")
-        || lowercase.ends_with(".ai-config-deploy.json")
+        || lowercase.ends_with(".agent-manager-deploy.json")
 }
 
 fn agent_entry_format(entry: &DirectEntry) -> String {
@@ -4404,7 +4404,7 @@ fn classify_regular_asset(
     missing_source_reason: &str,
 ) -> Result<(InventoryClassification, String, Option<String>, bool, bool), CoreError> {
     let digest = path_content_digest(path)?;
-    if accepts_legacy_marker && is_regular_file(&path.join(".ai-config-deploy.json"))? {
+    if accepts_legacy_marker && is_regular_file(&path.join(".agent-manager-deploy.json"))? {
         return Ok((
             InventoryClassification::LegacyMarkerCandidate,
             "legacy_marker_present".to_owned(),
@@ -4610,7 +4610,7 @@ mod tests {
         InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Global,
-                asset_root: root.join(".ai-config"),
+                asset_root: root.join(".agent-manager"),
             }],
             deploy_base: root.join("repo"),
             scope: InventoryScope::Project,
@@ -4672,7 +4672,7 @@ mod tests {
         write(
             &request
                 .deploy_base
-                .join(".cursor/skills/demo/.ai-config-deploy.json"),
+                .join(".cursor/skills/demo/.agent-manager-deploy.json"),
             r#"{"version":1,"source":"/must-not-prove-ownership"}"#,
         );
 
@@ -4718,8 +4718,8 @@ mod tests {
     fn project_rule_uses_effective_project_layer_and_keeps_global_raw_source() {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
-        let global = root.join("global/.ai-config");
-        let project = root.join("project/.ai-config");
+        let global = root.join("global/.agent-manager");
+        let project = root.join("project/.agent-manager");
         let request = InventoryRequest {
             canonical_layers: vec![
                 CanonicalLayerRoot {
@@ -4794,8 +4794,8 @@ mod tests {
         let root = Utf8Path::from_path(temp.path()).unwrap();
         let home = root.join("home");
         let workspace = root.join("workspace");
-        let global = home.join(".ai-config");
-        let workspace_assets = workspace.join(".ai-config");
+        let global = home.join(".agent-manager");
+        let workspace_assets = workspace.join(".agent-manager");
         let request = InventoryRequest {
             canonical_layers: vec![
                 CanonicalLayerRoot {
@@ -5002,9 +5002,9 @@ mod tests {
         let home = root.join("home");
         let workspace = root.join("workspace");
         let project = workspace.join("project");
-        let global = home.join(".ai-config");
-        let workspace_assets = workspace.join(".ai-config");
-        let project_assets = project.join(".ai-config");
+        let global = home.join(".agent-manager");
+        let workspace_assets = workspace.join(".agent-manager");
+        let project_assets = project.join(".agent-manager");
 
         for (asset_root, label) in [
             (&global, "global"),
@@ -5219,7 +5219,7 @@ mod tests {
 
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
-        let global = root.join("home/.ai-config");
+        let global = root.join("home/.agent-manager");
         let workspace = root.join("workspace");
         let outside = root.join("outside");
         let request = InventoryRequest {
@@ -5322,8 +5322,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
         let home = root.join("home");
-        let asset_root = home.join(".ai-config");
-        let outside = root.join("outside/.ai-config");
+        let asset_root = home.join(".agent-manager");
+        let outside = root.join("outside/.agent-manager");
         write(&outside.join("skills/shared/SKILL.md"), OUTSIDE_SENTINEL);
         write(&outside.join("rules/shared.mdc"), OUTSIDE_SENTINEL);
         fs::create_dir_all(home.as_std_path()).unwrap();
@@ -5367,11 +5367,11 @@ mod tests {
     fn core_unsupported_contract_keeps_global_project_and_workspace_scope_reasons_at_schema_v1() {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
-        let global = root.join("home/.ai-config");
+        let global = root.join("home/.agent-manager");
         let workspace = root.join("workspace");
-        let workspace_assets = workspace.join(".ai-config");
+        let workspace_assets = workspace.join(".agent-manager");
         let project = workspace.join("project");
-        let project_assets = project.join(".ai-config");
+        let project_assets = project.join(".agent-manager");
 
         write(&global.join("rules/global-rule.mdc"), "global rule\n");
         write(
@@ -5516,8 +5516,8 @@ mod tests {
     fn hook_halves_split_across_layers_are_both_cross_layer_conflicts() {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
-        let global = root.join("home/.ai-config");
-        let workspace = root.join("workspace/.ai-config");
+        let global = root.join("home/.agent-manager");
+        let workspace = root.join("workspace/.agent-manager");
         let request = InventoryRequest {
             canonical_layers: vec![
                 CanonicalLayerRoot {
@@ -5590,8 +5590,8 @@ mod tests {
         let root = Utf8Path::from_path(temp.path()).unwrap();
         let home = root.join("home");
         let workspace = root.join("workspace");
-        let global = home.join(".ai-config");
-        let workspace_assets = workspace.join(".ai-config");
+        let global = home.join(".agent-manager");
+        let workspace_assets = workspace.join(".agent-manager");
         let request = InventoryRequest {
             canonical_layers: vec![
                 CanonicalLayerRoot {

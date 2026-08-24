@@ -2,7 +2,7 @@ import type { Platform } from "./types";
 
 /** 各平台图标（`public/`，Vite 静态资源） */
 export const PLATFORM_FAVICON: Record<Platform, string> = {
-  aiconfig: "/ai-config.png",
+  aiconfig: "/agent-manager.png",
   cursor: "/platforms/cursor.png",
   codex: "/platforms/codex.png",
   claude: "/platforms/claude.png",
@@ -10,7 +10,7 @@ export const PLATFORM_FAVICON: Record<Platform, string> = {
 };
 
 export const PLATFORM_NAME: Record<Platform, string> = {
-  aiconfig: "ai-config",
+  aiconfig: "agent-manager",
   cursor: "Cursor",
   codex: "Codex",
   claude: "Claude Code",

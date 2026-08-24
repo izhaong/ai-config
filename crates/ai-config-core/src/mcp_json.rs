@@ -186,12 +186,12 @@ pub fn deploy_mcp_json_file(
     atomic_write_json(dest, &normalize_mcp_document(doc))
 }
 
-/// 收回平台 MCP（Hermes 仅移除 `mcp_servers` 中 ai-config 管理的条目，见 per-server retract）。
+/// 收回平台 MCP（Hermes 仅移除 `mcp_servers` 中 agent-manager 管理的条目，见 per-server retract）。
 pub fn retract_platform_mcp_json(dest: &Utf8Path, plat: PlatformId) -> Result<(), CoreError> {
     retract_platform_mcp_json_with_source(dest, plat, None)
 }
 
-/// 收回平台 MCP 整文件；若与 `source_mcp` 同路径则 noop，避免误删 ai-config 源。
+/// 收回平台 MCP 整文件；若与 `source_mcp` 同路径则 noop，避免误删 agent-manager 源。
 pub fn retract_platform_mcp_json_with_source(
     dest: &Utf8Path,
     plat: PlatformId,
@@ -316,7 +316,7 @@ pub fn server_transport_summary(config: &Value) -> String {
     }
 }
 
-/// 平台 `mcp.json` 是否与 ai-config 源共用同一文件（symlink / 硬链接 / 同路径）。
+/// 平台 `mcp.json` 是否与 agent-manager 源共用同一文件（symlink / 硬链接 / 同路径）。
 pub fn platform_mcp_aliases_source(dest: &Utf8Path, source_mcp: &Utf8Path) -> bool {
     crate::path_independence::paths_alias(dest, source_mcp)
 }
@@ -485,14 +485,14 @@ mod tests {
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         ensure_mcp_json(&root).unwrap();
         let cfg = serde_json::json!({
-            "command": "ai-config",
+            "command": "agent-manager",
             "args": ["serve"]
         });
-        upsert_server_in_document(&root, "ai-config", cfg.clone()).unwrap();
-        let stored = get_server_config(&root, "ai-config")
+        upsert_server_in_document(&root, "agent-manager", cfg.clone()).unwrap();
+        let stored = get_server_config(&root, "agent-manager")
             .unwrap()
             .expect("stored");
-        assert_eq!(stored["command"].as_str(), Some("ai-config"));
+        assert_eq!(stored["command"].as_str(), Some("agent-manager"));
         assert_eq!(stored["args"].as_array().map(|a| a.len()), Some(1));
     }
 
@@ -597,7 +597,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         fs::create_dir_all(home.join(".hermes")).unwrap();
-        let root = home.join("ai-config-asset");
+        let root = home.join("agent-manager-asset");
         fs::create_dir_all(&root).unwrap();
         let cfg = serde_json::json!({
             "type": "stdio",
@@ -616,7 +616,7 @@ mod tests {
         assert!(!raw.contains("type:"));
     }
 
-    /// 平台 mcp.json 若 symlink 到 ai-config 源，retract 单条 server 不得改动源文件。
+    /// 平台 mcp.json 若 symlink 到 agent-manager 源，retract 单条 server 不得改动源文件。
     #[test]
     #[cfg(unix)]
     fn remove_platform_server_does_not_mutate_symlinked_source() {

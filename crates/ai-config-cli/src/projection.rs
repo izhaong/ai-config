@@ -271,7 +271,7 @@ pub fn execute(
     };
     let ledger_path = roots
         .deploy_base
-        .join(".ai-config/projection-ledger.sqlite");
+        .join(".agent-manager/projection-ledger.sqlite");
     let secrets = LifecycleMcpSecrets::load()?;
     let bundle = build_with_existing_ledger(&roots, operation, &ledger_path, &secrets)?;
     let blocking = blocking_reason(&bundle);
@@ -348,7 +348,7 @@ pub(crate) fn build_migration_plan(default_root: &Utf8Path) -> Result<PublicPlan
     let roots = paths::resolve_sync_roots(default_root);
     let ledger_path = roots
         .deploy_base
-        .join(".ai-config/projection-ledger.sqlite");
+        .join(".agent-manager/projection-ledger.sqlite");
     let secrets = LifecycleMcpSecrets::load()?;
     Ok(
         build_with_existing_ledger(&roots, ProjectionOperation::Sync, &ledger_path, &secrets)?
@@ -366,7 +366,7 @@ pub(crate) fn verify_migration_review(
     let roots = paths::resolve_sync_roots(default_root);
     let ledger_path = roots
         .deploy_base
-        .join(".ai-config/projection-ledger.sqlite");
+        .join(".agent-manager/projection-ledger.sqlite");
     let secrets = LifecycleMcpSecrets::load()?;
     let bundle =
         build_with_existing_ledger(&roots, ProjectionOperation::Sync, &ledger_path, &secrets)?;
@@ -384,7 +384,7 @@ pub(crate) fn apply_reviewed_migration(
     let roots = paths::resolve_sync_roots(default_root);
     let ledger_path = roots
         .deploy_base
-        .join(".ai-config/projection-ledger.sqlite");
+        .join(".agent-manager/projection-ledger.sqlite");
     let secrets = LifecycleMcpSecrets::load()?;
     let bundle =
         build_with_existing_ledger(&roots, ProjectionOperation::Sync, &ledger_path, &secrets)?;
@@ -405,7 +405,7 @@ pub(crate) fn rollback_reviewed_migration(
     let roots = paths::resolve_sync_roots(default_root);
     let ledger_path = roots
         .deploy_base
-        .join(".ai-config/projection-ledger.sqlite");
+        .join(".agent-manager/projection-ledger.sqlite");
     let metadata = std::fs::symlink_metadata(ledger_path.as_std_path())?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(CoreError::ProjectionLedger(
@@ -418,7 +418,7 @@ pub(crate) fn rollback_reviewed_migration(
     let context = ExecutorContext::new(
         &ledger,
         roots.deploy_base.clone(),
-        roots.deploy_base.join(".ai-config/projection-backups"),
+        roots.deploy_base.join(".agent-manager/projection-backups"),
     );
     rollback_projection_transaction(&context, transaction_id)
 }
@@ -434,7 +434,7 @@ fn execute_workspace(
     } else {
         ProjectionOperation::Sync
     };
-    let ledger_path = workspace_root.join(".ai-config/projection-ledger.sqlite");
+    let ledger_path = workspace_root.join(".agent-manager/projection-ledger.sqlite");
     let secrets = LifecycleMcpSecrets::load()?;
     let bundles = if has_ledger_entry(&ledger_path) {
         match Store::open_read_only_at(ledger_path.as_std_path()) {
@@ -614,7 +614,7 @@ fn apply_workspace_bundles(
                 .map(move |plan| (member_index, plan))
         })
         .collect::<Vec<_>>();
-    let backup_root = workspace_root.join(".ai-config/projection-backups");
+    let backup_root = workspace_root.join(".agent-manager/projection-backups");
     let context = ExecutorContext::new(ledger, workspace_root.to_path_buf(), backup_root)
         .with_mcp_secret_provider(secrets);
     let reports = match apply_projection_plans_transactionally(
@@ -849,7 +849,7 @@ fn overlay_roots(roots: &SyncRoots) -> OverlayRoots {
         OverlayRoots {
             global: roots.asset_root.clone(),
             workspace: None,
-            project: roots.asset_root.join(".ai-config-no-project-overlay"),
+            project: roots.asset_root.join(".agent-manager-no-project-overlay"),
         }
     }
 }
@@ -893,7 +893,7 @@ fn apply_bundle(
     secrets: &LifecycleMcpSecrets,
 ) -> Result<ApplySummary, ProjectionTransactionError> {
     let mut summary = ApplySummary::default();
-    let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
+    let backup_root = roots.deploy_base.join(".agent-manager/projection-backups");
     let context = ExecutorContext::new(ledger, roots.deploy_base.clone(), backup_root)
         .with_mcp_secret_provider(secrets);
     let reports = apply_projection_plans_transactionally(
@@ -991,7 +991,7 @@ fn apply_selected_adoptions(
             })
         })
         .collect::<Vec<_>>();
-    let backup_root = roots.deploy_base.join(".ai-config/projection-backups");
+    let backup_root = roots.deploy_base.join(".agent-manager/projection-backups");
     let context = ExecutorContext::new(ledger, roots.deploy_base.clone(), backup_root)
         .with_mcp_secret_provider(secrets);
     let reports = apply_projection_plans_transactionally(

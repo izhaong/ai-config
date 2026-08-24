@@ -108,7 +108,7 @@ struct StatusSummary {
     missing: usize,
 }
 
-/// `ai-config status` — 返回结构化报告（CLI / MCP 共用）。
+/// `agent-manager status` — 返回结构化报告（CLI / MCP 共用）。
 pub fn status_report(default_root: &Utf8Path) -> Result<StatusReport, CoreError> {
     let ctx = load_context(default_root)?;
     let assets = flat_assets(&ctx.scan);
@@ -158,7 +158,7 @@ pub fn status_report(default_root: &Utf8Path) -> Result<StatusReport, CoreError>
     })
 }
 
-/// `ai-config status`(PRD §6.1)
+/// `agent-manager status`(PRD §6.1)
 pub fn run_status(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
     let report = match status_report(default_root) {
         Ok(r) => r,
@@ -297,7 +297,7 @@ pub struct AssetEntry {
     pub source_path: String,
 }
 
-/// `ai-config list` — 返回结构化报告（CLI / MCP 共用）。
+/// `agent-manager list` — 返回结构化报告（CLI / MCP 共用）。
 pub fn list_report(default_root: &Utf8Path) -> Result<ListReport, CoreError> {
     let ctx = load_context(default_root)?;
     let assets = flat_assets(&ctx.scan);
@@ -315,7 +315,7 @@ pub fn list_report(default_root: &Utf8Path) -> Result<ListReport, CoreError> {
     })
 }
 
-/// `ai-config list`
+/// `agent-manager list`
 pub fn run_list(default_root: &Utf8Path, mode: OutputMode) -> ExitCode {
     let report = match list_report(default_root) {
         Ok(r) => r,
@@ -356,7 +356,7 @@ struct ShowReport {
     platforms: Vec<PlatformStatus>,
 }
 
-/// `ai-config show <name>`
+/// `agent-manager show <name>`
 pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCode {
     let ctx = match load_context(default_root) {
         Ok(c) => c,
@@ -374,7 +374,7 @@ pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCo
             mode,
             exit_code::PARTIAL_FAILURE,
             &format!("资产 `{name}` 找不到"),
-            Some("跑 `ai-config list` 查所有资产名;name 区分大小写"),
+            Some("跑 `agent-manager list` 查所有资产名;name 区分大小写"),
         );
         return ExitCode::from(exit_code::PARTIAL_FAILURE);
     }
@@ -383,7 +383,7 @@ pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCo
             mode,
             exit_code::PARTIAL_FAILURE,
             &format!("name `{name}` 跨多类资产存在,需 kind 前缀"),
-            Some("用 `ai-config skill show {name}` / `rule show` / `mcp show` / `agent show`"),
+            Some("用 `agent-manager skill show {name}` / `rule show` / `mcp show` / `agent show`"),
         );
         return ExitCode::from(exit_code::PARTIAL_FAILURE);
     }
@@ -424,7 +424,7 @@ pub fn run_show(default_root: &Utf8Path, name: &str, mode: OutputMode) -> ExitCo
 
 // ── 7. doctor ───────────────────────────────────────────────────
 
-/// `ai-config doctor`(PRD §6.2 / §10 A-10)
+/// `agent-manager doctor`(PRD §6.2 / §10 A-10)
 pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode, materialize: bool) -> ExitCode {
     if materialize {
         let error = CoreError::InvalidPath(
@@ -572,7 +572,7 @@ mod tests {
         (tmp, root)
     }
 
-    /// 在测试期间,把 HOME 重定向到 tempdir,避免污染真实 ~/.config/ai-config
+    /// 在测试期间,把 HOME 重定向到 tempdir,避免污染真实 ~/.config/agent-manager
     /// 与 ~/.cursor/... 等。`HomeGuard` 析构时恢复。
     static HOME_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -614,7 +614,7 @@ mod tests {
 
         // bin path:`assert_cmd::cargo_bin` 找本 crate 的 bin
         let assert = |args: &[&str]| -> assert_cmd::Command {
-            let mut c = assert_cmd::Command::cargo_bin("ai-config").expect("cargo_bin ai-config");
+            let mut c = assert_cmd::Command::cargo_bin("agent-manager").expect("cargo_bin agent-manager");
             c.args(args);
             c.env("HOME", home_tmp.path());
             c
@@ -662,7 +662,7 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("home tempdir");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        let out = assert_cmd::Command::cargo_bin("ai-config")
+        let out = assert_cmd::Command::cargo_bin("agent-manager")
             .expect("cargo_bin")
             .args(["--root", root.as_str(), "--json", "list"])
             .env("HOME", home_tmp.path())
@@ -690,7 +690,7 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("home tempdir");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        let out = assert_cmd::Command::cargo_bin("ai-config")
+        let out = assert_cmd::Command::cargo_bin("agent-manager")
             .expect("cargo_bin")
             .args(["--root", root.as_str(), "--quiet", "list"])
             .env("HOME", home_tmp.path())
@@ -715,7 +715,7 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("home tempdir");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        let out = assert_cmd::Command::cargo_bin("ai-config")
+        let out = assert_cmd::Command::cargo_bin("agent-manager")
             .expect("cargo_bin")
             .args(["--root", root.as_str(), "--json", "doctor"])
             .env("HOME", home_tmp.path())
@@ -804,8 +804,8 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("home");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        std::fs::create_dir_all(ws.join(".ai-config/skills/foo")).unwrap();
-        std::fs::write(ws.join(".ai-config/skills/foo/SKILL.md"), "SKILL").unwrap();
+        std::fs::create_dir_all(ws.join(".agent-manager/skills/foo")).unwrap();
+        std::fs::write(ws.join(".agent-manager/skills/foo/SKILL.md"), "SKILL").unwrap();
         std::fs::create_dir_all(ws.join("child")).unwrap();
         std::fs::write(
             ws.join(".gitmodules"),
@@ -843,7 +843,7 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("home tempdir");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        let out = assert_cmd::Command::cargo_bin("ai-config")
+        let out = assert_cmd::Command::cargo_bin("agent-manager")
             .expect("cargo_bin")
             .args(["--root", root.as_str(), "--json", "show", "does-not-exist"])
             .env("HOME", home_tmp.path())
@@ -867,7 +867,7 @@ mod tests {
         let _home = HomeGuard::set_to(home_tmp.path());
 
         for nth in 1..=2 {
-            let out = assert_cmd::Command::cargo_bin("ai-config")
+            let out = assert_cmd::Command::cargo_bin("agent-manager")
                 .expect("cargo_bin")
                 .args(["--root", root.as_str(), "--quiet", "install"])
                 .env("HOME", home_tmp.path())

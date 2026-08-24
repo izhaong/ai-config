@@ -83,7 +83,7 @@ check_feature_branch() {
         return 0
     fi
 
-    # ai-config Git Flow: feat/*、fix/* 等须配合 SPECIFY_FEATURE 指向 specs/ 子目录
+    # agent-manager Git Flow: feat/*、fix/* 等须配合 SPECIFY_FEATURE 指向 specs/ 子目录
     if [[ "$branch" =~ ^(feat|fix|docs|hotfix)/ ]]; then
         if [[ -z "${SPECIFY_FEATURE:-}" ]]; then
             echo "[specify] Warning: Git Flow branch '$branch' — export SPECIFY_FEATURE=<specs-dir> (e.g. 001-command-sync) for scripts to resolve FEATURE_DIR" >&2

@@ -28,7 +28,7 @@ use crate::model::{McpServer, McpTransport, PlatformId};
 /// 读回时若**不**含此字段 → 视为用户手写 → `merge_with_existing` 返回
 /// `CoreError::Unmanaged`,**不**写盘(PRD §8.1 硬约束 #5)。
 pub const MANAGED_BY_KEY: &str = "managedBy";
-pub const MANAGED_BY_VALUE: &str = "ai-config";
+pub const MANAGED_BY_VALUE: &str = "agent-manager";
 
 /// `${VAR}` 匹配的占位符正则 — 取 `${` + 合法 key 字符 + `}`。
 /// key 名约定与 POSIX env 兼容:`[A-Za-z_][A-Za-z0-9_]*`,并兼容点号(一些 MCP 工具
@@ -438,7 +438,7 @@ fn migrate_from_template_inner(
 /// 3. **缺变量**检查:任一占位符在 secrets 中**没有**对应 key → 返回
 ///    `CoreError::SecretsMissing`,并把**所有**缺失 key 列在 hint 里
 ///    (不写盘;不留空字符串 — PRD §2.1)
-/// 4. 合并已有 mcp.json(如含 `managedBy == "ai-config"`)
+/// 4. 合并已有 mcp.json(如含 `managedBy == "agent-manager"`)
 /// 5. 写到 `<dest>/mcp.json.tmp` → `rename` 到 `<dest>/mcp.json`(原子)
 pub fn render_mcp(
     platform: PlatformId,
@@ -467,7 +467,7 @@ pub fn render_mcp(
         for (sname, key) in &missing {
             hint.push_str(&format!("  - server `{sname}` 缺 `{key}`\n"));
         }
-        hint.push_str("写完后重跑 `ai-config apply`");
+        hint.push_str("写完后重跑 `agent-manager apply`");
         return Err(CoreError::SecretsMissing {
             key: first_key,
             template: format!("mcp/servers/{first_server}.json"),
@@ -482,7 +482,7 @@ pub fn render_mcp(
         mcp_servers.insert(srv.name.clone(), substituted);
     }
 
-    // 4. 合并已有(若 managedBy == "ai-config")
+    // 4. 合并已有(若 managedBy == "agent-manager")
     let dest_file = dest_dir.join("mcp.json");
     let new_payload = merge_with_existing(&dest_file, Value::Object(mcp_servers))?;
 
@@ -620,9 +620,9 @@ pub fn remove_mcp_server_entry(
 /// 读已有 `mcp.json` → 决定是否合并。
 ///
 /// - 文件**不存在** → 返回 `new_servers` 直接包成 `{ "mcpServers": ... }` 顶层
-/// - 文件存在,顶层含 `"managedBy": "ai-config"` → 合并;`mcpServers` 字段整块
+/// - 文件存在,顶层含 `"managedBy": "agent-manager"` → 合并;`mcpServers` 字段整块
 ///   用新的替换,`mcpServers` 之外的字段保留
-/// - 文件存在,**不**含 `managedBy == "ai-config"` → 返回
+/// - 文件存在,**不**含 `managedBy == "agent-manager"` → 返回
 ///   `CoreError::Unmanaged`,**不**写盘(PRD §8.1 硬约束 #5)
 pub fn merge_with_existing(dest: &Utf8Path, new_servers: Value) -> Result<Value, CoreError> {
     // new_servers 期望是 Object 且 key 全是 server_name(由 render_mcp 构造);
@@ -644,7 +644,7 @@ pub fn merge_with_existing(dest: &Utf8Path, new_servers: Value) -> Result<Value,
 
     // 顶层结构:由 new_servers 是否带 "mcpServers" key 决定 —
     // 内部调用(render_mcp):new_servers = `{ name: cfg, ... }`,需包成
-    // `{ "mcpServers": {...}, "managedBy": "ai-config" }`
+    // `{ "mcpServers": {...}, "managedBy": "agent-manager" }`
     // 测试/外部调用:new_servers = 完整 payload(含 mcpServers),直接加 managedBy
     let new_payload = if new_servers
         .as_object()
@@ -715,7 +715,7 @@ fn unmanaged_err(path: &Utf8Path, reason: &str) -> CoreError {
         template: path.as_str().to_owned(),
         reason: format!("目标 mcp.json 是用户手写或外部工具产物 ({reason}),本工具拒绝覆盖"),
         hint: format!(
-            "二选一:(a) `mv {path} {path}.bak` 后重跑;(b) 在该 mcp.json 顶层加 `\"managedBy\": \"ai-config\"` 表示授权本工具接管"
+            "二选一:(a) `mv {path} {path}.bak` 后重跑;(b) 在该 mcp.json 顶层加 `\"managedBy\": \"agent-manager\"` 表示授权本工具接管"
         ),
     }
 }
@@ -860,7 +860,7 @@ mod tests {
         // managedBy 元字段
         assert_eq!(
             parsed.get("managedBy").and_then(Value::as_str),
-            Some("ai-config")
+            Some("agent-manager")
         );
     }
 
@@ -919,7 +919,7 @@ mod tests {
             "mcpServers": {
                 "fetch": {"command": "uvx", "args": ["mcp-server-fetch"]}
             },
-            "managedBy": "ai-config"
+            "managedBy": "agent-manager"
         });
         let dest = dir.join("mcp.json");
         atomic_write_json(&dest, &payload).expect("write ok");
@@ -979,7 +979,7 @@ mod tests {
         let dir = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
 
         let existing = serde_json::json!({
-            "managedBy": "ai-config",
+            "managedBy": "agent-manager",
             "mcpServers": {"old": {"command": "x"}},
             "x-note": "用户给本工具加的旁注"
         });
@@ -1003,7 +1003,7 @@ mod tests {
         // 其它字段保留
         assert_eq!(obj["x-note"], "用户给本工具加的旁注");
         // managedBy 保留
-        assert_eq!(obj["managedBy"], "ai-config");
+        assert_eq!(obj["managedBy"], "agent-manager");
     }
 
     // ─── 补:disabled server 不会被渲染 ─────────────────────────────

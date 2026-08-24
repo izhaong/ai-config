@@ -66,7 +66,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("deploy");
   });
 
-  it("aiconfig 已纳管时在其它平台视图收回 ai-config 副本", () => {
+  it("aiconfig 已纳管时在其它平台视图收回 agent-manager 副本", () => {
     expect(
       resolveEntryPlatformToggleAction(
         entry({ aiconfig: "linked" }),
@@ -76,7 +76,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("retract");
   });
 
-  it("源视图浏览 ai-config 时 skill 点击 ai-config icon 不收回", () => {
+  it("源视图浏览 agent-manager 时 skill 点击 agent-manager icon 不收回", () => {
     expect(
       resolveEntryPlatformToggleAction(
         entry({ aiconfig: "linked" }),
@@ -86,7 +86,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("skip");
   });
 
-  it("源视图浏览 ai-config 时 mcp 点击 ai-config icon 仅展示状态", () => {
+  it("源视图浏览 agent-manager 时 mcp 点击 agent-manager icon 仅展示状态", () => {
     expect(
       resolveEntryPlatformToggleAction(
         { ...entry({ aiconfig: "linked" }), kind: "mcp" },
@@ -152,7 +152,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("skip");
   });
 
-  it("mcp 无源时从 Cursor 视图导入 ai-config", () => {
+  it("mcp 无源时从 Cursor 视图导入 agent-manager", () => {
     expect(
       resolveEntryPlatformToggleAction(
         {
@@ -224,7 +224,7 @@ describe("resolveBatchPlatformToggleMode", () => {
     ).toBe("activate_all");
   });
 
-  it("源视图浏览 ai-config 时批量不收回 ai-config", () => {
+  it("源视图浏览 agent-manager 时批量不收回 agent-manager", () => {
     const rows = [
       entry({ aiconfig: "linked" }),
       entry({ aiconfig: "linked" }),
@@ -300,7 +300,7 @@ describe("resolveBatchEntryPlatformAction", () => {
     ).toBe("skip");
   });
 
-  it("retract_all：ai-config 批量收回平台副本", () => {
+  it("retract_all：agent-manager 批量收回平台副本", () => {
     const linked = entry({ aiconfig: "linked" });
     expect(
       resolveBatchEntryPlatformAction(
@@ -312,7 +312,7 @@ describe("resolveBatchEntryPlatformAction", () => {
     ).toBe("retract");
   });
 
-  it("retract_all：源视图浏览 ai-config 时 skill 不批量收回", () => {
+  it("retract_all：源视图浏览 agent-manager 时 skill 不批量收回", () => {
     const linked = entry({ aiconfig: "linked" });
     expect(
       resolveBatchEntryPlatformAction(

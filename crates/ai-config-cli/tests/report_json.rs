@@ -6,7 +6,7 @@ use std::path::Path;
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-const BIN: &str = "ai-config";
+const BIN: &str = "agent-manager";
 
 fn setup() -> (TempDir, TempDir) {
     let home = TempDir::new().expect("home");

@@ -20,7 +20,7 @@ vi.mock("../../platformIcons", () => ({
     hermes: "/hermes.png",
   },
   PLATFORM_NAME: {
-    aiconfig: "ai-config",
+    aiconfig: "agent-manager",
     cursor: "Cursor",
     codex: "Codex",
     claude: "Claude",

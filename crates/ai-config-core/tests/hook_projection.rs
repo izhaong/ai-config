@@ -301,7 +301,7 @@ fn hook_retract_removes_only_ledger_owned_binding_and_link() {
     fs::write(script.as_std_path(), "fixture").unwrap();
     fs::write(
         config.as_std_path(),
-        r#"{"foreign":"keep","hooks":{"afterShellExecution":[{"command":"./hooks/foreign.sh"},{"command":".cursor/hooks/owned.sh","managedBy":"ai-config","hook":"owned.sh"}]}}"#,
+        r#"{"foreign":"keep","hooks":{"afterShellExecution":[{"command":"./hooks/foreign.sh"},{"command":".cursor/hooks/owned.sh","managedBy":"agent-manager","hook":"owned.sh"}]}}"#,
     )
     .unwrap();
     for action in &sync.actions {

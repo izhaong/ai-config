@@ -4,7 +4,7 @@
 
 ## 不变边界
 
-- Canonical source 只有 `~/.ai-config/`、workspace layer 与 `<repo>/.ai-config/`；平台目录绝不自动回流。
+- Canonical source 只有 `~/.agent-manager/`、workspace layer 与 `<repo>/.agent-manager/`；平台目录绝不自动回流。
 - 投影顺序固定为 **Skills → Rules → MCP → Agents → Commands → Hooks**。
 - `direct_link` 只用于一项专用路径；聚合配置一律以具名 entry `generated`，保留外部字段。
 - `unsupported` 是安全结果，不允许 fallback 到用户全局配置、虚构目录或历史路径。
@@ -41,7 +41,7 @@ Cursor/Codex 的 shared skill target consumer set 固定为 `{cursor, codex}`；
 
 ## MCP
 
-Canonical MCP 是 `mcp/servers/<name>.json` 加 secret reference；真实 secret 仅位于 `~/.config/ai-config/secrets.env`（0600），不得写入 plan、ledger、日志或备份 manifest。
+Canonical MCP 是 `mcp/servers/<name>.json` 加 secret reference；真实 secret 仅位于 `~/.config/agent-manager/secrets.env`（0600），不得写入 plan、ledger、日志或备份 manifest。
 
 | 平台 | user / project target | 投影 |
 | --- | --- | --- |

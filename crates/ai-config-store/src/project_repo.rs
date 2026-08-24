@@ -95,7 +95,7 @@ impl<'a> ProjectRepo<'a> {
                     Err(StoreError::ProjectExists {
                         name: name_owned,
                         hint: format!(
-                            "项目名 `{name}` 已被本工具纳管;如需重新指向别的根目录,先 `ai-config project remove {name}` 再 add"
+                            "项目名 `{name}` 已被本工具纳管;如需重新指向别的根目录,先 `agent-manager project remove {name}` 再 add"
                         ),
                     })
                 } else {
@@ -242,8 +242,8 @@ mod tests {
         // 第二个 add
         let p2 = repo
             .add(
-                "ai-config",
-                Utf8Path::new("/Users/zh/Code/zh-cloud/ai-config"),
+                "agent-manager",
+                Utf8Path::new("/Users/zh/Code/zh-cloud/agent-manager"),
             )
             .expect("add 2");
         assert_eq!(repo.list().unwrap().len(), 2);

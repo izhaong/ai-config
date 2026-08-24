@@ -1,33 +1,33 @@
 ---
-description: ai-config 核心工作流：crate 边界、验证、Git、文档同步
+description: agent-manager 核心工作流：crate 边界、验证、Git、文档同步
 alwaysApply: true
 ---
 
-# ai-config 核心规则
+# agent-manager 核心规则
 
 ## 仓库与 cwd
 
 | 路径                                         | 职责                                                                   |
 | -------------------------------------------- | ---------------------------------------------------------------------- |
-| `crates/ai-config-core`                      | **唯一业务逻辑**（model / source / platform / sync / link / template） |
-| `crates/ai-config-cli`                       | clap 子命令，薄封装调用 core                                           |
-| `crates/ai-config-daemon`                    | 长驻 + 文件监听                                                        |
-| `crates/ai-config-store` / `bus` / `watcher` | 存储与事件                                                             |
-| `apps/ai-config-gui`                         | Tauri 2 + React；**仅**通过 `invoke` 调 Rust 命令                      |
+| `crates/agent-manager-core`                      | **唯一业务逻辑**（model / source / platform / sync / link / template） |
+| `crates/agent-manager-cli`                       | clap 子命令，薄封装调用 core                                           |
+| `crates/agent-manager-daemon`                    | 长驻 + 文件监听                                                        |
+| `crates/agent-manager-store` / `bus` / `watcher` | 存储与事件                                                             |
+| `apps/agent-manager-gui`                         | Tauri 2 + React；**仅**通过 `invoke` 调 Rust 命令                      |
 
 改代码时 **cwd 为正在修改的 crate 或 app 根**；workspace 级命令在仓库根执行。
 
 ## 依赖选型
 
-- **GUI**：ahooks、es-toolkit、shadcn/ui、lucide-react — 见 `gui-ai-config.mdc`
-- **Rust**：workspace 成熟 crate（serde、thiserror、tokio、itertools 等）— 见 `rust-ai-config.mdc`
+- **GUI**：ahooks、es-toolkit、shadcn/ui、lucide-react — 见 `gui-agent-manager.mdc`
+- **Rust**：workspace 成熟 crate（serde、thiserror、tokio、itertools 等）— 见 `rust-agent-manager.mdc`
 - 优先高星、维护活跃的库；不重复造轮子
 
 ## 架构约束
 
-- GUI / CLI **不得**复制 core 已有逻辑；新能力先进 `ai-config-core`，再暴露 CLI 子命令与 Tauri command。
-- 平台路径与 install 语义见 `crates/ai-config-core/src/platform.rs`。
-- 用户资产在 `~/.ai-config/`；本仓只维护工具与模板。
+- GUI / CLI **不得**复制 core 已有逻辑；新能力先进 `agent-manager-core`，再暴露 CLI 子命令与 Tauri command。
+- 平台路径与 install 语义见 `crates/agent-manager-core/src/platform.rs`。
+- 用户资产在 `~/.agent-manager/`；本仓只维护工具与模板。
 - Hook 物理布局（单文件 / 目录整包、可同步单元）见 [hooks-asset-layout.mdc](./hooks-asset-layout.mdc)。
 
 ## 开工前（Agent 自治，用户无感）
@@ -42,9 +42,9 @@ alwaysApply: true
 
 ## 验证（完成前必做）
 
-- Core/CLI：`cargo test -p ai-config-core -p ai-config-cli`（**新功能须同步新增/更新对应用例**）
-- GUI：`cd apps/ai-config-gui && npm run test && npm run build`
-- 同步相关：`ai-config doctor`、`ai-config status`
+- Core/CLI：`cargo test -p agent-manager-core -p agent-manager-cli`（**新功能须同步新增/更新对应用例**）
+- GUI：`cd apps/agent-manager-gui && npm run test && npm run build`
+- 同步相关：`agent-manager doctor`、`agent-manager status`
 
 ## 文档
 

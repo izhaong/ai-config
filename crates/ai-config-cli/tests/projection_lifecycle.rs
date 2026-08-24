@@ -12,7 +12,7 @@ use camino::Utf8PathBuf;
 use serde_json::Value;
 use tempfile::TempDir;
 
-const BIN: &str = "ai-config";
+const BIN: &str = "agent-manager";
 const MISSING_SECRET_KEY: &str = "T009_MISSING_CATALOG_TOKEN";
 const SECRET_VALUE_SENTINEL: &str = "t009-secret-value-must-not-leak";
 
@@ -25,7 +25,7 @@ impl Fixture {
     fn new() -> Self {
         let home = TempDir::new().expect("temporary HOME");
         let repo = TempDir::new().expect("temporary project");
-        let root = repo.path().join(".ai-config");
+        let root = repo.path().join(".agent-manager");
 
         write(
             &root.join("skills/demo/SKILL.md"),
@@ -52,7 +52,7 @@ impl Fixture {
     }
 
     fn asset_root(&self) -> PathBuf {
-        self.root().join(".ai-config")
+        self.root().join(".agent-manager")
     }
 
     fn cmd(&self) -> Command {
@@ -115,7 +115,7 @@ impl Fixture {
             ),
         );
         let secret_path =
-            Utf8PathBuf::from_path_buf(self.home.path().join(".config/ai-config/secrets.env"))
+            Utf8PathBuf::from_path_buf(self.home.path().join(".config/agent-manager/secrets.env"))
                 .expect("temporary secret path is UTF-8");
         ai_config_core::secrets::save_to(
             &[(
@@ -363,7 +363,7 @@ fn sync_apply_foreign_project_entry_exits_three_without_partial_writes() {
 fn sync_apply_unopenable_ledger_path_exits_five_with_a_redacted_json_error_envelope() {
     let fixture = Fixture::new();
     fixture.configure_missing_mcp_secret();
-    fs::create_dir_all(fixture.root().join(".ai-config/projection-ledger.sqlite"))
+    fs::create_dir_all(fixture.root().join(".agent-manager/projection-ledger.sqlite"))
         .expect("make the SQLite ledger path a directory");
 
     let output = fixture
@@ -515,7 +515,7 @@ fn later_mcp_source_change_rolls_back_all_preceding_non_hermes_subplans() {
         );
     }
 
-    let ledger_path = fixture.root().join(".ai-config/projection-ledger.sqlite");
+    let ledger_path = fixture.root().join(".agent-manager/projection-ledger.sqlite");
     let store = Store::open_at(&ledger_path).expect("open lifecycle ledger after failed apply");
     let scope = format!(
         "project:{}",

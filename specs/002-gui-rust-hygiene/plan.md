@@ -11,8 +11,8 @@
 
 ## 验收
 
-- `cargo test -p ai-config-core -p ai-config-cli -p ai-config-gui`
-- `cd apps/ai-config-gui && npm run build && npm run lint && npm run test`
+- `cargo test -p agent-manager-core -p agent-manager-cli -p agent-manager-gui`
+- `cd apps/agent-manager-gui && npm run build && npm run lint && npm run test`
 - `lib.rs` 行数显著下降（目标 <1200）
 
 ## 回滚

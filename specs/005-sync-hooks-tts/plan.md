@@ -3,7 +3,7 @@
 ## 源资产形态
 
 ```
-.ai-config/hooks/<name>/
+.agent-manager/hooks/<name>/
   HOOK.md          # 人类可读（description，可选）
   hook.yaml        # canonical
   scripts/         # 或 hook.yaml.script_dir 指向其它子目录
@@ -13,12 +13,12 @@
 
 ```yaml
 name: lifecycle-tts
-description: ai-config 生命周期 TTS 播报
+description: agent-manager 生命周期 TTS 播报
 script_dir: scripts
 entry: lifecycle-tts.sh
 events:
   - after_shell          # canonical 事件名
-    matcher: 'ai-config\b'
+    matcher: 'agent-manager\b'
 enabled_platforms: [cursor, codex, claude, hermes]  # 可选，默认四端凡 supports 者
 ```
 

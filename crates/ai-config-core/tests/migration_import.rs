@@ -31,7 +31,7 @@ fn prompt_request(root: &Utf8Path, replace: bool) -> ImportRequest {
         source_path: root.join("repo/AGENTS.md"),
         approved_source_root: root.join("repo"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace,
     }
 }
@@ -44,7 +44,7 @@ fn codex_mcp_request(root: &Utf8Path, name: &str, replace: bool) -> ImportReques
         source_path: root.join("repo/.codex/config.toml"),
         approved_source_root: root.join("repo/.codex"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace,
     }
 }
@@ -55,8 +55,8 @@ fn scope_import_request_uses_only_the_current_platform_target_and_canonical_laye
     let root = utf8(temp.path());
     let roots = SyncRoots {
         repo_root: root.join("repo"),
-        asset_root: root.join("repo/.ai-config"),
-        global_default: root.join("global/.ai-config"),
+        asset_root: root.join("repo/.agent-manager"),
+        global_default: root.join("global/.agent-manager"),
         deploy_base: root.join("repo"),
     };
 
@@ -75,7 +75,7 @@ fn scope_import_request_uses_only_the_current_platform_target_and_canonical_laye
         root.join("repo/.cursor/skills")
     );
     assert_eq!(request.destination_layer, SourceLayer::Project);
-    assert_eq!(request.destination_asset_root, root.join("repo/.ai-config"));
+    assert_eq!(request.destination_asset_root, root.join("repo/.agent-manager"));
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn prompt_import_plan_is_deterministic_redacted_and_read_only() {
     assert_eq!(action.action, ImportActionKind::CreateSource);
     assert_eq!(
         action.destination_path,
-        root.join("repo/.ai-config/prompts/AGENTS.md")
+        root.join("repo/.agent-manager/prompts/AGENTS.md")
     );
     assert_eq!(action.destination_layer, SourceLayer::Project);
     assert_eq!(action.secret_preflight.status, ImportSecretStatus::Clear);
@@ -132,7 +132,7 @@ fn selected_prompt_import_creates_canonical_source_and_preserves_platform_origin
     assert!(report.transaction_id.is_some());
     assert_eq!(fs::read(&request.source_path).unwrap(), original);
     assert_eq!(
-        fs::read(root.join("repo/.ai-config/prompts/AGENTS.md")).unwrap(),
+        fs::read(root.join("repo/.agent-manager/prompts/AGENTS.md")).unwrap(),
         original
     );
     let transaction_id = report.transaction_id.unwrap();
@@ -148,7 +148,7 @@ fn import_requires_selection_and_rejects_stale_source_without_writing() {
     let request = prompt_request(root, false);
     write(&request.source_path, "reviewed\n");
     let plan = build_import_plan(std::slice::from_ref(&request)).unwrap();
-    let destination = root.join("repo/.ai-config/prompts/AGENTS.md");
+    let destination = root.join("repo/.agent-manager/prompts/AGENTS.md");
 
     let no_selection = apply_import_plan(
         &plan,
@@ -174,7 +174,7 @@ fn replace_requires_explicit_plan_and_rollback_refuses_post_state_drift() {
     let root = utf8(temp.path());
     let request = prompt_request(root, false);
     write(&request.source_path, "imported\n");
-    let destination = root.join("repo/.ai-config/prompts/AGENTS.md");
+    let destination = root.join("repo/.agent-manager/prompts/AGENTS.md");
     write(&destination, "canonical\n");
 
     assert!(build_import_plan(std::slice::from_ref(&request)).is_err());
@@ -197,7 +197,7 @@ fn replace_requires_explicit_plan_and_rollback_refuses_post_state_drift() {
     let rollback = rollback_import_transaction(
         &root.join("transactions"),
         &transaction_id,
-        &[root.join("repo/.ai-config")],
+        &[root.join("repo/.agent-manager")],
     )
     .unwrap();
     assert_eq!(rollback.status, RollbackStatus::Drifted);
@@ -226,7 +226,7 @@ fn mcp_literal_secret_preflight_blocks_apply_without_serializing_the_value() {
         source_path: source,
         approved_source_root: root.join("repo"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace: false,
     };
 
@@ -243,7 +243,7 @@ fn mcp_literal_secret_preflight_blocks_apply_without_serializing_the_value() {
         &root.join("transactions"),
     )
     .is_err());
-    assert!(!root.join("repo/.ai-config/mcp/servers/demo.json").exists());
+    assert!(!root.join("repo/.agent-manager/mcp/servers/demo.json").exists());
 }
 
 #[test]
@@ -293,7 +293,7 @@ http_headers = { Accept = "application/json", Content-Type = "application/json" 
 
     assert_eq!(fs::read(&source).unwrap(), before);
     let gitea: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join("repo/.ai-config/mcp/servers/gitea.json")).unwrap(),
+        &fs::read(root.join("repo/.agent-manager/mcp/servers/gitea.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(gitea["targets"], serde_json::json!(["codex"]));
@@ -304,7 +304,7 @@ http_headers = { Accept = "application/json", Content-Type = "application/json" 
     );
     assert!(gitea["config"].get("type").is_none());
     let jenkins: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join("repo/.ai-config/mcp/servers/jenkins.json")).unwrap(),
+        &fs::read(root.join("repo/.agent-manager/mcp/servers/jenkins.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -346,7 +346,7 @@ http_headers = {{ Authorization = "{sentinel}" }}
         &root.join("transactions"),
     )
     .is_err());
-    assert!(!root.join("repo/.ai-config/mcp/servers/gitea.json").exists());
+    assert!(!root.join("repo/.agent-manager/mcp/servers/gitea.json").exists());
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn codex_mcp_missing_named_entry_is_read_only_error() {
     assert!(result.is_err());
     assert_eq!(fs::read(&source).unwrap(), before);
     assert!(!root
-        .join("repo/.ai-config/mcp/servers/missing.json")
+        .join("repo/.agent-manager/mcp/servers/missing.json")
         .exists());
 }
 
@@ -382,7 +382,7 @@ fn second_action_validation_failure_rolls_back_prior_and_current_writes() {
         &mcp_source,
         r#"{"mcpServers":{"broken":{"command":"demo"}}}"#,
     );
-    let destination_asset_root = root.join("repo/.ai-config");
+    let destination_asset_root = root.join("repo/.agent-manager");
     let blocked_parent = destination_asset_root.join("mcp/servers");
     fs::create_dir_all(blocked_parent.as_std_path()).unwrap();
     fs::set_permissions(
@@ -442,7 +442,7 @@ fn rollback_restores_an_unchanged_replaced_canonical_source() {
     let root = utf8(temp.path());
     let request = prompt_request(root, true);
     write(&request.source_path, "imported\n");
-    let destination = root.join("repo/.ai-config/prompts/AGENTS.md");
+    let destination = root.join("repo/.agent-manager/prompts/AGENTS.md");
     write(&destination, "canonical before import\n");
     let plan = build_import_plan(&[request]).unwrap();
     let report = apply_import_plan(
@@ -455,7 +455,7 @@ fn rollback_restores_an_unchanged_replaced_canonical_source() {
     let rollback = rollback_import_transaction(
         &root.join("transactions"),
         report.transaction_id.as_deref().unwrap(),
-        &[root.join("repo/.ai-config")],
+        &[root.join("repo/.agent-manager")],
     )
     .unwrap();
 
@@ -470,7 +470,7 @@ fn rollback_refuses_a_concurrent_import_lock_without_changing_the_canonical_sour
     let root = utf8(temp.path());
     let request = prompt_request(root, true);
     write(&request.source_path, "imported\n");
-    let destination = root.join("repo/.ai-config/prompts/AGENTS.md");
+    let destination = root.join("repo/.agent-manager/prompts/AGENTS.md");
     write(&destination, "canonical before import\n");
     let plan = build_import_plan(&[request]).unwrap();
     let transaction_root = root.join("transactions");
@@ -481,7 +481,7 @@ fn rollback_refuses_a_concurrent_import_lock_without_changing_the_canonical_sour
     )
     .unwrap();
     write(
-        &transaction_root.join(".ai-config-import.lock"),
+        &transaction_root.join(".agent-manager-import.lock"),
         "concurrent apply\n",
     );
     let before = fs::read(&destination).unwrap();
@@ -489,7 +489,7 @@ fn rollback_refuses_a_concurrent_import_lock_without_changing_the_canonical_sour
     let result = rollback_import_transaction(
         &transaction_root,
         report.transaction_id.as_deref().unwrap(),
-        &[root.join("repo/.ai-config")],
+        &[root.join("repo/.agent-manager")],
     );
 
     assert!(result.is_err());
@@ -509,7 +509,7 @@ fn rollback_recovers_a_write_completed_before_the_applied_flag_was_persisted() {
         fs::Permissions::from_mode(0o700),
     )
     .unwrap();
-    let approved = root.join("repo/.ai-config");
+    let approved = root.join("repo/.agent-manager");
     let destination = approved.join("prompts/AGENTS.md");
     write(&destination, "write completed before manifest update\n");
     let transaction_id = "migration-interrupted-create";
@@ -574,7 +574,7 @@ fn mcp_credential_like_unknown_field_is_redacted_and_blocks_import() {
         source_path: source,
         approved_source_root: root.join("repo"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace: false,
     };
 
@@ -607,7 +607,7 @@ fn mcp_nested_credential_like_field_is_redacted_and_blocks_import() {
         source_path: source,
         approved_source_root: root.join("repo"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace: false,
     };
 
@@ -627,7 +627,7 @@ fn mcp_nested_credential_like_field_is_redacted_and_blocks_import() {
         &root.join("transactions"),
     )
     .is_err());
-    assert!(!root.join("repo/.ai-config/mcp/servers/demo.json").exists());
+    assert!(!root.join("repo/.agent-manager/mcp/servers/demo.json").exists());
 }
 
 #[test]
@@ -649,7 +649,7 @@ fn mcp_credential_query_parameter_is_redacted_and_blocks_import() {
         source_path: source,
         approved_source_root: root.join("repo"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace: false,
     };
 
@@ -684,7 +684,7 @@ fn import_apply_refuses_a_preexisting_transaction_lock_without_writing() {
     )
     .unwrap();
     write(
-        &transaction_root.join(".ai-config-import.lock"),
+        &transaction_root.join(".agent-manager-import.lock"),
         "active or requires inspection\n",
     );
 
@@ -695,9 +695,9 @@ fn import_apply_refuses_a_preexisting_transaction_lock_without_writing() {
     );
 
     assert!(result.is_err());
-    assert!(!root.join("repo/.ai-config/prompts/AGENTS.md").exists());
+    assert!(!root.join("repo/.agent-manager/prompts/AGENTS.md").exists());
     assert_eq!(
-        fs::read(transaction_root.join(".ai-config-import.lock")).unwrap(),
+        fs::read(transaction_root.join(".agent-manager-import.lock")).unwrap(),
         b"active or requires inspection\n"
     );
 }
@@ -720,7 +720,7 @@ fn import_apply_is_zero_write_when_an_unselected_sibling_is_secret_blocked() {
         source_path: mcp_source,
         approved_source_root: root.join("repo"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace: false,
     };
     let plan = build_import_plan(&[prompt, blocked]).unwrap();
@@ -739,9 +739,9 @@ fn import_apply_is_zero_write_when_an_unselected_sibling_is_secret_blocked() {
     );
 
     assert!(result.is_err());
-    assert!(!root.join("repo/.ai-config/prompts/AGENTS.md").exists());
+    assert!(!root.join("repo/.agent-manager/prompts/AGENTS.md").exists());
     assert!(!root
-        .join("repo/.ai-config/mcp/servers/blocked.json")
+        .join("repo/.agent-manager/mcp/servers/blocked.json")
         .exists());
 }
 
@@ -766,7 +766,7 @@ fn skill_import_preserves_executable_mode_and_mode_changes_stale_the_plan() {
         source_path: source.clone(),
         approved_source_root: root.join("repo"),
         destination_layer: SourceLayer::Project,
-        destination_asset_root: root.join("repo/.ai-config"),
+        destination_asset_root: root.join("repo/.agent-manager"),
         replace: false,
     };
     let plan = build_import_plan(std::slice::from_ref(&request)).unwrap();
@@ -796,7 +796,7 @@ fn skill_import_preserves_executable_mode_and_mode_changes_stale_the_plan() {
     )
     .unwrap();
     let mode = fs::metadata(
-        root.join("repo/.ai-config/skills/demo/scripts/run.sh")
+        root.join("repo/.agent-manager/skills/demo/scripts/run.sh")
             .as_std_path(),
     )
     .unwrap()
@@ -818,7 +818,7 @@ fn rollback_rejects_manifest_paths_outside_caller_approved_canonical_roots() {
         fs::Permissions::from_mode(0o700),
     )
     .unwrap();
-    let approved = root.join("repo/.ai-config");
+    let approved = root.join("repo/.agent-manager");
     fs::create_dir_all(approved.as_std_path()).unwrap();
     let victim = root.join("victim.txt");
     write(&victim, "must survive\n");

@@ -35,7 +35,7 @@ pub struct AssetFileDetail {
     pub parent_path: String,
 }
 
-/// 从已安装平台硬拷贝到另一平台（无 ai-config 源时，平台视图跨 IDE 同步）。
+/// 从已安装平台硬拷贝到另一平台（无 agent-manager 源时，平台视图跨 IDE 同步）。
 pub fn deploy_from_platform(
     scope: &ScopeRoots<'_>,
     kind: AssetKind,
@@ -108,7 +108,7 @@ pub fn deploy(
     }
 }
 
-/// 从平台收回（含 ai-config 平台目录；不牵动其它平台副本）。
+/// 从平台收回（含 agent-manager 平台目录；不牵动其它平台副本）。
 pub fn retract(
     scope: &ScopeRoots<'_>,
     kind: AssetKind,
@@ -235,7 +235,7 @@ pub fn save_content(
     }
 }
 
-/// 仅从 ai-config 平台目录收回（与其它 IDE 平台 `retract` 语义一致，不牵动其它平台副本）。
+/// 仅从 agent-manager 平台目录收回（与其它 IDE 平台 `retract` 语义一致，不牵动其它平台副本）。
 ///
 /// 保留别名供 CLI / 旧命令；GUI 平台 icon 走 `retract(..., AiConfig)`。
 pub fn retract_source(
@@ -273,7 +273,7 @@ fn retract_aiconfig_platform(
     _name: &str,
 ) -> Result<String, CoreError> {
     Err(CoreError::InvalidPath(
-        "ai-config 是资产源，不能通过平台 retract 删除；请使用显式 delete/import 迁移流程"
+        "agent-manager 是资产源，不能通过平台 retract 删除；请使用显式 delete/import 迁移流程"
             .to_owned(),
     ))
 }
@@ -328,7 +328,7 @@ fn platform_native_dest(
         AssetKind::Hook => hook_adapter::platform_scripts_dir(scope.deploy_base, plat, name),
         AssetKind::Mcp => {
             return Err(CoreError::InvalidPath(
-                "MCP 收回需要 ai-config 源中的条目".into(),
+                "MCP 收回需要 agent-manager 源中的条目".into(),
             ));
         }
         AssetKind::Prompt => {
@@ -385,7 +385,7 @@ fn remove_source_entry(
     }
 }
 
-/// 从平台已下发路径只读预览（无 ai-config 源时）。
+/// 从平台已下发路径只读预览（无 agent-manager 源时）。
 pub fn read_platform_preview(
     kind: AssetKind,
     platform_path: &Utf8Path,
@@ -584,9 +584,9 @@ fn deploy_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<St
 fn retract_mcp(scope: &ScopeRoots<'_>, name: &str, plat: PlatformId) -> Result<String, CoreError> {
     let dest = platform::for_scope(plat, scope.deploy_base)?.mcp_deploy_path();
     Err(CoreError::LinkFailed {
-        src: "ai-config MCP ownership record".to_owned(),
+        src: "agent-manager MCP ownership record".to_owned(),
         dest: dest.to_string(),
-        reason: format!("尚不能证明 MCP server `{name}` 由 ai-config 管理"),
+        reason: format!("尚不能证明 MCP server `{name}` 由 agent-manager 管理"),
         hint: "当前版本不会收回平台 MCP；请等待 source-first 迁移计划生成可验证的所有权记录"
             .to_owned(),
     })
@@ -877,7 +877,7 @@ mod deploy_from_platform_tests {
     fn prompt_legacy_mutators_fail_before_touching_platform_files() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         fs::create_dir_all(&asset_root).unwrap();
         let sentinel = asset_root.join("keep.txt");
         fs::write(&sentinel, "keep").unwrap();
@@ -926,7 +926,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -951,7 +951,7 @@ mod deploy_from_platform_tests {
             "Claude 侧原始安装应保留"
         );
         assert!(
-            !cursor_skill.join(".ai-config-deploy.json").exists(),
+            !cursor_skill.join(".agent-manager-deploy.json").exists(),
             "下发不应生成 deploy marker"
         );
     }
@@ -961,7 +961,7 @@ mod deploy_from_platform_tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let skill_dir = asset_root.join("skills/keep-me");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), "# keep\n").unwrap();
@@ -990,7 +990,7 @@ mod deploy_from_platform_tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         fs::create_dir_all(asset_root.join("hooks")).unwrap();
         fs::write(
             asset_root.join("hooks/speak-lifecycle.py"),
@@ -1033,7 +1033,7 @@ mod deploy_from_platform_tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         let bundle = asset_root.join("hooks/lifecycle-tts");
         fs::create_dir_all(bundle.join("scripts")).unwrap();
         fs::write(bundle.join("scripts/run.sh"), "#!/bin/sh\n").unwrap();
@@ -1070,7 +1070,7 @@ mod deploy_from_platform_tests {
         fs::create_dir_all(&hermes_skill).unwrap();
         fs::write(hermes_skill.join("SKILL.md"), "# npx only\n").unwrap();
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1082,7 +1082,7 @@ mod deploy_from_platform_tests {
         assert!(retract(&scope, AssetKind::Skill, "npx-only", PlatformId::Hermes).is_err());
         assert!(
             hermes_skill.join("SKILL.md").is_file(),
-            "无 ai-config 所有权证据的外部 Hermes skill 必须保留"
+            "无 agent-manager 所有权证据的外部 Hermes skill 必须保留"
         );
     }
 
@@ -1100,7 +1100,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = ScopeRoots {
@@ -1155,7 +1155,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = ScopeRoots {
@@ -1175,12 +1175,12 @@ mod deploy_from_platform_tests {
     #[test]
     fn retract_aiconfig_mcp_does_not_delete_source_server() {
         let tmp = TempDir::new().unwrap();
-        let asset_root = Utf8Path::from_path(tmp.path()).unwrap().join(".ai-config");
+        let asset_root = Utf8Path::from_path(tmp.path()).unwrap().join(".agent-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
         mcp_json::upsert_server_in_document(
             &asset_root,
-            "ai-config",
-            serde_json::json!({ "command": "ai-config", "args": ["serve"] }),
+            "agent-manager",
+            serde_json::json!({ "command": "agent-manager", "args": ["serve"] }),
         )
         .unwrap();
 
@@ -1189,8 +1189,8 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: &asset_root,
         };
-        assert!(retract(&scope, AssetKind::Mcp, "ai-config", PlatformId::AiConfig).is_err());
-        assert!(mcp_json::get_server_config(&asset_root, "ai-config")
+        assert!(retract(&scope, AssetKind::Mcp, "agent-manager", PlatformId::AiConfig).is_err());
+        assert!(mcp_json::get_server_config(&asset_root, "agent-manager")
             .unwrap()
             .is_some());
     }
@@ -1209,7 +1209,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".ai-config");
+        let asset_root = home.join(".agent-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = ScopeRoots {

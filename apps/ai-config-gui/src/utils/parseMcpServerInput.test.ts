@@ -5,14 +5,14 @@ import { parseMcpServerInput } from "./parseMcpServerInput";
 describe("parseMcpServerInput", () => {
   it("parses single-key object", () => {
     const result = parseMcpServerInput(`{
-      "ai-config": {
-        "command": "ai-config",
+      "agent-manager": {
+        "command": "agent-manager",
         "args": ["serve"]
       }
     }`);
-    expect(result.name).toBe("ai-config");
+    expect(result.name).toBe("agent-manager");
     expect(result.config).toEqual({
-      command: "ai-config",
+      command: "agent-manager",
       args: ["serve"],
     });
   });

@@ -22,12 +22,12 @@ use crate::error::CoreError;
 
 // ── 路径 ────────────────────────────────────────────────────────────
 
-/// 默认路径:`~/.config/ai-config/secrets.env`,可用 `AI_CONFIG_SECRETS_DIR` env 覆盖。
+/// 默认路径:`~/.config/agent-manager/secrets.env`,可用 `AI_CONFIG_SECRETS_DIR` env 覆盖。
 pub fn default_path() -> Utf8PathBuf {
     let base = std::env::var("AI_CONFIG_SECRETS_DIR")
         .ok()
         .map(Utf8PathBuf::from)
-        .or_else(|| dirs_home().map(|h| h.join(".config").join("ai-config")));
+        .or_else(|| dirs_home().map(|h| h.join(".config").join("agent-manager")));
     base.map(|p| p.join("secrets.env"))
         .unwrap_or_else(|| Utf8PathBuf::from("secrets.env"))
 }

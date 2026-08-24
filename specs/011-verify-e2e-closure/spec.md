@@ -17,14 +17,14 @@
 
 **Acceptance Scenarios**:
 
-1. **Given** PATH 中存在 `ai-config`，**When** 其版本与 `target/debug/ai-config` 不同，**Then** 验证必须失败并报告版本漂移。
-2. **Given** PATH 中不存在 `ai-config`，**When** 执行源码验证，**Then** 源码测试可继续，但运行态闭环必须标为未验证。
+1. **Given** PATH 中存在 `agent-manager`，**When** 其版本与 `target/debug/agent-manager` 不同，**Then** 验证必须失败并报告版本漂移。
+2. **Given** PATH 中不存在 `agent-manager`，**When** 执行源码验证，**Then** 源码测试可继续，但运行态闭环必须标为未验证。
 
 ---
 
 ### User Story 2 - 隔离验证同步生命周期 (Priority: P1)
 
-维护者可以在临时 HOME 和临时资产根中验证 plan、apply、status、retract/uninstall，不触碰真实 `~/.ai-config` 与 IDE 配置。
+维护者可以在临时 HOME 和临时资产根中验证 plan、apply、status、retract/uninstall，不触碰真实 `~/.agent-manager` 与 IDE 配置。
 
 **Why this priority**: 同步类命令可能因旧版本默认写入，真实环境冒烟不能作为安全默认。
 
@@ -42,7 +42,7 @@
 
 用户将 completion 输出交给提前关闭的消费者时，CLI 不应 panic。
 
-**Why this priority**: `ai-config completion zsh | head` 当前稳定触发 broken-pipe panic 和退出码 101。
+**Why this priority**: `agent-manager completion zsh | head` 当前稳定触发 broken-pipe panic 和退出码 101。
 
 **Independent Test**: 使用返回 `BrokenPipe` 的 writer 调用 completion 输出边界，断言按成功处理；其它 IO 错误仍返回失败。
 
@@ -61,7 +61,7 @@
 
 ### Edge Cases
 
-- PATH 中的 `ai-config` 是 symlink 或不同安装渠道。
+- PATH 中的 `agent-manager` 是 symlink 或不同安装渠道。
 - 临时 HOME 中不存在任何平台父目录。
 - completion 消费者完整读取或提前关闭。
 - 同步计划包含 blocking reason 时，隔离脚本必须停止，不得强行 apply。

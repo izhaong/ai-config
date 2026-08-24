@@ -13,7 +13,7 @@ use tempfile::TempDir;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-const BIN: &str = "ai-config";
+const BIN: &str = "agent-manager";
 
 fn setup() -> (TempDir, TempDir) {
     let home = TempDir::new().expect("temporary home");
@@ -32,7 +32,7 @@ fn setup() -> (TempDir, TempDir) {
 }
 
 fn command(home: &Path, root: &Path) -> Command {
-    let mut command = Command::cargo_bin(BIN).expect("ai-config binary");
+    let mut command = Command::cargo_bin(BIN).expect("agent-manager binary");
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
@@ -78,7 +78,7 @@ fn deploy_uses_canonical_server_plan_and_preserves_foreign_cursor_entries() {
 fn deploy_from_a_project_root_writes_only_the_project_platform_target() {
     let home = TempDir::new().expect("temporary home");
     let project = TempDir::new().expect("temporary project");
-    let assets = project.path().join(".ai-config");
+    let assets = project.path().join(".agent-manager");
     fs::create_dir_all(assets.join("skills")).expect("mark project asset root");
     fs::create_dir_all(assets.join("mcp/servers")).expect("create project MCP source directory");
     fs::write(
@@ -146,7 +146,7 @@ fn deploy_hydrates_a_strict_secret_store_without_echoing_its_value() {
         }"#,
     )
     .expect("write secret-bearing canonical source");
-    let secret_dir = home.path().join(".config/ai-config");
+    let secret_dir = home.path().join(".config/agent-manager");
     fs::create_dir_all(&secret_dir).expect("create secret directory");
     let secret_store = secret_dir.join("secrets.env");
     let secret = "catalog-secret-must-not-be-echoed";
@@ -207,7 +207,7 @@ fn deploy_rejects_a_non_0600_secret_store_before_any_platform_write() {
         }"#,
     )
     .expect("write secret-bearing canonical source");
-    let secret_dir = home.path().join(".config/ai-config");
+    let secret_dir = home.path().join(".config/agent-manager");
     fs::create_dir_all(&secret_dir).expect("create secret directory");
     let secret_store = secret_dir.join("secrets.env");
     fs::write(&secret_store, "CATALOG_TOKEN=must-not-leak\n").expect("write secret store");

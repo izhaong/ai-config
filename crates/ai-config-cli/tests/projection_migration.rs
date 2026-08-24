@@ -14,7 +14,7 @@ use assert_cmd::Command;
 use serde_json::Value;
 use tempfile::TempDir;
 
-const BIN: &str = "ai-config";
+const BIN: &str = "agent-manager";
 const UNKNOWN_ROOT_SENTINEL: &str = "unknown-root-content-must-not-be-read";
 
 struct InventoryFixture {
@@ -25,7 +25,7 @@ struct InventoryFixture {
 impl InventoryFixture {
     fn new() -> Self {
         let home = TempDir::new().expect("temporary HOME");
-        let asset_root = home.path().join(".ai-config");
+        let asset_root = home.path().join(".agent-manager");
         fs::create_dir_all(&asset_root).expect("create canonical asset root");
         Self { home, asset_root }
     }
@@ -196,8 +196,8 @@ fn migration_inventory_classifies_allowlisted_legacy_external_and_unsafe_entries
     let marker_copy = fixture.home().join(".codex/skills/marker-copy");
     copy_skill(&marker_source, &marker_copy);
     write(
-        &marker_copy.join(".ai-config-deploy.json"),
-        r#"{"version":1,"source":"legacy-ai-config"}"#,
+        &marker_copy.join(".agent-manager-deploy.json"),
+        r#"{"version":1,"source":"legacy-agent-manager"}"#,
     );
 
     let equal_copy = fixture.home().join(".cursor/skills/equal-copy");
@@ -495,9 +495,9 @@ fn migration_inventory_is_strictly_read_only_and_deterministic() {
         "unchanged inventory must preserve action ordering, fingerprints, and plan digest"
     );
     assert!(
-        !fixture.home().join(".config/ai-config/apply.lock").exists()
-            && !fixture.home().join(".config/ai-config/backups").exists()
-            && !fixture.home().join(".config/ai-config/state.db").exists(),
+        !fixture.home().join(".config/agent-manager/apply.lock").exists()
+            && !fixture.home().join(".config/agent-manager/backups").exists()
+            && !fixture.home().join(".config/agent-manager/state.db").exists(),
         "inventory must not create locks, backups, or state databases"
     );
 }
@@ -542,7 +542,7 @@ fn assert_rule_entry_source(entry: &Value, source_layer: &str, canonical_path: &
 #[test]
 fn global_rules_inventory_respects_current_legacy_and_unsupported_platform_contracts() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     write(
         &asset_root.join("skills/Demo/SKILL.md"),
         "same spelling in another asset kind\n",
@@ -646,9 +646,9 @@ fn global_rules_inventory_respects_current_legacy_and_unsupported_platform_contr
 fn project_rules_inventory_uses_project_overlay_and_never_scans_home_platform_paths() {
     let home = TempDir::new().expect("temporary HOME");
     let repo = TempDir::new().expect("temporary project");
-    let global_source = home.path().join(".ai-config/rules/shared.mdc");
-    let global_only_source = home.path().join(".ai-config/rules/global-only.mdc");
-    let project_source = repo.path().join(".ai-config/rules/shared.mdc");
+    let global_source = home.path().join(".agent-manager/rules/shared.mdc");
+    let global_only_source = home.path().join(".agent-manager/rules/global-only.mdc");
+    let project_source = repo.path().join(".agent-manager/rules/shared.mdc");
     write(&global_source, "global shared rule\n");
     write(&global_only_source, "global inherited rule\n");
     write(&project_source, "project shared rule\n");
@@ -876,7 +876,7 @@ fn assert_mcp_issue<'a>(report: &'a Value, path_fragment: &str, reason_code: &st
 #[test]
 fn global_mcp_inventory_is_per_server_lossless_across_current_and_legacy_containers() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     let catalog_source = write_canonical_mcp(&asset_root, "catalog", "catalog", "catalog-global");
 
     write(
@@ -1115,7 +1115,7 @@ mcp_servers:
         assert_eq!(legacy["selectable"], false);
     }
 
-    let legacy_source = entry_named(&report, "source-legacy-only", "/.ai-config/mcp.json");
+    let legacy_source = entry_named(&report, "source-legacy-only", "/.agent-manager/mcp.json");
     assert_eq!(legacy_source["kind"], "mcp");
     assert_eq!(legacy_source["classification"], "legacy_mcp_candidate");
     assert_eq!(legacy_source["provenance"], "canonical_legacy");
@@ -1129,8 +1129,8 @@ mcp_servers:
 fn project_mcp_inventory_uses_effective_overlay_repo_containers_and_reports_hermes_unsupported() {
     let home = TempDir::new().expect("temporary HOME");
     let repo = TempDir::new().expect("temporary project");
-    let global_root = home.path().join(".ai-config");
-    let project_root = repo.path().join(".ai-config");
+    let global_root = home.path().join(".agent-manager");
+    let project_root = repo.path().join(".agent-manager");
     let global_catalog = write_canonical_mcp(&global_root, "catalog", "catalog", "catalog-global");
     let global_only =
         write_canonical_mcp(&global_root, "global-only", "global-only", "global-only");
@@ -1348,7 +1348,7 @@ command = "global-only"
 #[test]
 fn mcp_inventory_reports_invalid_and_unsafe_containers_without_leaking_or_aborting_other_roots() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     write_canonical_mcp(&asset_root, "catalog", "catalog", "catalog-global");
     write(
         &home.path().join(".cursor/mcp.json"),
@@ -1429,7 +1429,7 @@ fn mcp_inventory_reports_invalid_and_unsafe_containers_without_leaking_or_aborti
 #[test]
 fn canonical_mcp_parent_links_mismatches_and_legacy_errors_are_reported_without_following() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     fs::create_dir_all(&asset_root).expect("create canonical root");
     let outside = TempDir::new().expect("external canonical owner");
     write_canonical_mcp(outside.path(), "escaped", "escaped", MCP_SECRET_SENTINEL);
@@ -1461,12 +1461,12 @@ fn canonical_mcp_parent_links_mismatches_and_legacy_errors_are_reported_without_
     );
     assert_mcp_issue(
         &report,
-        "/.ai-config/mcp/servers",
+        "/.agent-manager/mcp/servers",
         "unsafe_canonical_mcp_parent_symlink",
     );
     assert_mcp_issue(
         &report,
-        "/.ai-config/mcp.json",
+        "/.agent-manager/mcp.json",
         "invalid_legacy_canonical_mcp",
     );
     assert!(
@@ -1477,7 +1477,7 @@ fn canonical_mcp_parent_links_mismatches_and_legacy_errors_are_reported_without_
     );
 
     let mismatch_home = TempDir::new().expect("mismatch HOME");
-    let mismatch_root = mismatch_home.path().join(".ai-config");
+    let mismatch_root = mismatch_home.path().join(".agent-manager");
     write_canonical_mcp(
         &mismatch_root,
         "filename",
@@ -1519,7 +1519,7 @@ fn canonical_mcp_parent_links_mismatches_and_legacy_errors_are_reported_without_
     );
     assert_mcp_issue(
         &mismatch_report,
-        "/.ai-config/mcp.json",
+        "/.agent-manager/mcp.json",
         "unsafe_legacy_canonical_mcp_symlink",
     );
     assert!(
@@ -1686,7 +1686,7 @@ fn assert_agent_report_redacted(stdout: &str, stderr: &str) {
 #[test]
 fn global_agent_inventory_reports_native_generated_files_legacy_and_hermes_without_bodies() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     let reviewer_source = write_canonical_agent(&asset_root, "reviewer", "global");
     let case_source = write_canonical_agent(&asset_root, "CaseAgent", "global-case");
     write(
@@ -1831,8 +1831,8 @@ fn global_agent_inventory_reports_native_generated_files_legacy_and_hermes_witho
 fn project_agent_inventory_uses_overlay_and_never_reads_home_parent_links_or_hermes() {
     let home = TempDir::new().expect("temporary HOME");
     let repo = TempDir::new().expect("temporary project");
-    let global_root = home.path().join(".ai-config");
-    let project_root = repo.path().join(".ai-config");
+    let global_root = home.path().join(".agent-manager");
+    let project_root = repo.path().join(".agent-manager");
     let global_shared = write_canonical_agent(&global_root, "shared", "global-shared");
     let global_only = write_canonical_agent(&global_root, "global-only", "global-only");
     let project_shared = write_canonical_agent(&project_root, "shared", "project-shared");
@@ -2039,8 +2039,8 @@ fn agent_inventory_reports_symlink_boundaries_and_invalid_canonical_schema_witho
 
     let home = TempDir::new().expect("temporary HOME");
     let repo = TempDir::new().expect("temporary project");
-    let global_root = home.path().join(".ai-config");
-    let project_root = repo.path().join(".ai-config");
+    let global_root = home.path().join(".agent-manager");
+    let project_root = repo.path().join(".agent-manager");
     let safe_source = write_canonical_agent(&global_root, "safe", "global-safe");
     fs::create_dir_all(&project_root).expect("create project canonical root");
     let outside_canonical = TempDir::new().expect("outside canonical Agent root");
@@ -2103,7 +2103,7 @@ fn agent_inventory_reports_symlink_boundaries_and_invalid_canonical_schema_witho
     );
     assert_issue(
         &report,
-        "/.ai-config/agents",
+        "/.agent-manager/agents",
         "unsafe_canonical_agent_directory",
     );
     assert_issue(&report, "/.cursor/agents", "unsafe_agent_directory_parent");
@@ -2138,7 +2138,7 @@ fn agent_inventory_reports_symlink_boundaries_and_invalid_canonical_schema_witho
     );
 
     let invalid_home = TempDir::new().expect("invalid Agent HOME");
-    let invalid_root = invalid_home.path().join(".ai-config");
+    let invalid_root = invalid_home.path().join(".agent-manager");
     write(
         &invalid_root.join("agents/wrong.md"),
         &format!("---\nname: different\ndescription: valid\n---\n{AGENT_BODY_SENTINEL}-mismatch\n"),
@@ -2358,7 +2358,7 @@ fn assert_command_redacted(stdout: &str, stderr: &str) {
 #[test]
 fn global_command_inventory_reports_current_legacy_and_unsupported_without_bodies() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     let source = write_canonical_command(&asset_root, "review", "global");
     let case_source = write_canonical_command(&asset_root, "Reviewer", "global-case");
     fs::create_dir_all(home.path().join(".cursor/commands")).expect("create Cursor commands");
@@ -2497,8 +2497,8 @@ fn global_command_inventory_reports_current_legacy_and_unsupported_without_bodie
 fn project_command_inventory_uses_overlay_and_never_scans_home_or_unsupported_paths() {
     let home = TempDir::new().expect("temporary HOME");
     let repo = TempDir::new().expect("temporary project");
-    let global_root = home.path().join(".ai-config");
-    let project_root = repo.path().join(".ai-config");
+    let global_root = home.path().join(".agent-manager");
+    let project_root = repo.path().join(".agent-manager");
     let global_shared = write_canonical_command(&global_root, "shared", "global-shared");
     let global_only = write_canonical_command(&global_root, "global-only", "global-only");
     let project_shared = write_canonical_command(&project_root, "shared", "project-shared");
@@ -2631,8 +2631,8 @@ fn project_command_inventory_uses_overlay_and_never_scans_home_or_unsupported_pa
 fn command_inventory_is_fail_closed_for_links_wrong_shapes_and_kind_scoped_collisions() {
     let home = TempDir::new().expect("temporary HOME");
     let repo = TempDir::new().expect("temporary project");
-    let global_root = home.path().join(".ai-config");
-    let project_root = repo.path().join(".ai-config");
+    let global_root = home.path().join(".agent-manager");
+    let project_root = repo.path().join(".agent-manager");
     write_canonical_command(&global_root, "safe", "global-safe");
     let case_source = write_canonical_command(&global_root, "CaseCommand", "global-case");
     write(
@@ -2706,7 +2706,7 @@ fn command_inventory_is_fail_closed_for_links_wrong_shapes_and_kind_scoped_colli
         assert_eq!(issue["reason_code"], reason);
         assert_eq!(issue["blocking"], true);
     };
-    assert_issue("/.ai-config/commands", "unsafe_canonical_command_directory");
+    assert_issue("/.agent-manager/commands", "unsafe_canonical_command_directory");
     assert_issue("/.cursor/commands", "unsafe_command_directory_parent");
     assert_issue("/.claude/commands/safe.md", "unsafe_command_file_symlink");
     assert_issue(
@@ -2776,7 +2776,7 @@ fn write_hook_manifest(asset_root: &Path, commands: &[&str]) {
         .map(|command| {
             serde_json::json!({
                 "command": format!("{command} {HOOK_SECRET_SENTINEL}"),
-                "matcher": "ai-config"
+                "matcher": "agent-manager"
             })
         })
         .collect::<Vec<_>>();
@@ -2819,7 +2819,7 @@ fn assert_hook_report_redacted(stdout: &str, stderr: &str) {
 #[test]
 fn global_hook_inventory_reports_four_current_pairs_and_codex_legacy_without_rendering() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     let source = write_hook_unit(&asset_root, "run.sh", "global");
     write_hook_manifest(&asset_root, &["./hooks/run.sh"]);
 
@@ -2836,31 +2836,31 @@ fn global_hook_inventory_reports_four_current_pairs_and_codex_legacy_without_ren
     write(
         &home.path().join(".cursor/hooks.json"),
         &format!(
-            r#"{{"version":1,"hooks":{{"afterShellExecution":[{{"command":".cursor/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"run.sh"}}]}}}}"#
+            r#"{{"version":1,"hooks":{{"afterShellExecution":[{{"command":".cursor/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"agent-manager","hook":"run.sh"}}]}}}}"#
         ),
     );
     write(
         &home.path().join(".codex/hooks.json"),
         &format!(
-            r#"{{"version":1,"hooks":{{"PostToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":".codex/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"run.sh"}}]}}]}}}}"#
+            r#"{{"version":1,"hooks":{{"PostToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":".codex/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"agent-manager","hook":"run.sh"}}]}}]}}}}"#
         ),
     );
     write(
         &home.path().join(".claude/settings.json"),
         &format!(
-            r#"{{"permissions":{{"allow":[]}},"hooks":{{"PostToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":".claude/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"run.sh"}}]}}]}}}}"#
+            r#"{{"permissions":{{"allow":[]}},"hooks":{{"PostToolUse":[{{"matcher":"Bash","hooks":[{{"type":"command","command":".claude/hooks/run.sh {HOOK_SECRET_SENTINEL}","managedBy":"agent-manager","hook":"run.sh"}}]}}]}}}}"#
         ),
     );
     write(
         &home.path().join(".hermes/config.yaml"),
         &format!(
-            "model: foreign-setting\nhooks:\n  post_tool_call:\n    - command: .hermes/hooks/run.sh {HOOK_SECRET_SENTINEL}\n      managedBy: ai-config\n      hook: run.sh\n"
+            "model: foreign-setting\nhooks:\n  post_tool_call:\n    - command: .hermes/hooks/run.sh {HOOK_SECRET_SENTINEL}\n      managedBy: agent-manager\n      hook: run.sh\n"
         ),
     );
     write(
         &home.path().join(".codex/config.toml"),
         &format!(
-            "[hooks]\nPostToolUse = [{{ matcher = \"Bash\", hooks = [{{ type = \"command\", command = \".codex/hooks/run.sh {HOOK_SECRET_SENTINEL}\", managedBy = \"ai-config\", hook = \"run.sh\" }}] }}]\n"
+            "[hooks]\nPostToolUse = [{{ matcher = \"Bash\", hooks = [{{ type = \"command\", command = \".codex/hooks/run.sh {HOOK_SECRET_SENTINEL}\", managedBy = \"agent-manager\", hook = \"run.sh\" }}] }}]\n"
         ),
     );
 
@@ -2946,8 +2946,8 @@ fn project_hook_inventory_blocks_half_cross_layer_and_unsafe_paths_without_scann
     let home = TempDir::new().expect("temporary HOME");
     let repo = TempDir::new().expect("temporary project");
     let canonical_outside = TempDir::new().expect("outside canonical Hook bundle");
-    let global_root = home.path().join(".ai-config");
-    let project_root = repo.path().join(".ai-config");
+    let global_root = home.path().join(".agent-manager");
+    let project_root = repo.path().join(".agent-manager");
 
     write_hook_unit(&global_root, "cross.sh", "global-cross");
     write_hook_manifest(&global_root, &["./hooks/cross.sh"]);
@@ -3000,7 +3000,7 @@ fn project_hook_inventory_blocks_half_cross_layer_and_unsafe_paths_without_scann
     write(
         &repo.path().join(".codex/hooks.json"),
         &format!(
-            r#"{{"version":1,"hooks":{{"PostToolUse":[{{"hooks":[{{"type":"command","command":".codex/hooks/shared.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"shared.sh"}},{{"type":"command","command":".codex/hooks/unsafe-child.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"unsafe-child.sh"}}]}}]}}}}"#
+            r#"{{"version":1,"hooks":{{"PostToolUse":[{{"hooks":[{{"type":"command","command":".codex/hooks/shared.sh {HOOK_SECRET_SENTINEL}","managedBy":"agent-manager","hook":"shared.sh"}},{{"type":"command","command":".codex/hooks/unsafe-child.sh {HOOK_SECRET_SENTINEL}","managedBy":"agent-manager","hook":"unsafe-child.sh"}}]}}]}}}}"#
         ),
     );
     fs::create_dir_all(repo.path().join(".codex/hooks")).expect("create Codex Hook root");
@@ -3160,7 +3160,7 @@ fn project_hook_inventory_blocks_half_cross_layer_and_unsafe_paths_without_scann
     assert_issue("/.codex/hooks.json", "hook_half_projection");
     assert_issue("/.claude/hooks/orphan-bundle", "unsafe_hook_script_symlink");
     assert_issue(
-        "/.ai-config/hooks/canonical-link-bundle",
+        "/.agent-manager/hooks/canonical-link-bundle",
         "unsafe_canonical_hook_bundle_symlink",
     );
     assert_issue(
@@ -3196,12 +3196,12 @@ fn project_hook_inventory_blocks_half_cross_layer_and_unsafe_paths_without_scann
 #[test]
 fn foreign_hook_inventory_halves_and_marker_command_mismatches_are_blocking() {
     let home = TempDir::new().expect("temporary HOME");
-    let asset_root = home.path().join(".ai-config");
+    let asset_root = home.path().join(".agent-manager");
     fs::create_dir_all(&asset_root).expect("create empty canonical root");
     write(
         &home.path().join(".cursor/hooks.json"),
         &format!(
-            r#"{{"version":1,"hooks":{{"afterShellExecution":[{{"command":".cursor/hooks/binding-only.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"binding-only.sh"}},{{"command":".cursor/hooks/actual.sh {HOOK_SECRET_SENTINEL}","managedBy":"ai-config","hook":"claimed.sh"}}]}}}}"#
+            r#"{{"version":1,"hooks":{{"afterShellExecution":[{{"command":".cursor/hooks/binding-only.sh {HOOK_SECRET_SENTINEL}","managedBy":"agent-manager","hook":"binding-only.sh"}},{{"command":".cursor/hooks/actual.sh {HOOK_SECRET_SENTINEL}","managedBy":"agent-manager","hook":"claimed.sh"}}]}}}}"#
         ),
     );
     write(
@@ -3286,8 +3286,8 @@ fn foreign_hook_inventory_halves_and_marker_command_mismatches_are_blocking() {
 fn workspace_inventory_uses_workspace_scope_overlay_and_never_falls_back_to_home_targets() {
     let home = TempDir::new().expect("temporary isolated HOME");
     let workspace = TempDir::new().expect("temporary workspace");
-    let global_root = home.path().join(".ai-config");
-    let workspace_root = workspace.path().join(".ai-config");
+    let global_root = home.path().join(".agent-manager");
+    let workspace_root = workspace.path().join(".agent-manager");
 
     let global_shared = write_canonical_command(&global_root, "shared", "global-shared");
     let global_only = write_canonical_command(&global_root, "global-only", "global-only");

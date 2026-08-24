@@ -17,7 +17,7 @@ labels: bug
 ## Environment
 
 - OS:
-- `ai-config --version`:
+- `agent-manager --version`:
 - IDE (Cursor / Codex / Claude / Hermes):
 
 ## Logs / `--json` output

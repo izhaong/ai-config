@@ -17,11 +17,11 @@ function subscribeThemeStore(onStoreChange: () => void) {
     }
   };
 
-  window.addEventListener("ai-config:theme", onThemeChange);
+  window.addEventListener("agent-manager:theme", onThemeChange);
   const unsubscribeSystem = subscribeThemeSystemChange(onSystemChange);
 
   return () => {
-    window.removeEventListener("ai-config:theme", onThemeChange);
+    window.removeEventListener("agent-manager:theme", onThemeChange);
     unsubscribeSystem();
   };
 }

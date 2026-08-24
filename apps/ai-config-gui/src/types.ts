@@ -1,5 +1,5 @@
 export type AssetKind = "skill" | "rule" | "mcp" | "agent" | "command" | "hook";
-/** 5 平台：ai-config 为资产源，其余为 IDE 下发目标 */
+/** 5 平台：agent-manager 为资产源，其余为 IDE 下发目标 */
 export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
 /** 可向 IDE deploy / retract 的 4 个目标 */
 export type DeployPlatform = Exclude<Platform, "aiconfig">;

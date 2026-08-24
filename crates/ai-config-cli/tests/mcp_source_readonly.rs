@@ -7,7 +7,7 @@ use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
 use tempfile::TempDir;
 
-const BIN: &str = "ai-config";
+const BIN: &str = "agent-manager";
 const LEGACY_SECRET_SENTINEL: &str = "legacy-secret-sentinel-must-not-leak";
 
 fn setup() -> (TempDir, TempDir) {
@@ -257,7 +257,7 @@ fn mcp_migrate_extract_secrets_apply_is_now_fail_closed_without_a_reviewed_plan(
     );
     assert!(!root
         .path()
-        .join("legacy.json.ai-config-migrate-backup")
+        .join("legacy.json.agent-manager-migrate-backup")
         .exists());
     assert!(!root
         .path()
@@ -318,7 +318,7 @@ fn mcp_migrate_extract_secrets_apply_aborts_on_existing_different_secret_without
     assert!(
         !root
             .path()
-            .join("legacy.json.ai-config-migrate-backup")
+            .join("legacy.json.agent-manager-migrate-backup")
             .exists(),
         "validation failure must not create a misleading backup"
     );

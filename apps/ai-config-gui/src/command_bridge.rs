@@ -1,4 +1,4 @@
-//! Tauri command 与 `ai-config-core::asset_ops` 之间的薄桥。
+//! Tauri command 与 `agent-manager-core::asset_ops` 之间的薄桥。
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -115,7 +115,7 @@ fn roots(
 fn ledger_path(roots: &SyncRoots) -> Utf8PathBuf {
     roots
         .deploy_base
-        .join(".ai-config/projection-ledger.sqlite")
+        .join(".agent-manager/projection-ledger.sqlite")
 }
 
 fn review_with_ledger(
@@ -239,7 +239,7 @@ pub async fn projection_apply(
         let context = ExecutorContext::new(
             &ledger,
             roots.deploy_base.clone(),
-            roots.deploy_base.join(".ai-config/projection-backups"),
+            roots.deploy_base.join(".agent-manager/projection-backups"),
         )
         .with_mcp_secret_provider(&secrets);
         let executable = projection_apply_slices(&rebuilt.plans);
@@ -432,7 +432,7 @@ pub async fn import_to_source_apply(
         apply_import_plan(
             &plan,
             &ImportApplyOptions::new(expected_plan_digest, selected_action_ids),
-            &roots.deploy_base.join(".ai-config-migrations"),
+            &roots.deploy_base.join(".agent-manager-migrations"),
         )
     })
     .await
@@ -553,7 +553,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         let global = root.join("global");
-        let project_assets = root.join("repo/.ai-config");
+        let project_assets = root.join("repo/.agent-manager");
         let deploy_base = root.join("repo");
         std::fs::create_dir_all(global.join("skills").as_std_path()).unwrap();
         std::fs::create_dir_all(project_assets.join("skills/review").as_std_path()).unwrap();
@@ -592,7 +592,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         let global = root.join("global");
-        let project_assets = root.join("repo/.ai-config");
+        let project_assets = root.join("repo/.agent-manager");
         let deploy_base = root.join("repo");
         std::fs::create_dir_all(deploy_base.join(".cursor/skills/review").as_std_path()).unwrap();
         std::fs::write(
@@ -642,7 +642,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         let global = root.join("global");
-        let project_assets = root.join("repo/.ai-config");
+        let project_assets = root.join("repo/.agent-manager");
         let deploy_base = root.join("repo");
         let target = deploy_base.join(".codex/config.toml");
         std::fs::create_dir_all(target.parent().unwrap().as_std_path()).unwrap();
@@ -730,7 +730,7 @@ bearer_token_env_var = "PROJECT_GITEA_TOKEN"
         let temp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         let global = root.join("global");
-        let project_assets = root.join("repo/.ai-config");
+        let project_assets = root.join("repo/.agent-manager");
         let deploy_base = root.join("repo");
         for (name, command) in [("catalog", "catalog-mcp"), ("missing", "missing-mcp")] {
             let source = project_assets.join(format!("mcp/servers/{name}.json"));
@@ -807,7 +807,7 @@ bearer_token_env_var = "PROJECT_GITEA_TOKEN"
         let temp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).unwrap();
         let global = root.join("global");
-        let project_assets = root.join("repo/.ai-config");
+        let project_assets = root.join("repo/.agent-manager");
         let deploy_base = root.join("repo");
         for (name, command) in [("catalog", "catalog-mcp"), ("foreign", "canonical-mcp")] {
             let source = project_assets.join(format!("mcp/servers/{name}.json"));

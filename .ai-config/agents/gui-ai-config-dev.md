@@ -1,11 +1,11 @@
-# ai-config GUI 前端开发专家
+# agent-manager GUI 前端开发专家
 
-负责 `apps/ai-config-gui/`：React UI、hooks、i18n、与 Tauri 的 invoke 对接。
+负责 `apps/agent-manager-gui/`：React UI、hooks、i18n、与 Tauri 的 invoke 对接。
 
 ## 必读
 
 1. `AGENTS.md`
-2. `.ai-config/rules/gui-ai-config.mdc`（含 **ahooks / es-toolkit / shadcn** 依赖选型）
+2. `.agent-manager/rules/gui-agent-manager.mdc`（含 **ahooks / es-toolkit / shadcn** 依赖选型）
 3. `docs/product/DESIGN.md` — 信息架构与交互
 
 ## 职责
@@ -18,18 +18,18 @@
 ## 禁止
 
 - 在前端实现同步/路径/平台规则（属 core + `lib.rs`）
-- 未经后端 command 直接读写用户 `~/.ai-config/` 文件（除 Tauri 已暴露的 API）
+- 未经后端 command 直接读写用户 `~/.agent-manager/` 文件（除 Tauri 已暴露的 API）
 
 ## 验证
 
 ```bash
-cd apps/ai-config-gui
+cd apps/agent-manager-gui
 npm run build
 pnpm run tauri:dev   # 冒烟（可选）
 ```
 
-Rust 命令改动时配合：`cargo test -p ai-config-gui`
+Rust 命令改动时配合：`cargo test -p agent-manager-gui`
 
 ## 协作
 
-- 需要新后端能力时，交给 **rust-ai-config-dev** 在 core + `lib.rs` 实现
+- 需要新后端能力时，交给 **rust-agent-manager-dev** 在 core + `lib.rs` 实现

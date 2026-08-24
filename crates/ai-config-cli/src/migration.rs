@@ -398,7 +398,7 @@ fn import_request(
         }
         "project" => {
             return Err(CoreError::InvalidPath(
-                "--to project requires --root <project>/.ai-config".to_owned(),
+                "--to project requires --root <project>/.agent-manager".to_owned(),
             ))
         }
         _ => {
@@ -507,10 +507,10 @@ fn import_source_location(
 fn transaction_root(default_root: &Utf8Path) -> Utf8PathBuf {
     // The deploy base always exists for a valid global HOME or project root. Keeping the private
     // manifests beside platform state means first-time project import does not require the
-    // destination `.ai-config` directory (or any of its parents) to exist yet.
+    // destination `.agent-manager` directory (or any of its parents) to exist yet.
     paths::resolve_sync_roots(default_root)
         .deploy_base
-        .join(".ai-config-migrations")
+        .join(".agent-manager-migrations")
 }
 
 fn inventory_request(

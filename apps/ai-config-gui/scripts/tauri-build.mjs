@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Local Tauri release build with updater signing.
- * Reads ~/.tauri/ai-config.key unless TAURI_SIGNING_PRIVATE_KEY is already set.
+ * Reads ~/.tauri/agent-manager.key unless TAURI_SIGNING_PRIVATE_KEY is already set.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const tauriBin = join(__dirname, "..", "node_modules", ".bin", "tauri");
-const defaultKeyPath = join(homedir(), ".tauri", "ai-config.key");
+const defaultKeyPath = join(homedir(), ".tauri", "agent-manager.key");
 
 function resolvePrivateKey() {
   if (process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
@@ -24,7 +24,7 @@ function resolvePrivateKey() {
   if (!existsSync(keyPath)) {
     console.error(`[tauri:build] 未找到签名私钥: ${keyPath}`);
     console.error(
-      "[tauri:build] 生成命令: cd apps/ai-config-gui && CI=true npm run tauri signer generate -- -w ~/.tauri/ai-config.key -p \"\" -f",
+      "[tauri:build] 生成命令: cd apps/agent-manager-gui && CI=true npm run tauri signer generate -- -w ~/.tauri/agent-manager.key -p \"\" -f",
     );
     console.error(
       "[tauri:build] 或设置环境变量 TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PATH",

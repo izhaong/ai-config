@@ -1,10 +1,10 @@
 ---
-description: ai-config GUI（Tauri + React）组件分层、依赖选型与 Tauri 边界
-globs: "apps/ai-config-gui/**"
+description: agent-manager GUI（Tauri + React）组件分层、依赖选型与 Tauri 边界
+globs: "apps/agent-manager-gui/**"
 alwaysApply: false
 ---
 
-# GUI（apps/ai-config-gui）
+# GUI（apps/agent-manager-gui）
 
 ## 技术栈
 
@@ -26,7 +26,7 @@ alwaysApply: false
 
 ### shadcn/ui 接入约定
 
-- 首次接入或增组件：Tailwind 已配置后，在 `apps/ai-config-gui` 执行 shadcn init/add；组件落在 `src/components/ui/`。
+- 首次接入或增组件：Tailwind 已配置后，在 `apps/agent-manager-gui` 执行 shadcn init/add；组件落在 `src/components/ui/`。
 - 现有 `styles.css` 暗色布局可渐进迁移：新页面/新组件走 shadcn；旧样式不一次性重写。
 - Tauri `listen`、webview 生命周期等无 ahooks 封装时仍手写 `useEffect` + cleanup。
 
@@ -64,7 +64,7 @@ src/
 | `src/utils/*` 纯函数         | 同名 `*.test.ts`（Vitest）                    | 主路径 + 1 条边界/错误                |
 | `hooks/*` 业务副作用         | `hooks/*.test.ts`，mock `api/tauriAssets`     | 成功路径 + 关键 skip/失败             |
 | 组件交互（icon/按钮态）      | `components/**/*.test.tsx`                    | 可点/不可点、disabled、回调是否触发   |
-| 新 Tauri command / core 行为 | `ai-config-core` 模块内 `#[test]` 或 `tests/` | 与 CLI/GUI 共用 core 时 **只测 core** |
+| 新 Tauri command / core 行为 | `agent-manager-core` 模块内 `#[test]` 或 `tests/` | 与 CLI/GUI 共用 core 时 **只测 core** |
 
 - 回归已有用例：改行为时 **更新** 原测试，勿只删断言。
 - 参考近期 MCP 项目级同步：`entryPlatformToggle`、`canOpenEntry`、`PlatformIconButtons`、`platform_scan`、`asset_ops`、`mcp_json`。
@@ -72,7 +72,7 @@ src/
 ## 验证
 
 - `npm run test && npm run build`（tsc + vite）
-- 改 Tauri 命令时：`cargo test -p ai-config-gui` 或本地 `pnpm run tauri:dev` 冒烟
+- 改 Tauri 命令时：`cargo test -p agent-manager-gui` 或本地 `pnpm run tauri:dev` 冒烟
 
 ## UX
 

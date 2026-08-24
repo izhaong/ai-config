@@ -35,7 +35,7 @@ pub struct SkillsAddParams<'a> {
     pub asset_root: &'a Utf8Path,
 }
 
-/// 安装远程 skill 到目标平台或 ai-config 平台目录。
+/// 安装远程 skill 到目标平台或 agent-manager 平台目录。
 pub fn add_remote_skill(
     scope: &ScopeRoots<'_>,
     params: SkillsAddParams<'_>,
@@ -50,7 +50,7 @@ pub fn add_remote_skill(
     if params.target_platform == PlatformId::AiConfig {
         let dir_name = add_to_aiconfig_platform(scope.asset_root, source, params.skill_name)?;
         return Ok(format!(
-            "已添加 skill `{dir_name}` 到 ai-config 平台 ({})",
+            "已添加 skill `{dir_name}` 到 agent-manager 平台 ({})",
             scope.asset_root.join("skills").join(&dir_name)
         ));
     }
@@ -81,7 +81,7 @@ fn add_to_aiconfig_platform(
     let dest = asset_root.join("skills").join(&dir_name);
     if dest.exists() {
         return Err(CoreError::InvalidPath(format!(
-            "ai-config 平台已存在 skill `{dir_name}`，请先删除或更换名称"
+            "agent-manager 平台已存在 skill `{dir_name}`，请先删除或更换名称"
         )));
     }
 
@@ -89,7 +89,7 @@ fn add_to_aiconfig_platform(
     Ok(dir_name)
 }
 
-/// 确保 skill 已存在于 ai-config 源；返回 skill 目录名（用于 deploy）。
+/// 确保 skill 已存在于 agent-manager 源；返回 skill 目录名（用于 deploy）。
 fn ensure_skill_in_aiconfig(
     asset_root: &Utf8Path,
     source: &str,
@@ -217,7 +217,7 @@ fn pick_skill_dir(
     )))
 }
 
-/// 批量安装：先写入 ai-config 源，再 deploy 到各 IDE 平台。
+/// 批量安装：先写入 agent-manager 源，再 deploy 到各 IDE 平台。
 #[derive(Debug, Clone)]
 pub struct SkillAddBatchItem {
     pub source: String,
@@ -259,7 +259,7 @@ pub fn add_remote_skills_batch(
             Err(e) => {
                 failed += platforms.len();
                 let label = item.skill_name.as_deref().unwrap_or(item.source.as_str());
-                errors.push(format!("{label}（写入 ai-config 源失败）: {e}"));
+                errors.push(format!("{label}（写入 agent-manager 源失败）: {e}"));
                 continue;
             }
         };

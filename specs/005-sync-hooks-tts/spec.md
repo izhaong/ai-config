@@ -8,19 +8,19 @@
 
 ## 设计决策（已确认方向）
 
-### 物理布局 — 用 `.ai-config/hooks/`，不用仓库根 `hooks/`
+### 物理布局 — 用 `.agent-manager/hooks/`，不用仓库根 `hooks/`
 
 与 PRD §1.1 资产根同构一致：
 
 ```
-~/.ai-config/hooks/<name>/          <repo>/.ai-config/hooks/<name>/
+~/.agent-manager/hooks/<name>/          <repo>/.agent-manager/hooks/<name>/
 ├── HOOK.md                         （元数据：description、enabled_platforms）
 ├── hook.yaml                       （canonical：events、matcher、script_dir）
 └── scripts/                        （默认脚本目录，可在 hook.yaml 覆盖）
     └── lifecycle-tts.sh
 ```
 
-**不用** `<repo>/hooks/` 作为资产根：会破坏「唯一正文在 `.ai-config/`」约定，也与全局 `~/.ai-config/` 不同构。项目级 hooks 落在 `<repo>/.ai-config/hooks/`。
+**不用** `<repo>/hooks/` 作为资产根：会破坏「唯一正文在 `.agent-manager/`」约定，也与全局 `~/.agent-manager/` 不同构。项目级 hooks 落在 `<repo>/.agent-manager/hooks/`。
 
 ### 一条 hook = 一项源资产（类 skill 目录）
 
@@ -31,7 +31,7 @@
 | 附属目录 | `scripts/`、`assets/` | `scripts/`（或 `hook.yaml` 指定 `script_dir`）      |
 | 下发     | 硬拷贝目录            | **分平台 adapter 合并** + 拷贝脚本到平台 hooks 目录 |
 
-`hook.yaml` 为 **ai-config 唯一 canonical 格式**（事件、matcher、入口脚本相对路径）；下发时由 adapter 转成各平台原生配置，收回时按 `managedBy: ai-config` + hook `name` 摘除条目并删脚本副本。
+`hook.yaml` 为 **agent-manager 唯一 canonical 格式**（事件、matcher、入口脚本相对路径）；下发时由 adapter 转成各平台原生配置，收回时按 `managedBy: agent-manager` + hook `name` 摘除条目并删脚本副本。
 
 ### 分平台消费（adapter，类 MCP → Hermes）
 
@@ -57,7 +57,7 @@
 
 ### US1 - 左侧可见、逐条管理 (P1)
 
-**Given** `~/.ai-config/hooks/lifecycle-tts/`，**When** 打开 GUI Hook 类，**Then** 列表显示 `lifecycle-tts`，可编辑 `hook.yaml` / 脚本，平台 icon 仅展示**支持且已下发**的平台（非 unsupported 灰显）。
+**Given** `~/.agent-manager/hooks/lifecycle-tts/`，**When** 打开 GUI Hook 类，**Then** 列表显示 `lifecycle-tts`，可编辑 `hook.yaml` / 脚本，平台 icon 仅展示**支持且已下发**的平台（非 unsupported 灰显）。
 
 ### US2 - 分平台 deploy / retract (P1)
 
@@ -65,7 +65,7 @@
 
 ### US3 - 生命周期 TTS (P1)
 
-默认资产 `lifecycle-tts`：shell 执行 `ai-config` 相关命令后 TTS 播报；`AI_CONFIG_TTS=0` 静默。
+默认资产 `lifecycle-tts`：shell 执行 `agent-manager` 相关命令后 TTS 播报；`AI_CONFIG_TTS=0` 静默。
 
 ## Requirements
 
@@ -74,7 +74,7 @@
 - **FR-003**: `hook_deploy` 重构为 per-hook + per-platform adapter（merge / retract）
 - **FR-004**: GUI 第六类；平台列按 adapter `supports(hook)` 显示
 - **FR-005**: `install` / `sync` / 单条 deploy-retract 走统一 `asset_ops`
-- **FR-006**: 托管标记：`managedBy: ai-config` + `hook: <name>`（各平台 manifest 内）
+- **FR-006**: 托管标记：`managedBy: agent-manager` + `hook: <name>`（各平台 manifest 内）
 
 ## Success Criteria
 

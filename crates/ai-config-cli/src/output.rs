@@ -47,7 +47,7 @@ pub fn emit_json<T: serde::Serialize>(mode: OutputMode, value: &T) {
     if mode.is_json() {
         match serde_json::to_string_pretty(value) {
             Ok(s) => println!("{s}"),
-            Err(e) => eprintln!("[ai-config] serialize error: {e}"),
+            Err(e) => eprintln!("[agent-manager] serialize error: {e}"),
         }
     }
 }

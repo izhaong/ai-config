@@ -622,7 +622,7 @@ pub fn hook_capability_for(
         }
         PlatformId::AiConfig => {
             return HookCapability::Unsupported {
-                reason: "ai-config is canonical source, not a projection target".to_owned(),
+                reason: "agent-manager is canonical source, not a projection target".to_owned(),
             };
         }
     };
@@ -680,7 +680,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Skill,
             name: "demo".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.ai-config/skills/demo"),
+            source_path: Utf8PathBuf::from("/home/user/.agent-manager/skills/demo"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -720,7 +720,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Mcp,
             name: "catalog".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.ai-config/mcp/servers/catalog.json"),
+            source_path: Utf8PathBuf::from("/home/user/.agent-manager/mcp/servers/catalog.json"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -754,7 +754,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Hook,
             name: "format.sh".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.ai-config/hooks/format.sh"),
+            source_path: Utf8PathBuf::from("/home/user/.agent-manager/hooks/format.sh"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -781,7 +781,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Rule,
             name: "review".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.ai-config/rules/review.mdc"),
+            source_path: Utf8PathBuf::from("/home/user/.agent-manager/rules/review.mdc"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -807,7 +807,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Mcp,
             name: "catalog".to_owned(),
-            source_path: Utf8PathBuf::from("/repo/.ai-config/mcp/servers/catalog.json"),
+            source_path: Utf8PathBuf::from("/repo/.agent-manager/mcp/servers/catalog.json"),
             layer: SourceLayer::Project,
             fingerprint: "source-v1".to_owned(),
         };
@@ -832,7 +832,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Command,
             name: "review".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.ai-config/commands/review.md"),
+            source_path: Utf8PathBuf::from("/home/user/.agent-manager/commands/review.md"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };

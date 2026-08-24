@@ -53,7 +53,7 @@
     }
   },
   "ai_config_divergence": {
-    "note": "ai-config project scope uses per-IDE dirs; vercel uses .agents/skills for cursor/codex project",
+    "note": "agent-manager project scope uses per-IDE dirs; vercel uses .agents/skills for cursor/codex project",
     "project_scope": {
       "cursor": {
         "ai_config": "<repo>/.cursor/skills",
@@ -68,7 +68,7 @@
         "vercel": "<repo>/.claude/skills"
       },
       "hermes": {
-        "ai_config": "~/.hermes/skills (always global in ai-config)",
+        "ai_config": "~/.hermes/skills (always global in agent-manager)",
         "vercel": "<repo>/.hermes/skills"
       }
     }

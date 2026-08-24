@@ -1,4 +1,4 @@
-# ai-config 文档
+# agent-manager 文档
 
 ## 产品与设计（桌面端工具）
 
@@ -15,14 +15,14 @@
 | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | [platform-contracts.md](./reference/platform-contracts.md)                           | **当前四平台资产契约索引**；唯一权威需求为 Spec 008                                                       |
 | [claudemarketplace-skills-top100.md](./reference/claudemarketplace-skills-top100.md) | [Claude Code Marketplace](https://www.claudemarketplace.net/skills) 下载量 / Stars Top 100                 |
-| [vercel-skills-agent-paths.md](./reference/vercel-skills-agent-paths.md)             | 第三方 CLI 历史快照，只作 legacy inventory，不能决定 ai-config 投影路径                                   |
+| [vercel-skills-agent-paths.md](./reference/vercel-skills-agent-paths.md)             | 第三方 CLI 历史快照，只作 legacy inventory，不能决定 agent-manager 投影路径                                   |
 | [hooks-compatibility-matrix.md](./reference/hooks-compatibility-matrix.md)           | Hooks 在 Cursor / Claude / Codex 的事件映射、路径和 matcher 兼容策略                                       |
 
 ## 资产与配置
 
 | 文档                                          | 说明                                                   |
 | --------------------------------------------- | ------------------------------------------------------ |
-| 用户资产 `~/.ai-config/`                      | 全局 skills / rules / mcp / agents / commands / prompts / hooks（本机，不在仓库内） |
+| 用户资产 `~/.agent-manager/`                      | 全局 skills / rules / mcp / agents / commands / prompts / hooks（本机，不在仓库内） |
 | [manifests/README.md](../manifests/README.md) | 插件 skill 索引（不入库）                              |
 
 ## AI 协作（本仓工具开发）
@@ -33,9 +33,9 @@
 | [CLAUDE.md](../CLAUDE.md)             | Claude Code 别名入口                                 |
 | [HERMES.md](../HERMES.md)             | Hermes 加载说明                                      |
 | `.cursor/rules/`                      | 项目规则（core 边界、Rust、GUI、Spec Kit、Karpathy） |
-| `.cursor/agents/`                     | `rust-ai-config-dev`、`gui-ai-config-dev`            |
+| `.cursor/agents/`                     | `rust-agent-manager-dev`、`gui-agent-manager-dev`            |
 | `.cursor/skills/`                     | 交付、验证、行为准则                                 |
-| `.cursor/COMMANDS.md`                 | `/speckit.*`、`/ai-config-verify` 等                 |
+| `.cursor/COMMANDS.md`                 | `/speckit.*`、`/agent-manager-verify` 等                 |
 | `.specify/memory/constitution.md`     | Spec Kit 项目宪法                                    |
 | [specs/README.md](../specs/README.md) | 功能规格目录约定                                     |
 

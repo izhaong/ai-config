@@ -1,4 +1,4 @@
-//! `ai-config secrets ...` 子命令(PRD §5.1 必做 + §10 A-5 / A-12 / A-14)。
+//! `agent-manager secrets ...` 子命令(PRD §5.1 必做 + §10 A-5 / A-12 / A-14)。
 //!
 //! 关键约束:
 //! - `secrets list`:**不**输出 value(只输出 key 列表);遵守 PRD §8.1 / §10 A-14

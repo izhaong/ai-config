@@ -1,7 +1,7 @@
 import type { AssetKind, DeployPlatform, PlatformAssetEntry } from "../types";
 import { DEPLOY_PLATFORMS, hasSourceEntry, isPlatformActive } from "../types";
 
-/** 已有平台副本、可从 ai-config 源重新下发的目标平台 */
+/** 已有平台副本、可从 agent-manager 源重新下发的目标平台 */
 export function deployPlatformsForUpdate(
   entry: PlatformAssetEntry,
 ): DeployPlatform[] {

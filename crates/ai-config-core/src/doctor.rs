@@ -1,4 +1,4 @@
-//! `ai-config doctor` 诊断逻辑（GUI / CLI 共用）。
+//! `agent-manager doctor` 诊断逻辑（GUI / CLI 共用）。
 
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::JsonSchema;
@@ -176,7 +176,7 @@ fn dest_is_symlink(path: &Utf8Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 将各 IDE 平台目录中仍指向 ai-config 源的 **symlink / 同 inode** 下发迁移为实体硬拷贝。
+/// 将各 IDE 平台目录中仍指向 agent-manager 源的 **symlink / 同 inode** 下发迁移为实体硬拷贝。
 pub fn materialize_legacy_symlink_deploys(
     default_root: &Utf8Path,
 ) -> Result<Vec<String>, CoreError> {
@@ -422,7 +422,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let _guard = crate::test_env::EnvGuard::set("HOME", home.to_str().unwrap());
-        let root = Utf8PathBuf::from_path_buf(home.join(".ai-config")).unwrap();
+        let root = Utf8PathBuf::from_path_buf(home.join(".agent-manager")).unwrap();
         crate::paths::ensure_user_asset_layout(&root).unwrap();
 
         let skill_name = "ext-skill";
@@ -448,7 +448,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let _guard = crate::test_env::EnvGuard::set("HOME", home.to_str().unwrap());
-        let root = Utf8PathBuf::from_path_buf(home.join(".ai-config")).unwrap();
+        let root = Utf8PathBuf::from_path_buf(home.join(".agent-manager")).unwrap();
         crate::paths::ensure_user_asset_layout(&root).unwrap();
         mcp_json::ensure_mcp_json(&root).unwrap();
         mcp_json::upsert_server_in_document(
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn doctor_reports_literal_mcp_secret_metadata_without_values() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = Utf8PathBuf::from_path_buf(tmp.path().join(".ai-config")).unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().join(".agent-manager")).unwrap();
         crate::paths::ensure_user_asset_layout(&root).unwrap();
         let sentinel = "T001_SECRET_SENTINEL_DO_NOT_LEAK";
         fs::write(

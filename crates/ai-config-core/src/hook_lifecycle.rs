@@ -407,7 +407,7 @@ mod tests {
       "hooks": [{{
         "type": "command",
         "command": "{cmd}",
-        "managedBy": "ai-config",
+        "managedBy": "agent-manager",
         "hook": "demo.py"
       }}]
     }}]
@@ -468,7 +468,7 @@ mod tests {
     fn cursor_toggle_platform_lifecycle_updates_platform_views() {
         let tmp = TempDir::new().unwrap();
         let root = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let asset_root = root.join(".ai-config");
+        let asset_root = root.join(".agent-manager");
         fs::create_dir_all(asset_root.join("hooks")).unwrap();
         fs::write(
             asset_root.join("hooks.json"),

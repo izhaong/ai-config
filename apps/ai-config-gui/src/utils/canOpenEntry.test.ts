@@ -34,15 +34,15 @@ describe("canOpenEntry", () => {
     expect(canOpenEntry(e)).toBe(true);
   });
 
-  it("opens when ai-config source is linked", () => {
+  it("opens when agent-manager source is linked", () => {
     const e = entry({ states: ALL_STATES({ aiconfig: "linked" }) });
     expect(canOpenEntry(e)).toBe(true);
   });
 
-  it("opens mcp on ai-config source view", () => {
+  it("opens mcp on agent-manager source view", () => {
     const e = entry({
       kind: "mcp",
-      platform_path: "/home/.ai-config/mcp.json",
+      platform_path: "/home/.agent-manager/mcp.json",
     });
     expect(canOpenEntry(e)).toBe(true);
   });
@@ -63,7 +63,7 @@ describe("canOpenEntry", () => {
 });
 
 describe("shouldLoadFromSource", () => {
-  it("loads from source on ai-config view for skills", () => {
+  it("loads from source on agent-manager view for skills", () => {
     const e = entry();
     expect(shouldLoadFromSource(e, "aiconfig")).toBe(true);
   });
@@ -90,7 +90,7 @@ describe("shouldLoadFromSource", () => {
   it("mcp with aiconfig linked loads from source on deploy view", () => {
     const e = entry({
       kind: "mcp",
-      platform_path: "/home/.ai-config/mcp.json",
+      platform_path: "/home/.agent-manager/mcp.json",
       states: ALL_STATES({ aiconfig: "linked", cursor: "linked" }),
     });
     expect(shouldLoadFromSource(e, "cursor")).toBe(true);

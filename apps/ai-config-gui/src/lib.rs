@@ -1,4 +1,4 @@
-//! ai-config 图形界面(Tauri 2 + React 19 前端)。
+//! agent-manager 图形界面(Tauri 2 + React 19 前端)。
 //!
 //! Phase 3 W9:核心业务接入。
 //!
@@ -55,7 +55,7 @@ use ai_config_core::asset_ops::AssetFileDetail;
 pub struct AppState {
     /// SQLite 持久化(W9 起:projects 表)
     pub store: Arc<Store>,
-    /// 默认资产根(`~/.ai-config/`;启动时自动创建子目录)
+    /// 默认资产根(`~/.agent-manager/`;启动时自动创建子目录)
     pub default_root: Arc<RwLock<Utf8PathBuf>>,
     /// 资产目录文件监听句柄(项目增删时重启)
     pub watcher: Mutex<Option<WatcherHandle>>,
@@ -67,7 +67,7 @@ impl AppState {
     fn new() -> Result<Self, String> {
         let store = Store::open().map_err(|e| format!("打开 store 失败: {e}"))?;
         let default_root = paths::discover_global_asset_root();
-        tracing::info!("ai-config 资产根: {default_root}");
+        tracing::info!("agent-manager 资产根: {default_root}");
 
         let git_outcome = bootstrap_git_repo(&default_root, &store);
 
@@ -80,7 +80,7 @@ impl AppState {
     }
 }
 
-/// 启动时确保 `~/.ai-config` 为 Git 仓库，并应用 store 中的远程配置。
+/// 启动时确保 `~/.agent-manager` 为 Git 仓库，并应用 store 中的远程配置。
 fn bootstrap_git_repo(root: &Utf8Path, store: &Store) -> GitEnsureOutcome {
     let config = store.settings().git_config().unwrap_or_default();
     let branch = config.branch.as_str();
@@ -113,7 +113,7 @@ struct AssetEntry {
     kind: AssetKind,
     /// 对 skill:来自 `SKILL.md` 第一个 `# title` 行 / frontmatter;其它类型空字符串。
     description: String,
-    /// 源路径(本仓库或项目 `.ai-config/`),给详情面板用。
+    /// 源路径(本仓库或项目 `.agent-manager/`),给详情面板用。
     source_path: String,
     /// per-platform 链接状态(4 平台键都存在)。
     states: std::collections::HashMap<PlatformId, LinkState>,
@@ -147,7 +147,7 @@ struct PlatformIssue {
 
 // ── Tauri command:健康检查(占位,W10 接真值) ─────────────────────
 
-/// 健康检查（与 CLI `ai-config doctor` 同源）。
+/// 健康检查（与 CLI `agent-manager doctor` 同源）。
 #[tauri::command]
 async fn cmd_doctor(state: State<'_, AppState>) -> Result<DoctorSummary, String> {
     let default_root = state.default_root.read().await.clone();
@@ -279,7 +279,7 @@ fn platform_label(p: PlatformId) -> &'static str {
 /// 扫资产源,返回每条 per-platform 链接状态。
 ///
 /// `project` 为 `None` 或 `"user-global"` → 走默认根(本仓库);否则按名字查
-/// `Store` 拿 `Project.root_path`,扫该项目的 `.ai-config/`,与默认根做 override 合并。
+/// `Store` 拿 `Project.root_path`,扫该项目的 `.agent-manager/`,与默认根做 override 合并。
 #[tauri::command]
 async fn cmd_list(
     state: State<'_, AppState>,
@@ -288,7 +288,7 @@ async fn cmd_list(
     // 委托给 `resolve_scope` — 与其它 command 走同一路径,避免实现漂移。
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
 
-    // 2. 扫（项目作用域仅 `<repo>/.ai-config/`；user-global 仅 `~/.ai-config/`）
+    // 2. 扫（项目作用域仅 `<repo>/.agent-manager/`；user-global 仅 `~/.agent-manager/`）
     let scan = scan_assets_for_scope(&default_root, &asset_root)?;
 
     // 3. 扁平成 (kind, name, src) 列表
@@ -591,7 +591,7 @@ async fn cmd_marketplace_list_skills(
     .map_err(|e| format!("spawn_blocking join: {e}"))?
 }
 
-/// 从平台已下发路径只读预览（无 ai-config 源时供详情抽屉使用）。
+/// 从平台已下发路径只读预览（无 agent-manager 源时供详情抽屉使用）。
 #[tauri::command]
 async fn cmd_read_platform_asset(
     path: String,
@@ -850,7 +850,7 @@ async fn cmd_projects_add(
     let asset_for_layout = asset_root.clone();
     let project = tokio::task::spawn_blocking(move || -> Result<Project, String> {
         paths::ensure_asset_layout(&asset_for_layout)
-            .map_err(|e| format!("初始化项目 .ai-config 目录失败: {e}"))?;
+            .map_err(|e| format!("初始化项目 .agent-manager 目录失败: {e}"))?;
         store
             .projects()
             .add(&resolved_name, &repo_for_store)
@@ -1087,7 +1087,7 @@ fn core_err_to_string(e: CoreError) -> String {
     e.to_string()
 }
 
-// ── Tauri command: ~/.ai-config Git 同步 ─────────────────────────
+// ── Tauri command: ~/.agent-manager Git 同步 ─────────────────────────
 
 #[derive(Debug, Serialize)]
 struct GitBootstrapResponse {
@@ -1182,7 +1182,7 @@ async fn cmd_git_sync(state: State<'_, AppState>) -> Result<GitSyncOutcome, Stri
     let store = Arc::clone(&state.store);
     tokio::task::spawn_blocking(move || {
         let config = store.settings().git_config().map_err(|e| e.to_string())?;
-        git::sync_repo(&root, &config, "chore: ai-config 同步").map_err(|e| e.to_string())
+        git::sync_repo(&root, &config, "chore: agent-manager 同步").map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("spawn_blocking join: {e}"))?
@@ -1254,7 +1254,7 @@ pub fn run() {
             // 启动期 trace,前端 console 可看到 daemon 启动信息
             let state: State<'_, AppState> = app.state();
             tracing::info!(
-                "ai-config GUI v{} 启动;store @ {}",
+                "agent-manager GUI v{} 启动;store @ {}",
                 env!("CARGO_PKG_VERSION"),
                 state.store.path()
             );
@@ -1325,7 +1325,7 @@ pub fn run() {
             cmd_git_push,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running ai-config GUI");
+        .expect("error while running agent-manager GUI");
 }
 
 #[cfg(test)]

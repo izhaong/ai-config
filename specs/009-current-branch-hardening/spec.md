@@ -70,6 +70,6 @@
 
 ### Measurable Outcomes
 
-- **SC-001**: `cargo test -p ai-config-core -p ai-config-cli` 与 Clippy 无失败。
+- **SC-001**: `cargo test -p agent-manager-core -p agent-manager-cli` 与 Clippy 无失败。
 - **SC-002**: `npm run lint`、`npm run test`、`npm run build`、`npm run test:e2e` 全部退出码为 0。
 - **SC-003**: 针对普通未托管副本、MCP、受管副本至少各有一条可执行断言。

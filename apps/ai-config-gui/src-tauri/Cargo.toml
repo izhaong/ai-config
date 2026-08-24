@@ -1,15 +1,15 @@
 [package]
-name = "ai-config-gui-bin"
+name = "agent-manager-gui-bin"
 version = "0.4.1"
 edition = "2021"
 description = "Tauri 2 binary entry — calls into ai_config_gui_lib::run"
 
 [[bin]]
-name = "ai-config-gui"
+name = "agent-manager-gui"
 path = "src/main.rs"
 
 [dependencies]
-ai-config-gui = { path = ".." }
+agent-manager-gui = { path = ".." }
 tauri = { workspace = true, features = [] }
 
 [build-dependencies]
