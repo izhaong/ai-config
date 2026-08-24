@@ -1,4 +1,4 @@
-# agent-manager Constitution
+# agents-manager Constitution
 
 > Spec Kit 项目原则。非平凡改动须先 `specs/<编号-功能>/spec.md` → `plan.md`（含 `## Todos`），再实现。
 
@@ -10,10 +10,10 @@
 
 ## 2. 架构铁律
 
-1. **`agent-manager-core` 是唯一业务逻辑归宿** — CLI、daemon、GUI 只调用 core，禁止在 `apps/` 或 `cli` 重复实现同步/链接/模板逻辑。
+1. **`agents-manager-core` 是唯一业务逻辑归宿** — CLI、daemon、GUI 只调用 core，禁止在 `apps/` 或 `cli` 重复实现同步/链接/模板逻辑。
 2. **平台差异收敛在 `platform` 模块** — 新增 IDE 支持 = 新 adapter + 测试，不 scattered if-else。
 3. **幂等与可重复** — 链接/覆盖直接替换（不留 `.bak` 备份）；`delete_source` 永久删除源资产；`sync` / `install` 可重复执行。
-4. **密钥隔离** — 真实 token 只进 `~/.config/agent-manager/secrets.env`（0600）；仓库内仅 `.example` 占位符。
+4. **密钥隔离** — 真实 token 只进 `~/.config/agents-manager/secrets.env`（0600）；仓库内仅 `.example` 占位符。
 
 ## 3. 实现准则（Karpathy）
 
@@ -32,11 +32,11 @@
 
 | 范围                   | 最低验证                                            |
 | ---------------------- | --------------------------------------------------- |
-| `agent-manager-core` / CLI | `cargo test -p agent-manager-core -p agent-manager-cli`     |
+| `agents-manager-core` / CLI | `cargo test -p agents-manager-core -p agents-manager-cli`     |
 | 全 workspace Rust      | `cargo test --workspace`（改 daemon/store 时）      |
-| GUI 前端               | `cd apps/agent-manager-gui && npm run build`            |
-| GUI + Tauri 命令       | `cargo test -p agent-manager-gui`（有 Rust 命令改动时） |
-| 同步行为               | `agent-manager doctor` + 目标平台 `status`              |
+| GUI 前端               | `cd apps/agents-manager-gui && npm run build`            |
+| GUI + Tauri 命令       | `cargo test -p agents-manager-gui`（有 Rust 命令改动时） |
+| 同步行为               | `agents-manager doctor` + 目标平台 `status`              |
 
 未跑验证不得将 Plan/Todo 标为 completed。
 

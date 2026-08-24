@@ -2,7 +2,7 @@
 //!
 //! 严格对齐 PRD §2 / §3.1 / §3.2 / §11.2:
 //! - **单一规则源**:`rules/*.mdc` / `*.md` 不按平台分目录(§11.2)
-//! - **视图合并**:项目 `.agent-manager/` 同名覆盖、异名附加(§3.2)
+//! - **视图合并**:项目 `.agents-manager/` 同名覆盖、异名附加(§3.2)
 //! - **五类资产** = skills(目录) / rules(单文件) / commands(单文件) / mcp(单文件) / agents(文件或目录)(§2)
 //!
 //! 过滤规则:隐藏文件(`.` 开头)、macOS / Windows 噪声(`.DS_Store` / `Thumbs.db`)、
@@ -73,7 +73,7 @@ fn is_backup_name(name: &str) -> bool {
         || name.ends_with(".swp")
         || name.ends_with("~")
         || name.ends_with(".tmp")
-        || name.ends_with(".agent-manager-deploy.json")
+        || name.ends_with(".agents-manager-deploy.json")
 }
 
 /// 综合判断"这个 entry 是不是该进清单"。
@@ -251,7 +251,7 @@ fn scan_hooks(root: &Utf8Path) -> Result<Vec<crate::hook::HookListItem>, CoreErr
 
 /// 扫描单个根目录下的 4 类资产。
 ///
-/// `root` 通常是 `<project>/.agent-manager/` 或 `~/.agent-manager/`(全局资产根)。
+/// `root` 通常是 `<project>/.agents-manager/` 或 `~/.agents-manager/`(全局资产根)。
 /// 不存在的子目录(缺 `skills/` / `mcp/servers/` 等)按"空清单"返回,**不**报错;
 /// `root` 本身不存在才报 `InvalidPath`。
 pub fn scan_project_root(root: &Utf8Path) -> Result<ScanResult, CoreError> {
@@ -269,10 +269,10 @@ pub fn scan_project_root(root: &Utf8Path) -> Result<ScanResult, CoreError> {
     })
 }
 
-/// 合并扫描:项目 `.agent-manager/` 覆盖 agent-manager 默认仓(同名覆盖,异名附加,PRD §3.2)。
+/// 合并扫描:项目 `.agents-manager/` 覆盖 agents-manager 默认仓(同名覆盖,异名附加,PRD §3.2)。
 ///
-/// - `project_root`:项目下 `.agent-manager/` 目录路径
-/// - `default_root`:全局资产根(`~/.agent-manager/` 或测试用临时目录)
+/// - `project_root`:项目下 `.agents-manager/` 目录路径
+/// - `default_root`:全局资产根(`~/.agents-manager/` 或测试用临时目录)
 /// - 哪边不存在就只取另一边(不报错,空清单即可)
 pub fn scan_with_override(
     project_root: &Utf8Path,
@@ -510,7 +510,7 @@ mod tests {
         touch(
             &root
                 .join("agents")
-                .join("backend-java-dev.md.agent-manager-deploy.json"),
+                .join("backend-java-dev.md.agents-manager-deploy.json"),
         );
         // README 不应计入（无论目录还是文件）
         mkdir(&root.join("agents").join("README"));
@@ -702,7 +702,7 @@ mod tests {
     fn scan_project_root_does_not_reconcile_orphan_hooks() {
         let tmp = TempDir::new().unwrap();
         let repo = Utf8Path::from_path(tmp.path()).unwrap().join("repo");
-        let asset_root = repo.join(".agent-manager");
+        let asset_root = repo.join(".agents-manager");
         touch(&asset_root.join("hooks").join("speak.py"));
         touch(&repo.join(".cursor").join("hooks").join("speak.py"));
         fs::write(

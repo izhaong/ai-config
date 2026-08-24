@@ -5,7 +5,7 @@ alwaysApply: true
 
 # {{PROJECT_NAME}} 项目核心（`.cursor/rules/00-project-core.mdc`）
 
-本文件为本项目 **`alwaysApply`** 入口。全局编码与提交规范见 **`~/.agent-manager/rules/`**（勿在此重复全文）。
+本文件为本项目 **`alwaysApply`** 入口。全局编码与提交规范见 **`~/.agents-manager/rules/`**（勿在此重复全文）。
 
 ## 仓库事实（请按项目修改）
 
@@ -18,7 +18,7 @@ alwaysApply: true
 ## Git / PR（摘要）
 
 1. 非平凡改动：先 Issue（或等价工作项），再从集成线拉 `feat/*` / `fix/*` 分支。
-2. 小步提交：中文 Conventional Commits（见 zh-cloud `.claude/rules/conventional-commits.mdc` 或 `~/.agent-manager/rules/`）。
+2. 小步提交：中文 Conventional Commits（见 zh-cloud `.claude/rules/conventional-commits.mdc` 或 `~/.agents-manager/rules/`）。
 3. 完成后 push 并开 PR；合并后本地 `develop` + `pull --ff-only`。
 4. 禁止在集成线/发布线上直接堆业务提交。
 

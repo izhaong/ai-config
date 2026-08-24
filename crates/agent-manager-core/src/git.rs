@@ -1,4 +1,4 @@
-//! `~/.agent-manager` 目录的 Git 版本控制（本地仓库 + 可选远程同步）。
+//! `~/.agents-manager` 目录的 Git 版本控制（本地仓库 + 可选远程同步）。
 //!
 //! 通过系统 `git` 命令操作；未安装 git 时返回 `git_available: false` 而不 panic。
 
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// 写入资产根时的默认 `.gitignore` 内容（本地状态与密钥不入库）。
-pub const DEFAULT_GITIGNORE: &str = r#"# agent-manager — 本地状态与密钥不入库
+pub const DEFAULT_GITIGNORE: &str = r#"# agents-manager — 本地状态与密钥不入库
 *.db
 *.db-wal
 *.db-shm
@@ -170,7 +170,7 @@ pub fn ensure_repo(root: &Utf8Path, default_branch: &str) -> Result<GitEnsureOut
         if repo_has_trackable_files(root) {
             run_git_ok(root, &["add", "-A"])?;
             // 可能全是 ignore 的文件；允许空提交失败
-            run_git_ok(root, &["commit", "-m", "chore: agent-manager 初始提交"]).is_ok()
+            run_git_ok(root, &["commit", "-m", "chore: agents-manager 初始提交"]).is_ok()
         } else {
             false
         }

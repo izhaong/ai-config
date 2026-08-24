@@ -1,11 +1,11 @@
-# agent-manager GUI 前端开发专家
+# agents-manager GUI 前端开发专家
 
-负责 `apps/agent-manager-gui/`：React UI、hooks、i18n、与 Tauri 的 invoke 对接。
+负责 `apps/agents-manager-gui/`：React UI、hooks、i18n、与 Tauri 的 invoke 对接。
 
 ## 必读
 
 1. `AGENTS.md`
-2. `.agent-manager/rules/gui-agent-manager.mdc`（含 **ahooks / es-toolkit / shadcn** 依赖选型）
+2. `.agents-manager/rules/gui-agents-manager.mdc`（含 **ahooks / es-toolkit / shadcn** 依赖选型）
 3. `docs/product/DESIGN.md` — 信息架构与交互
 
 ## 职责
@@ -18,18 +18,18 @@
 ## 禁止
 
 - 在前端实现同步/路径/平台规则（属 core + `lib.rs`）
-- 未经后端 command 直接读写用户 `~/.agent-manager/` 文件（除 Tauri 已暴露的 API）
+- 未经后端 command 直接读写用户 `~/.agents-manager/` 文件（除 Tauri 已暴露的 API）
 
 ## 验证
 
 ```bash
-cd apps/agent-manager-gui
+cd apps/agents-manager-gui
 npm run build
 pnpm run tauri:dev   # 冒烟（可选）
 ```
 
-Rust 命令改动时配合：`cargo test -p agent-manager-gui`
+Rust 命令改动时配合：`cargo test -p agents-manager-gui`
 
 ## 协作
 
-- 需要新后端能力时，交给 **rust-agent-manager-dev** 在 core + `lib.rs` 实现
+- 需要新后端能力时，交给 **rust-agents-manager-dev** 在 core + `lib.rs` 实现

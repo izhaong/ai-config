@@ -10,7 +10,7 @@ use assert_cmd::Command;
 use predicates::prelude::PredicateBooleanExt;
 use tempfile::TempDir;
 
-const BIN: &str = "agent-manager";
+const BIN: &str = "agents-manager";
 
 fn setup() -> (TempDir, TempDir) {
     let home = TempDir::new().expect("home tempdir");
@@ -115,7 +115,7 @@ fn status_does_not_initialize_global_asset_root() {
         .success();
 
     assert!(
-        !home.path().join(".agent-manager").exists(),
+        !home.path().join(".agents-manager").exists(),
         "status must not create or seed the global asset root"
     );
 }
@@ -124,7 +124,7 @@ fn status_does_not_initialize_global_asset_root() {
 fn project_sync_apply_writes_mcp_under_project_deploy_base() {
     let home = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
-    let asset_root = repo.path().join(".agent-manager");
+    let asset_root = repo.path().join(".agents-manager");
     fs::create_dir_all(asset_root.join("mcp/servers")).unwrap();
     fs::write(
         asset_root.join("mcp/servers/project-only.json"),
@@ -323,7 +323,7 @@ fn secrets_validate_always_ok_without_mcp_placeholders() {
 #[test]
 fn secrets_list_only_keys_no_values() {
     let (home, root) = setup();
-    let cfg = home.path().join(".config").join("agent-manager");
+    let cfg = home.path().join(".config").join("agents-manager");
     fs::create_dir_all(&cfg).unwrap();
     let secrets = cfg.join("secrets.env");
     fs::write(&secrets, "MINIO_ENDPOINT=secret-value\n").unwrap();

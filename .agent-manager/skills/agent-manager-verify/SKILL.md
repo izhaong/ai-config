@@ -1,37 +1,37 @@
 ---
-name: agent-manager-verify
-description: agent-manager 四层验收：源码测试、隔离生命周期、已安装运行态、人工外部门禁。声称完成前必跑。
+name: agents-manager-verify
+description: agents-manager 四层验收：源码测试、隔离生命周期、已安装运行态、人工外部门禁。声称完成前必跑。
 ---
 
-# agent-manager 验证
+# agents-manager 验证
 
 验证必须区分四层结果，不能用源码测试替代已安装版本或真实 IDE 验收。
 
 ## 一键验证
 
 ```bash
-.agent-manager/skills/agent-manager-verify/scripts/verify-closure.sh all
+.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh all
 ```
 
 可按层运行：
 
 ```bash
-.agent-manager/skills/agent-manager-verify/scripts/verify-closure.sh source
-.agent-manager/skills/agent-manager-verify/scripts/verify-closure.sh sandbox
-.agent-manager/skills/agent-manager-verify/scripts/verify-closure.sh runtime
+.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh source
+.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh sandbox
+.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh runtime
 ```
 
 ## 1. Source：源码自动化
 
 - `cargo test --workspace`
-- `cargo build -p agent-manager-cli`
+- `cargo build -p agents-manager-cli`
 - `npm run test && npm run build`
 - 行为变更必须包含本次新增/更新的回归用例。
 
 快速聚焦 core/CLI 时可先跑：
 
 ```bash
-cargo test -p agent-manager-core -p agent-manager-cli
+cargo test -p agents-manager-core -p agents-manager-cli
 ```
 
 ## 2. Sandbox：临时 HOME 生命周期
@@ -51,8 +51,8 @@ cargo test -p agent-manager-core -p agent-manager-cli
 
 先比较：
 
-- `target/debug/agent-manager --version`
-- `command -v agent-manager` 与 `agent-manager --version`
+- `target/debug/agents-manager --version`
+- `command -v agents-manager` 与 `agents-manager --version`
 
 版本不一致立即停止，不能调用旧二进制的 sync。版本一致后，真实环境只读执行：
 

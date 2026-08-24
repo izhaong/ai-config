@@ -1,4 +1,4 @@
-//! `agent-manager mcp ...` 子命令(PRD §4.2 / §5.1 / §10 A-7 / A-8 / A-15)。
+//! `agents-manager mcp ...` 子命令(PRD §4.2 / §5.1 / §10 A-7 / A-8 / A-15)。
 //!
 //! T007 安全边界：source-first CRUD 仅变更 canonical source；单项 `deploy` / `retract`
 //! 必须先构建经审核的 source-first projection plan，再交由 generated executor 事务执行。
@@ -220,7 +220,7 @@ fn run_projection_command(
                 conflict.reason_code
             )));
         }
-        let backup_root = roots.deploy_base.join(".agent-manager/projection-backups");
+        let backup_root = roots.deploy_base.join(".agents-manager/projection-backups");
         let report = apply_projection_plan(
             &plan,
             &ExecutorContext::new(&ledger, roots.deploy_base.clone(), backup_root)
@@ -282,7 +282,7 @@ fn effective_mcp_definitions(
         OverlayRoots {
             global: roots.asset_root.clone(),
             workspace: None,
-            project: roots.asset_root.join(".agent-manager-no-project-overlay"),
+            project: roots.asset_root.join(".agents-manager-no-project-overlay"),
         }
     };
     resolve_effective_mcp_definitions(&overlays)
@@ -354,7 +354,7 @@ fn run_show(mode: OutputMode, root: &Utf8Path, name: &str) -> ExitCode {
     };
     let Some((srv, path)) = found else {
         let msg = format!("mcp server `{name}` 找不到");
-        let hint = "跑 `agent-manager mcp list` 看全部";
+        let hint = "跑 `agents-manager mcp list` 看全部";
         emit_error_envelope(mode, exit_code::PARTIAL_FAILURE, &msg, Some(hint));
         return ExitCode::from(exit_code::PARTIAL_FAILURE);
     };
@@ -636,7 +636,7 @@ fn run_migrate(
         exit_code::ARG_ERROR,
         "legacy MCP migrate 只读：`--extract-secrets --apply` 不能绕过 reviewed source-first plan",
         Some(
-            "使用 `agent-manager mcp migrate --dry-run` 盘点；迁移请使用 `agent-manager import` / `agent-manager migrate source-first`",
+            "使用 `agents-manager mcp migrate --dry-run` 盘点；迁移请使用 `agents-manager import` / `agents-manager migrate source-first`",
         ),
     );
     ExitCode::from(exit_code::ARG_ERROR)
@@ -672,7 +672,7 @@ fn run_migrate_hermes(mode: OutputMode, dry_run: bool) -> ExitCode {
         mode,
         exit_code::ARG_ERROR,
         "legacy Hermes MCP migrate 只读：source-first apply 尚未就绪，拒绝写入或重命名旧 MCP 资产",
-        Some("使用 `agent-manager mcp migrate-hermes --dry-run` 盘点；待生成 source-first 计划后再执行单项 apply"),
+        Some("使用 `agents-manager mcp migrate-hermes --dry-run` 盘点；待生成 source-first 计划后再执行单项 apply"),
     );
     ExitCode::from(exit_code::ARG_ERROR)
 }

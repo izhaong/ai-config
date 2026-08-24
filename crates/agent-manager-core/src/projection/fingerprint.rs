@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 use crate::error::CoreError;
 use crate::projection::model::{FingerprintType, PathFingerprint};
 
-const LEGACY_MARKER_NAME: &str = ".agent-manager-deploy.json";
+const LEGACY_MARKER_NAME: &str = ".agents-manager-deploy.json";
 
 /// 计算目录内容的稳定摘要。
 ///
@@ -167,7 +167,7 @@ mod tests {
         fs::write(root.join("SKILL.md").as_std_path(), "body\n").unwrap();
         fs::write(root.join(".hidden").as_std_path(), "first\n").unwrap();
         fs::write(
-            root.join(".agent-manager-deploy.json").as_std_path(),
+            root.join(".agents-manager-deploy.json").as_std_path(),
             "legacy marker\n",
         )
         .unwrap();
@@ -175,7 +175,7 @@ mod tests {
         let before = directory_digest(&root).unwrap();
 
         fs::write(
-            root.join(".agent-manager-deploy.json").as_std_path(),
+            root.join(".agents-manager-deploy.json").as_std_path(),
             "changed legacy marker\n",
         )
         .unwrap();
@@ -206,7 +206,7 @@ mod tests {
     fn directory_digest_includes_nested_marker_named_files() {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap().join("skill");
-        let nested = root.join("resources/.agent-manager-deploy.json");
+        let nested = root.join("resources/.agents-manager-deploy.json");
         fs::create_dir_all(nested.parent().unwrap().as_std_path()).unwrap();
         fs::write(root.join("SKILL.md").as_std_path(), "body\n").unwrap();
         fs::write(nested.as_std_path(), "first resource\n").unwrap();

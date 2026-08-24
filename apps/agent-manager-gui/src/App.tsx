@@ -1,5 +1,5 @@
 /**
- * agent-manager GUI 主组件 — 统一列表 + 批量操作 + 资产编辑抽屉
+ * agents-manager GUI 主组件 — 统一列表 + 批量操作 + 资产编辑抽屉
  */
 
 import { useMemoizedFn } from "ahooks";

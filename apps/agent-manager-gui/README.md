@@ -1,4 +1,4 @@
-# agent-manager GUI
+# agents-manager GUI
 
 Tauri 2 + React 19 + Vite 桌面壳。
 
@@ -6,7 +6,7 @@ Tauri 2 + React 19 + Vite 桌面壳。
 
 - 框架：[i18next](https://www.i18next.com/) + [react-i18next](https://react.i18next.com/)
 - 语言包：`src/i18n/locales/zh-CN.json`、`src/i18n/locales/en-US.json`
-- 默认：浏览器语言为 `zh*` 时用中文，否则英文；选择会写入 `localStorage`（`agent-manager.locale`）
+- 默认：浏览器语言为 `zh*` 时用中文，否则英文；选择会写入 `localStorage`（`agents-manager.locale`）
 - 顶栏右侧下拉可切换 **中文 / English**
 
 新增文案时同步更新两个 JSON 文件中的同名 key。
@@ -22,5 +22,5 @@ npm run tauri:dev
 
 ```bash
 npm run build
-cargo build -p agent-manager-gui
+cargo build -p agents-manager-gui
 ```

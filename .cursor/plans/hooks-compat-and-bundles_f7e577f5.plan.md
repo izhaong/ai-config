@@ -1,9 +1,9 @@
 ---
 name: hooks-compat-and-bundles
-overview: 完善 hooks：在 `.agent-manager` 维持 canonical 源，支持 bundle 目录整包，并把 Cursor/Claude/Codex 的 hooks 配置与 I/O 协议差异收敛到统一的数据模型与适配器层。
+overview: 完善 hooks：在 `.agents-manager` 维持 canonical 源，支持 bundle 目录整包，并把 Cursor/Claude/Codex 的 hooks 配置与 I/O 协议差异收敛到统一的数据模型与适配器层。
 todos:
   - id: T001-model
-    content: 扩展 hook canonical 数据模型：handler type(command/prompt/http/mcp_tool)、timeout、failClosed、statusMessage 等，并保持对旧 `.agent-manager/hooks.json` 的兼容解析
+    content: 扩展 hook canonical 数据模型：handler type(command/prompt/http/mcp_tool)、timeout、failClosed、statusMessage 等，并保持对旧 `.agents-manager/hooks.json` 的兼容解析
     status: pending
   - id: T002-bundle
     content: 实现 bundle 目录整包 hook：解析 `hook.yaml` 定位入口脚本；deploy/retract/import 支持递归拷贝/删除
@@ -15,7 +15,7 @@ todos:
     content: 补齐单测覆盖：单文件+bundle、三平台生成结构、第三方 hooks 保留、prompt/http 处理
     status: pending
   - id: T005-verify
-    content: 跑 `cargo test -p agent-manager-core -p agent-manager-cli` 并确保 hooks 相关用例全绿
+    content: 跑 `cargo test -p agents-manager-core -p agents-manager-cli` 并确保 hooks 相关用例全绿
     status: pending
 isProject: false
 ---
@@ -24,16 +24,16 @@ isProject: false
 
 你当前仓库已经有：
 
-- 源配置：`.agent-manager/hooks.json`（Cursor 风格，扁平 event -> [{command}]）
+- 源配置：`.agents-manager/hooks.json`（Cursor 风格，扁平 event -> [{command}]）
 - 平台生成：`.cursor/hooks.json`（带 `managedBy/hook` + 可选 `matcher`）、`.codex/hooks.json`、`.claude/settings.json`（`hooks` 字段）、Hermes 的 `~/.hermes/config.yaml`
-- 核心适配器：`crates/agent-manager-core/src/hook_adapter.rs`（已实现 deploy/retract/跨平台拷贝/从平台 import）
+- 核心适配器：`crates/agents-manager-core/src/hook_adapter.rs`（已实现 deploy/retract/跨平台拷贝/从平台 import）
 - 资产布局规则：`.cursor/rules/hooks-asset-layout.mdc`（强制“单文件 or 目录整包（bundle）”）
 
 这次完善的核心目标：
 
 - **Hook 类型扩展**：支持命令 + prompt + HTTP（对齐 Cursor / Claude / Codex 的能力边界）
 - **Bundle 一等公民**：实现目录整包 hook（递归拷贝、入口脚本定位、bundle 元数据）
-- **配置语义一致**：在 `.agent-manager` 维护 canonical，deploy 时正确映射到 Cursor/Claude/Codex 原生结构，并能 retract/import 不破坏第三方 hooks
+- **配置语义一致**：在 `.agents-manager` 维护 canonical，deploy 时正确映射到 Cursor/Claude/Codex 原生结构，并能 retract/import 不破坏第三方 hooks
 - **安全与可控**：把 Cursor 的 `failClosed`、permission/exit-code 语义，以及 Claude 的 `permissionDecision`/`systemMessage` 等输出契约纳入规范；对不支持的能力做显式降级
 
 ## 关键差异（我们需要在 adapter 里“对齐/降级”）
@@ -50,9 +50,9 @@ isProject: false
   - Claude：stdout JSON `hookSpecificOutput.permissionDecision: deny` 等；exit code `2` 的含义与 Cursor 兼容；还支持 `systemMessage` 等。
   - Codex：文档强调并发执行、turn scope 与 trust-review；阻断语义按其事件协议（后续用最小兼容，不尝试复刻 Codex trust 逻辑）。
 
-## 统一的 canonical 源模型（落盘在 `.agent-manager`）
+## 统一的 canonical 源模型（落盘在 `.agents-manager`）
 
-在 `.agent-manager` 侧引入更通用的 hook manifest（保持向后兼容你现有 `hooks.json`）：
+在 `.agents-manager` 侧引入更通用的 hook manifest（保持向后兼容你现有 `hooks.json`）：
 
 - `hooks.json`
   - `version: 2`（或保持 1，但新增字段允许；以现有解析实现为准）
@@ -76,7 +76,7 @@ adapter 需要支持：
 - retract：能删除平台侧的目录包，并仅移除匹配 token 的配置项。
 - import_to_source：从平台导入时，若检测到脚本路径位于某 bundle 目录内，按 bundle 形态导入（至少保证不丢依赖文件）。
 
-## 适配器改造点（`crates/agent-manager-core/src/hook_adapter.rs`）
+## 适配器改造点（`crates/agents-manager-core/src/hook_adapter.rs`）
 
 - **数据模型扩展**：从 `HookScriptSpec` / `HookBinding` 扩展为更通用的 `HookHandlerSpec`（含 `type`、`timeout`、`failClosed`、prompt/url 等）。
 - **平台能力矩阵**：为每个平台定义支持集与降级策略，例如：
@@ -88,7 +88,7 @@ adapter 需要支持：
 
 ## 测试与验收
 
-在 `crates/agent-manager-core` 添加/更新单测（类似 `hook_adapter.rs` 现有 tests）：
+在 `crates/agents-manager-core` 添加/更新单测（类似 `hook_adapter.rs` 现有 tests）：
 
 - 单文件 hook：deploy 到 Cursor/Codex/Claude 仍通过，且第三方 hooks 不被覆盖。
 - bundle hook：deploy 到 Cursor/Codex/Claude 会复制完整目录，并生成正确 `command` 路径（Cursor 项目路径 vs home 路径、Claude `${CLAUDE_PROJECT_DIR}`、Codex 相对/绝对）。
@@ -97,12 +97,12 @@ adapter 需要支持：
   - Codex：遇到 prompt/http 时返回清晰错误。
   - Claude：http hook 写入 settings 的结构正确。
 
-最后按仓库规约跑：`cargo test -p agent-manager-core -p agent-manager-cli`。
+最后按仓库规约跑：`cargo test -p agents-manager-core -p agents-manager-cli`。
 
 ## 影响面（预期会改的文件）
 
-- `crates/agent-manager-core/src/hook_adapter.rs`（主要逻辑）
-- `crates/agent-manager-core/src/hook.rs` 或相关 hook 解析/manifest 代码（增加 handler 类型与 bundle 元数据解析；具体以实际文件为准）
+- `crates/agents-manager-core/src/hook_adapter.rs`（主要逻辑）
+- `crates/agents-manager-core/src/hook.rs` 或相关 hook 解析/manifest 代码（增加 handler 类型与 bundle 元数据解析；具体以实际文件为准）
 - `.cursor/rules/hooks-asset-layout.mdc`（若需要补充字段约定/示例；尽量不改规则，只补文档示例）
 - 新增：`specs/<feature>/spec.md` + `specs/<feature>/plan.md`（按仓库 Spec Kit 流程；实现阶段再落盘）
 
@@ -110,7 +110,7 @@ adapter 需要支持：
 
 ```mermaid
 flowchart TD
-  sourceAgentManager[.agent-manager/hooks.json+hooks/] --> adapter[agent-manager-core hook_adapter]
+  sourceAgentManager[.agents-manager/hooks.json+hooks/] --> adapter[agents-manager-core hook_adapter]
   adapter --> cursorCfg[.cursor/hooks.json+.cursor/hooks/]
   adapter --> codexCfg[.codex/hooks.json+.codex/hooks/]
   adapter --> claudeCfg[.claude/settings.json+.claude/hooks/]

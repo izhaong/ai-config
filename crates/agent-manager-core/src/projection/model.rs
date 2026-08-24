@@ -157,7 +157,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Command,
             name: "review".to_owned(),
-            source_path: Utf8PathBuf::from("/repo/.agent-manager/commands/review.md"),
+            source_path: Utf8PathBuf::from("/repo/.agents-manager/commands/review.md"),
             layer: SourceLayer::Project,
             fingerprint: "digest".to_owned(),
         };
@@ -166,7 +166,7 @@ mod tests {
         assert_eq!(source.layer, SourceLayer::Project);
         assert_eq!(
             source.absolute_path,
-            Utf8PathBuf::from("/repo/.agent-manager/commands/review.md")
+            Utf8PathBuf::from("/repo/.agents-manager/commands/review.md")
         );
         assert_eq!(source.fingerprint, "digest");
     }

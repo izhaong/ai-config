@@ -1,9 +1,9 @@
-//! 用户全局资产根:`~/.agent-manager/`(skills / rules / mcp / agents)。
+//! 用户全局资产根:`~/.agents-manager/`(skills / rules / mcp / agents)。
 //!
-//! - 默认始终读写 `~/.agent-manager/`;不存在则创建子目录。
+//! - 默认始终读写 `~/.agents-manager/`;不存在则创建子目录。
 //! - 首次为空时,可从 `AGENT_MANAGER_SEED` 或安装包 Resources 合并拷贝(不覆盖已有文件)。
-//! - 项目覆盖仍在 `<project>/.agent-manager/`(结构相同,与全局合并)。
-//! - `AGENT_MANAGER_ROOT` 可覆盖全局根(开发/测试);指向 agent-manager 仓库根时回退 `~/.agent-manager`。
+//! - 项目覆盖仍在 `<project>/.agents-manager/`(结构相同,与全局合并)。
+//! - `AGENT_MANAGER_ROOT` 可覆盖全局根(开发/测试);指向 agents-manager 仓库根时回退 `~/.agents-manager`。
 
 use camino::{Utf8Path, Utf8PathBuf};
 use walkdir::WalkDir;
@@ -12,10 +12,10 @@ use crate::error::CoreError;
 use crate::mcp_json::{self};
 
 /// 用户主目录下的全局资产目录名。
-pub const USER_ASSET_DIR_NAME: &str = ".agent-manager";
+pub const USER_ASSET_DIR_NAME: &str = ".agents-manager";
 
-/// 安装包 Resources 内种子目录名(构建时由 `~/.agent-manager` 或 `AGENT_MANAGER_SEED` 打入)。
-pub const BUNDLE_SEED_DIR_NAMES: &[&str] = &[".agent-manager", "seed"];
+/// 安装包 Resources 内种子目录名(构建时由 `~/.agents-manager` 或 `AGENT_MANAGER_SEED` 打入)。
+pub const BUNDLE_SEED_DIR_NAMES: &[&str] = &[".agents-manager", "seed"];
 
 /// 子目录(相对资产根)。
 pub const ASSET_SUBDIRS: &[&str] = &["skills", "rules", "agents", "commands", "hooks"];
@@ -35,20 +35,20 @@ pub fn home_dir() -> Utf8PathBuf {
     Utf8PathBuf::from(".")
 }
 
-/// 默认用户全局资产根 `~/.agent-manager`。
+/// 默认用户全局资产根 `~/.agents-manager`。
 pub fn user_home_asset_root() -> Utf8PathBuf {
     home_dir().join(USER_ASSET_DIR_NAME)
 }
 
-/// 是否为 agent-manager 工程仓库根(含 `crates/agent-manager-core`)。
+/// 是否为 agents-manager 工程仓库根(含 `crates/agents-manager-core`)。
 pub fn is_agent_manager_repo(p: &Utf8Path) -> bool {
-    p.join("crates/agent-manager-core").is_dir()
+    p.join("crates/agents-manager-core").is_dir()
 }
 
-/// 将注册表或用户输入的路径规范为 `(仓库根, 资产根 …/.agent-manager/)`。
+/// 将注册表或用户输入的路径规范为 `(仓库根, 资产根 …/.agents-manager/)`。
 ///
-/// - 仓库根 → 资产根 = `<repo>/.agent-manager/`
-/// - 用户直接选 `.agent-manager/` → 仓库根 = 父目录
+/// - 仓库根 → 资产根 = `<repo>/.agents-manager/`
+/// - 用户直接选 `.agents-manager/` → 仓库根 = 父目录
 /// - 历史数据:路径本身已是资产根(含 `skills/`) → 仓库根与资产根相同
 pub fn resolve_project_roots(stored: &Utf8Path) -> (Utf8PathBuf, Utf8PathBuf) {
     if stored
@@ -84,9 +84,9 @@ pub fn project_deploy_base(repo_root: &Utf8Path) -> Utf8PathBuf {
 pub struct SyncRoots {
     /// 仓库根（全局 install 时为 `$HOME` 或资产根父目录）。
     pub repo_root: Utf8PathBuf,
-    /// 扫描资产用的根（`<repo>/.agent-manager/` 或 `~/.agent-manager/`）。
+    /// 扫描资产用的根（`<repo>/.agents-manager/` 或 `~/.agents-manager/`）。
     pub asset_root: Utf8PathBuf,
-    /// `scan_with_override` 的 default 侧（项目模式为 `~/.agent-manager`，全局为 `asset_root`）。
+    /// `scan_with_override` 的 default 侧（项目模式为 `~/.agents-manager`，全局为 `asset_root`）。
     pub global_default: Utf8PathBuf,
     /// IDE 平台配置下发根（`$HOME` 或 `<repo>`）。
     pub deploy_base: Utf8PathBuf,
@@ -94,8 +94,8 @@ pub struct SyncRoots {
 
 /// 解析 CLI `--root` / `AGENT_MANAGER_ROOT` 对应的 install/sync 作用域。
 ///
-/// - 全局：`~/.agent-manager` 或纯资产根 → 下发到 `$HOME`，合并源为自身。
-/// - 项目：仓库根 → 资产 `<repo>/.agent-manager`，default 合并 `~/.agent-manager`，下发到 `<repo>`。
+/// - 全局：`~/.agents-manager` 或纯资产根 → 下发到 `$HOME`，合并源为自身。
+/// - 项目：仓库根 → 资产 `<repo>/.agents-manager`，default 合并 `~/.agents-manager`，下发到 `<repo>`。
 pub fn resolve_sync_roots(candidate: &Utf8Path) -> SyncRoots {
     let user_global = discover_global_asset_root_read_only();
     let normalized = resolve_asset_root(candidate);
@@ -138,7 +138,7 @@ pub fn is_asset_root(p: &Utf8Path) -> bool {
 /// 将 CLI/GUI 传入路径规范为资产根。
 ///
 /// - 已是资产根 → 原样
-/// - agent-manager 仓库根 → `~/.agent-manager`(资产已迁出仓库)
+/// - agents-manager 仓库根 → `~/.agents-manager`(资产已迁出仓库)
 pub fn resolve_asset_root(candidate: &Utf8Path) -> Utf8PathBuf {
     if is_asset_root(candidate) {
         return candidate.to_path_buf();
@@ -150,7 +150,7 @@ pub fn resolve_asset_root(candidate: &Utf8Path) -> Utf8PathBuf {
 }
 
 /// 创建资产根下标准子目录(已存在则跳过)。
-/// 适用于 `~/.agent-manager/` 与 `<repo>/.agent-manager/`（二者同构）。
+/// 适用于 `~/.agents-manager/` 与 `<repo>/.agents-manager/`（二者同构）。
 pub fn ensure_user_asset_layout(root: &Utf8Path) -> Result<(), CoreError> {
     for sub in ASSET_SUBDIRS {
         std::fs::create_dir_all(root.join(sub).as_std_path())?;
@@ -158,7 +158,7 @@ pub fn ensure_user_asset_layout(root: &Utf8Path) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// 初始化资产根标准目录（全局与项目 `.agent-manager` 共用）。
+/// 初始化资产根标准目录（全局与项目 `.agents-manager` 共用）。
 ///
 /// 不会创建或迁移 MCP 配置；这些操作必须由显式的 source-first 流程执行。
 pub fn ensure_asset_layout(asset_root: &Utf8Path) -> Result<(), CoreError> {
@@ -166,7 +166,7 @@ pub fn ensure_asset_layout(asset_root: &Utf8Path) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// 由仓库根推导项目资产根 `<repo>/.agent-manager/`。
+/// 由仓库根推导项目资产根 `<repo>/.agents-manager/`。
 pub fn project_asset_root(repo_root: &Utf8Path) -> Utf8PathBuf {
     resolve_project_roots(repo_root).1
 }
@@ -233,7 +233,7 @@ pub fn collect_seed_sources() -> Vec<Utf8PathBuf> {
     out
 }
 
-/// 开发态:当前工作目录或二进制旁的 agent-manager 仓库 `.agent-manager/`。
+/// 开发态:当前工作目录或二进制旁的 agents-manager 仓库 `.agents-manager/`。
 fn dev_repo_asset_seed() -> Option<Utf8PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
@@ -349,7 +349,7 @@ pub fn init_user_asset_root() -> Result<Utf8PathBuf, CoreError> {
     Ok(root)
 }
 
-/// `~/.agent-manager/hooks.json` 缺失时,从种子目录合并 hooks 清单与脚本。
+/// `~/.agents-manager/hooks.json` 缺失时,从种子目录合并 hooks 清单与脚本。
 fn seed_hooks_if_missing(root: &Utf8Path) -> Result<(), CoreError> {
     if root.join("hooks.json").is_file() {
         return Ok(());
@@ -394,10 +394,10 @@ pub fn discover_global_asset_root_read_only() -> Utf8PathBuf {
     effective_global_asset_root()
 }
 
-/// 自动发现全局资产根(对外统一入口):默认 `~/.agent-manager` 并保证目录存在。
+/// 自动发现全局资产根(对外统一入口):默认 `~/.agents-manager` 并保证目录存在。
 pub fn discover_global_asset_root() -> Utf8PathBuf {
     init_user_asset_root().unwrap_or_else(|e| {
-        tracing::warn!("init ~/.agent-manager 失败: {e}, 仍使用默认路径");
+        tracing::warn!("init ~/.agents-manager 失败: {e}, 仍使用默认路径");
         let root = user_home_asset_root();
         let _ = ensure_user_asset_layout(&root);
         root
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn ensure_asset_layout_matches_global_shape() {
         let tmp = TempDir::new().unwrap();
-        let asset = Utf8PathBuf::from_path_buf(tmp.path().join(".agent-manager")).unwrap();
+        let asset = Utf8PathBuf::from_path_buf(tmp.path().join(".agents-manager")).unwrap();
         ensure_asset_layout(&asset).unwrap();
         for sub in ASSET_SUBDIRS {
             assert!(asset.join(sub).is_dir(), "missing {sub}");
@@ -520,14 +520,14 @@ mod tests {
     fn project_asset_root_from_repo() {
         let tmp = TempDir::new().unwrap();
         let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        assert_eq!(project_asset_root(&repo), repo.join(".agent-manager"));
+        assert_eq!(project_asset_root(&repo), repo.join(".agents-manager"));
     }
 
     #[test]
     fn resolve_asset_root_repo_falls_back_to_user_home() {
         let tmp = TempDir::new().unwrap();
         let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        fs::create_dir_all(repo.join("crates/agent-manager-core")).unwrap();
+        fs::create_dir_all(repo.join("crates/agents-manager-core")).unwrap();
         assert_eq!(resolve_asset_root(&repo), user_home_asset_root());
     }
 
@@ -535,16 +535,16 @@ mod tests {
     fn resolve_project_roots_from_repo() {
         let tmp = TempDir::new().unwrap();
         let repo = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        fs::create_dir_all(repo.join(".agent-manager/skills")).unwrap();
+        fs::create_dir_all(repo.join(".agents-manager/skills")).unwrap();
         let (r, a) = resolve_project_roots(&repo);
         assert_eq!(r, repo);
-        assert_eq!(a, repo.join(".agent-manager"));
+        assert_eq!(a, repo.join(".agents-manager"));
     }
 
     #[test]
     fn resolve_project_roots_from_dot_agent_manager() {
         let tmp = TempDir::new().unwrap();
-        let asset = Utf8PathBuf::from_path_buf(tmp.path().join(".agent-manager")).unwrap();
+        let asset = Utf8PathBuf::from_path_buf(tmp.path().join(".agents-manager")).unwrap();
         fs::create_dir_all(asset.join("skills")).unwrap();
         let (r, a) = resolve_project_roots(&asset);
         assert_eq!(a, asset);
@@ -562,15 +562,15 @@ mod tests {
             ("HOME", Some(home.as_str())),
             ("AGENT_MANAGER_ROOT", None),
         ]);
-        fs::create_dir_all(home.join(".agent-manager/skills")).unwrap();
+        fs::create_dir_all(home.join(".agents-manager/skills")).unwrap();
         let repo = home.join("myproj");
-        fs::create_dir_all(repo.join(".agent-manager/skills")).unwrap();
+        fs::create_dir_all(repo.join(".agents-manager/skills")).unwrap();
         let roots = resolve_sync_roots(&repo);
         assert_eq!(roots.repo_root, repo);
-        assert_eq!(roots.asset_root, repo.join(".agent-manager"));
+        assert_eq!(roots.asset_root, repo.join(".agents-manager"));
         assert_eq!(roots.deploy_base, repo);
         assert_ne!(roots.global_default, roots.asset_root);
-        assert!(roots.global_default.ends_with(".agent-manager"));
+        assert!(roots.global_default.ends_with(".agents-manager"));
     }
 
     #[test]
@@ -581,7 +581,7 @@ mod tests {
             ("HOME", Some(home.as_str())),
             ("AGENT_MANAGER_ROOT", None),
         ]);
-        let asset = home.join(".agent-manager");
+        let asset = home.join(".agents-manager");
         fs::create_dir_all(asset.join("skills/foo")).unwrap();
         let roots = resolve_sync_roots(&asset);
         assert_eq!(roots.repo_root, home);
@@ -604,7 +604,7 @@ mod tests {
         let _ = resolve_sync_roots(&repo);
 
         assert!(
-            !home.join(".agent-manager").exists(),
+            !home.join(".agents-manager").exists(),
             "scope resolution is read-only and must not seed the global asset root"
         );
     }

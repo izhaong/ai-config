@@ -66,7 +66,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("deploy");
   });
 
-  it("agentmanager 已纳管时在其它平台视图收回 agent-manager 副本", () => {
+  it("agentmanager 已纳管时在其它平台视图收回 agents-manager 副本", () => {
     expect(
       resolveEntryPlatformToggleAction(
         entry({ agentmanager: "linked" }),
@@ -76,7 +76,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("retract");
   });
 
-  it("源视图浏览 agent-manager 时 skill 点击 agent-manager icon 不收回", () => {
+  it("源视图浏览 agents-manager 时 skill 点击 agents-manager icon 不收回", () => {
     expect(
       resolveEntryPlatformToggleAction(
         entry({ agentmanager: "linked" }),
@@ -86,7 +86,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("skip");
   });
 
-  it("源视图浏览 agent-manager 时 mcp 点击 agent-manager icon 仅展示状态", () => {
+  it("源视图浏览 agents-manager 时 mcp 点击 agents-manager icon 仅展示状态", () => {
     expect(
       resolveEntryPlatformToggleAction(
         { ...entry({ agentmanager: "linked" }), kind: "mcp" },
@@ -152,7 +152,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     ).toBe("skip");
   });
 
-  it("mcp 无源时从 Cursor 视图导入 agent-manager", () => {
+  it("mcp 无源时从 Cursor 视图导入 agents-manager", () => {
     expect(
       resolveEntryPlatformToggleAction(
         {
@@ -224,7 +224,7 @@ describe("resolveBatchPlatformToggleMode", () => {
     ).toBe("activate_all");
   });
 
-  it("源视图浏览 agent-manager 时批量不收回 agent-manager", () => {
+  it("源视图浏览 agents-manager 时批量不收回 agents-manager", () => {
     const rows = [
       entry({ agentmanager: "linked" }),
       entry({ agentmanager: "linked" }),
@@ -300,7 +300,7 @@ describe("resolveBatchEntryPlatformAction", () => {
     ).toBe("skip");
   });
 
-  it("retract_all：agent-manager 批量收回平台副本", () => {
+  it("retract_all：agents-manager 批量收回平台副本", () => {
     const linked = entry({ agentmanager: "linked" });
     expect(
       resolveBatchEntryPlatformAction(
@@ -312,7 +312,7 @@ describe("resolveBatchEntryPlatformAction", () => {
     ).toBe("retract");
   });
 
-  it("retract_all：源视图浏览 agent-manager 时 skill 不批量收回", () => {
+  it("retract_all：源视图浏览 agents-manager 时 skill 不批量收回", () => {
     const linked = entry({ agentmanager: "linked" });
     expect(
       resolveBatchEntryPlatformAction(

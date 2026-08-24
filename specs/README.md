@@ -1,6 +1,6 @@
 # Feature Specs（Spec Kit · 贴合 Cursor）
 
-本目录存放 **agent-manager 工具本身** 的功能规格。
+本目录存放 **agents-manager 工具本身** 的功能规格。
 
 ## 目录约定
 

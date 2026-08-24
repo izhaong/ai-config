@@ -1,5 +1,5 @@
 {
-  "name": "agent-manager-gui",
+  "name": "agents-manager-gui",
   "private": true,
   "version": "0.4.1",
   "type": "module",

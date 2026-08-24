@@ -11,8 +11,8 @@
 
 ## 验收
 
-- `cargo test -p agent-manager-core -p agent-manager-cli -p agent-manager-gui`
-- `cd apps/agent-manager-gui && npm run build && npm run lint && npm run test`
+- `cargo test -p agents-manager-core -p agents-manager-cli -p agents-manager-gui`
+- `cd apps/agents-manager-gui && npm run build && npm run lint && npm run test`
 - `lib.rs` 行数显著下降（目标 <1200）
 
 ## 回滚

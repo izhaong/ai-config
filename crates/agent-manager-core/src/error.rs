@@ -222,7 +222,7 @@ mod tests {
         // 假设这些字符串就是"用户塞进 secrets.env 的真值"。
         let fake_secret_value = "sk-prod-AAA-BBB-CCC-DDD-EEE-FFF";
         let another_secret = "p@ssw0rd!MINIO_ROOT_PASSWORD=supersecret-xyz";
-        let env_path_leak = "/Users/alice/.config/agent-manager/secrets.env";
+        let env_path_leak = "/Users/alice/.config/agents-manager/secrets.env";
         // 故意把这些值塞进 hint —— Display 文本必须不暴露。
         let hint_with_values =
             format!("在 {env_path_leak} 给 {fake_secret_value} 配 {another_secret}");
@@ -277,10 +277,10 @@ mod tests {
     #[test]
     fn link_failed_hint_is_non_empty() {
         let err = CoreError::LinkFailed {
-            src: "/Users/alice/.agent-manager/skills/foo".to_string(),
+            src: "/Users/alice/.agents-manager/skills/foo".to_string(),
             dest: "/Users/alice/.cursor/skills/foo".to_string(),
             reason: "目标路径已存在非链接文件".to_string(),
-            hint: "把目标文件挪走或 `agent-manager retract skill foo` 收回再重试".to_string(),
+            hint: "把目标文件挪走或 `agents-manager retract skill foo` 收回再重试".to_string(),
         };
 
         let hint = err.hint().expect("LinkFailed 必须带 hint");
@@ -309,7 +309,7 @@ mod tests {
     fn fs_errors_map_to_exit_code_5() {
         let err = CoreError::ConfigNotFound {
             path: "/nope.toml".into(),
-            hint: "跑 `agent-manager init`".into(),
+            hint: "跑 `agents-manager init`".into(),
         };
         assert_eq!(err.exit_code(), 5);
 

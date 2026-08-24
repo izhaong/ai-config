@@ -4,7 +4,7 @@ import { initReactI18next } from "react-i18next";
 import enUS from "./locales/en-US.json";
 import zhCN from "./locales/zh-CN.json";
 
-export const LOCALE_STORAGE_KEY = "agent-manager.locale";
+export const LOCALE_STORAGE_KEY = "agents-manager.locale";
 export const SUPPORTED_LOCALES = ["zh-CN", "en-US"] as const;
 export type AppLocale = (typeof SUPPORTED_LOCALES)[number];
 

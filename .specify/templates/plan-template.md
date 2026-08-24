@@ -21,14 +21,14 @@
 | 项         | 值                                                   |
 | ---------- | ---------------------------------------------------- |
 | Language   | Rust (workspace edition)                             |
-| 主要 Crate | `agent-manager-core` / `agent-manager-cli` / `agent-manager-gui` |
+| 主要 Crate | `agents-manager-core` / `agents-manager-cli` / `agents-manager-gui` |
 | 依赖模块   | [如 `paths`, `source`, `hook_adapter`, `sync`]       |
 | 测试       | `cargo test -p …`；[具体 test 模块名]                |
 | 平台矩阵   | Cursor / Codex / Claude / Hermes（勾选本功能涉及者） |
 
 ## Constitution Check
 
-- [ ] 业务逻辑仅在 `agent-manager-core`
+- [ ] 业务逻辑仅在 `agents-manager-core`
 - [ ] CLI/GUI 薄封装，无重复实现
 - [ ] 平台差异收敛在 `platform` / adapter
 - [ ] 幂等、可重复 install/sync
@@ -40,8 +40,8 @@
 
 | Crate            | 文件       | 变更类型  | 说明         |
 | ---------------- | ---------- | --------- | ------------ |
-| `agent-manager-core` | `src/….rs` | 新增/修改 | [职责一句话] |
-| `agent-manager-cli`  | `src/….rs` | 修改      | [仅当涉及]   |
+| `agents-manager-core` | `src/….rs` | 新增/修改 | [职责一句话] |
+| `agents-manager-cli`  | `src/….rs` | 修改      | [仅当涉及]   |
 
 ### API / 类型（新增或签名变更须写明）
 
@@ -85,10 +85,10 @@
 
 ## 测试策略
 
-1. **单元测试**（`agent-manager-core`）：[列举用例与断言要点]
+1. **单元测试**（`agents-manager-core`）：[列举用例与断言要点]
 2. **CLI / lifecycle**（若涉及）：[列举]
-3. **回归**：`cargo test -p agent-manager-core -p agent-manager-cli`
-4. **手工**（可选）：`agent-manager doctor`、项目 install 冒烟步骤
+3. **回归**：`cargo test -p agents-manager-core -p agents-manager-cli`
+4. **手工**（可选）：`agents-manager doctor`、项目 install 冒烟步骤
 
 ## 回滚
 
@@ -100,4 +100,4 @@
 
 - [ ] T001 [core] …（验证：`cargo test …::test_name`）
 - [ ] T002 [cli] …（验证：…）
-- [ ] T00N 运行 agent-manager-verify（`cargo test` + GUI build + doctor）
+- [ ] T00N 运行 agents-manager-verify（`cargo test` + GUI build + doctor）

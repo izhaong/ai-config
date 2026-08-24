@@ -117,7 +117,7 @@ pub fn build_projection_review(
         OverlayRoots {
             global: roots.asset_root.clone(),
             workspace: None,
-            project: roots.asset_root.join(".agent-manager-no-project-overlay"),
+            project: roots.asset_root.join(".agents-manager-no-project-overlay"),
         }
     };
     let assets = resolve_effective_assets(&overlay)?;

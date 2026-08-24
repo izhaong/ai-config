@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and archive agent-manager CLI for the current runner triple.
+# Build and archive agents-manager CLI for the current runner triple.
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -11,19 +11,19 @@ fi
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-cargo build -p agent-manager-cli --release
+cargo build -p agents-manager-cli --release
 
 TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
 OUT_DIR="$ROOT/artifacts/cli"
 mkdir -p "$OUT_DIR"
 
-BIN="$ROOT/target/release/agent-manager"
+BIN="$ROOT/target/release/agents-manager"
 if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
-  BIN="$ROOT/target/release/agent-manager.exe"
-  ARCHIVE="$OUT_DIR/agent-manager-${VERSION}-${TRIPLE}.zip"
+  BIN="$ROOT/target/release/agents-manager.exe"
+  ARCHIVE="$OUT_DIR/agents-manager-${VERSION}-${TRIPLE}.zip"
   (cd "$(dirname "$BIN")" && zip -j "$ARCHIVE" "$(basename "$BIN")")
 else
-  ARCHIVE="$OUT_DIR/agent-manager-${VERSION}-${TRIPLE}.tar.gz"
+  ARCHIVE="$OUT_DIR/agents-manager-${VERSION}-${TRIPLE}.tar.gz"
   tar -C "$(dirname "$BIN")" -czf "$ARCHIVE" "$(basename "$BIN")"
 fi
 

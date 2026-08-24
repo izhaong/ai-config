@@ -1,11 +1,11 @@
 [package]
-name = "agent-manager-gui"
+name = "agents-manager-gui"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "agent-manager 图形界面:Tauri 2.5 + React 19 前端(PRD §14 Q-2 拍板 React 最新版)"
+description = "agents-manager 图形界面:Tauri 2.5 + React 19 前端(PRD §14 Q-2 拍板 React 最新版)"
 
 [lib]
 name = "agent_manager_gui_lib"
@@ -15,9 +15,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { workspace = true }
 
 [dependencies]
-agent-manager-core = { path = "../../crates/agent-manager-core" }
-agent-manager-store = { path = "../../crates/agent-manager-store" }
-agent-manager-watcher = { path = "../../crates/agent-manager-watcher" }
+agents-manager-core = { path = "../../crates/agents-manager-core" }
+agents-manager-store = { path = "../../crates/agents-manager-store" }
+agents-manager-watcher = { path = "../../crates/agents-manager-watcher" }
 tauri = { workspace = true, features = [] }
 tauri-plugin-shell = { workspace = true }
 camino = { workspace = true }

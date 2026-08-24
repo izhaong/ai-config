@@ -1,17 +1,17 @@
-//! `agent-manager daemon ...` 子命令(PRD §5.1 + §9.1)。
+//! `agents-manager daemon ...` 子命令(PRD §5.1 + §9.1)。
 //!
 //! 守护进程管控:`start` / `stop` / `status` / `logs` / `events-follow`。
 //! 设计要点(对齐 PRD §5.1 / §8.1 / §9.1 / §10 A-5):
 //!
-//! - **pid file**:`$XDG_CONFIG_HOME/agent-manager/daemon.pid`(fallback `~/.config/agent-manager/daemon.pid`)
-//! - **log file**:`$XDG_CONFIG_HOME/agent-manager/daemon.log`
-//! - **UDS sock**:`$XDG_CONFIG_HOME/agent-manager/daemon.sock`
+//! - **pid file**:`$XDG_CONFIG_HOME/agents-manager/daemon.pid`(fallback `~/.config/agents-manager/daemon.pid`)
+//! - **log file**:`$XDG_CONFIG_HOME/agents-manager/daemon.log`
+//! - **UDS sock**:`$XDG_CONFIG_HOME/agents-manager/daemon.sock`
 //! - **`daemon start` 二次拒绝**:已有一个 alive pid 时,退出码 5(FS 错),不覆盖。
 //! - **`daemon stop`**:SIGTERM → 等 1s → SIGKILL 兜底。
 //! - **`daemon logs`**:`tail` log,过滤 `secrets.*` 字段(PRD §8.1)。
 //! - **`daemon events-follow`**:连 UDS 订阅 BusEvent;`--json` 时每行直出原始 JSON 帧 payload。
 //!
-//! 本阶段 `agent-managerd` 是 Phase 0 占位,可能不接 UDS — `events-follow` 在
+//! 本阶段 `agents-managerd` 是 Phase 0 占位,可能不接 UDS — `events-follow` 在
 //! connect 失败时返回部分失败(退出码 3),并把原因放在 stderr 提示。
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -55,25 +55,25 @@ pub fn run(action: DaemonCmd, mode: OutputMode) -> ExitCode {
 
 // ─── 路径与目录 ──────────────────────────────────────────────────────────
 
-/// XDG 风格配置目录:`~/.config/agent-manager`(Windows:`%APPDATA%\\agent-manager`)。
+/// XDG 风格配置目录:`~/.config/agents-manager`(Windows:`%APPDATA%\\agents-manager`)。
 fn config_dir() -> PathBuf {
     #[cfg(windows)]
     {
         if let Ok(appdata) = std::env::var("APPDATA") {
             if !appdata.trim().is_empty() {
-                return PathBuf::from(appdata).join("agent-manager");
+                return PathBuf::from(appdata).join("agents-manager");
             }
         }
     }
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         if !xdg.trim().is_empty() {
-            return PathBuf::from(xdg).join("agent-manager");
+            return PathBuf::from(xdg).join("agents-manager");
         }
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".config").join("agent-manager");
+        return PathBuf::from(home).join(".config").join("agents-manager");
     }
-    PathBuf::from(".config").join("agent-manager")
+    PathBuf::from(".config").join("agents-manager")
 }
 
 pub fn pid_file() -> PathBuf {
@@ -140,7 +140,7 @@ pub fn pid_alive(pid: i32) -> bool {
 
 // ─── 子命令实现 ──────────────────────────────────────────────────────────
 
-/// `daemon start` — fork 子进程跑 agent-managerd;写 pid file;二次 start 拒绝(退出码 5)。
+/// `daemon start` — fork 子进程跑 agents-managerd;写 pid file;二次 start 拒绝(退出码 5)。
 fn start(mode: OutputMode) -> ExitCode {
     if let Some(pid) = read_pid() {
         if pid_alive(pid) {
@@ -149,7 +149,7 @@ fn start(mode: OutputMode) -> ExitCode {
                 exit_code::FS_ERROR,
                 "daemon already running",
                 Some(&format!(
-                    "pid file at {} holds live pid {pid};stop it first(`agent-manager daemon stop`)",
+                    "pid file at {} holds live pid {pid};stop it first(`agents-manager daemon stop`)",
                     pid_file().display()
                 )),
             );
@@ -175,9 +175,9 @@ fn start(mode: OutputMode) -> ExitCode {
             emit_error_envelope(
                 mode,
                 exit_code::FS_ERROR,
-                "agent-managerd binary not found",
+                "agents-managerd binary not found",
                 Some(
-                    "looked next to current exe and in $PATH;install agent-managerd or run `cargo build -p agent-manager-daemon`",
+                    "looked next to current exe and in $PATH;install agents-managerd or run `cargo build -p agents-manager-daemon`",
                 ),
             );
             return ExitCode::from(exit_code::FS_ERROR);
@@ -218,7 +218,7 @@ fn start(mode: OutputMode) -> ExitCode {
             emit_error_envelope(
                 mode,
                 exit_code::FS_ERROR,
-                "failed to spawn agent-managerd",
+                "failed to spawn agents-managerd",
                 Some(&format!("{}: {e}", exe.display())),
             );
             return ExitCode::from(exit_code::FS_ERROR);
@@ -427,7 +427,7 @@ fn events_follow_unix(mode: OutputMode, json: bool) -> ExitCode {
                 exit_code::FS_ERROR,
                 "daemon not running",
                 Some(&format!(
-                    "sock path: {};start daemon with `agent-manager daemon start`",
+                    "sock path: {};start daemon with `agents-manager daemon start`",
                     sock_file().display()
                 )),
             );
@@ -612,9 +612,9 @@ fn redact_value(v: &mut serde_json::Value) {
     }
 }
 
-/// 找 `agent-managerd` 二进制:优先当前 exe 同目录(开发/打包),再 `$PATH`。
+/// 找 `agents-managerd` 二进制:优先当前 exe 同目录(开发/打包),再 `$PATH`。
 fn locate_daemon_binary() -> Option<PathBuf> {
-    let candidate_names = ["agent-managerd", "agent-managerd.exe"];
+    let candidate_names = ["agents-managerd", "agents-managerd.exe"];
     if let Ok(current) = std::env::current_exe() {
         if let Some(dir) = current.parent() {
             for name in candidate_names {

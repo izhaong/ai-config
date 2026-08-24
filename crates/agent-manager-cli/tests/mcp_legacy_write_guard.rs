@@ -6,7 +6,7 @@ use std::path::Path;
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-const BIN: &str = "agent-manager";
+const BIN: &str = "agents-manager";
 
 fn setup() -> (TempDir, TempDir) {
     let home = TempDir::new().expect("home tempdir");
@@ -98,6 +98,6 @@ fn legacy_mcp_secret_extraction_flags_do_not_bypass_reviewed_source_first_plans(
     assert!(!root.path().join("secret-store/secrets.env").exists());
     assert!(!root
         .path()
-        .join("legacy.json.agent-manager-migrate-backup")
+        .join("legacy.json.agents-manager-migrate-backup")
         .exists());
 }

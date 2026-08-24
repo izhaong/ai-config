@@ -6,7 +6,7 @@ use std::path::Path;
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-const BIN: &str = "agent-manager";
+const BIN: &str = "agents-manager";
 const FIXTURE_TEMPLATE_REL: &str = "tests/fixtures/mcp/cursor.mcp.template.json";
 const ASSET_TEMPLATE_REL: &str = "mcp/cursor.mcp.template.json";
 

@@ -1,5 +1,5 @@
 {
   "mcpServers": {
-    "_comment": "项目级 MCP 通常使用 agent-manager 渲染的全局 ~/.cursor/mcp.json。若本项目需要额外 MCP，在此追加 servers 块；密钥勿入库，用环境变量或 secrets.env。"
+    "_comment": "项目级 MCP 通常使用 agents-manager 渲染的全局 ~/.cursor/mcp.json。若本项目需要额外 MCP，在此追加 servers 块；密钥勿入库，用环境变量或 secrets.env。"
   }
 }

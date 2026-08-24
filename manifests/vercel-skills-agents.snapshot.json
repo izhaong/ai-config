@@ -53,7 +53,7 @@
     }
   },
   "agent_manager_divergence": {
-    "note": "agent-manager project scope uses per-IDE dirs; vercel uses .agents/skills for cursor/codex project",
+    "note": "agents-manager project scope uses per-IDE dirs; vercel uses .agents/skills for cursor/codex project",
     "project_scope": {
       "cursor": {
         "agent_manager": "<repo>/.cursor/skills",
@@ -68,7 +68,7 @@
         "vercel": "<repo>/.claude/skills"
       },
       "hermes": {
-        "agent_manager": "~/.hermes/skills (always global in agent-manager)",
+        "agent_manager": "~/.hermes/skills (always global in agents-manager)",
         "vercel": "<repo>/.hermes/skills"
       }
     }

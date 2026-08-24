@@ -12,9 +12,9 @@
 ## 资产继承
 
 ```
-member/.agent-manager 有内容? → 用 member
-否则 workspace/.agent-manager 存在? → 用 workspace
-否则 scan 仅 global (~/.agent-manager)
+member/.agents-manager 有内容? → 用 member
+否则 workspace/.agents-manager 存在? → 用 workspace
+否则 scan 仅 global (~/.agents-manager)
 ```
 
 ## Todos
@@ -23,4 +23,4 @@ member/.agent-manager 有内容? → 用 member
 - [x] T002 `compute_for_sync_roots` + `load_context_from_roots`
 - [x] T003 CLI `--workspace` on install/sync + JSON 报告
 - [x] T004 lifecycle workspace 集成测
-- [x] T005 `cargo test -p agent-manager-core -p agent-manager-cli`
+- [x] T005 `cargo test -p agents-manager-core -p agents-manager-cli`

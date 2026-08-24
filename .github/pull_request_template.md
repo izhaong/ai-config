@@ -11,8 +11,8 @@
 ## Test plan
 
 - [ ] `cargo fmt --check`
-- [ ] `cargo test -p agent-manager-core -p agent-manager-cli`
-- [ ] Manual: `agent-manager install` / `sync` (if behavior changed)
+- [ ] `cargo test -p agents-manager-core -p agents-manager-cli`
+- [ ] Manual: `agents-manager install` / `sync` (if behavior changed)
 
 ## Checklist
 

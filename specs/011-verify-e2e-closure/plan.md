@@ -4,18 +4,18 @@
 
 ## Summary
 
-本变更把 `agent-manager-verify` 从“测试命令清单”升级为四层验收：源码自动化、临时 HOME 隔离生命周期、已安装运行态版本/只读状态、人工外部门禁。同时修复 completion stdout 提前关闭时的 panic，并补可回归测试。
+本变更把 `agents-manager-verify` 从“测试命令清单”升级为四层验收：源码自动化、临时 HOME 隔离生命周期、已安装运行态版本/只读状态、人工外部门禁。同时修复 completion stdout 提前关闭时的 panic，并补可回归测试。
 
 不修改 projection/core 产品语义，不在真实 HOME 执行 0.4.0 `sync --apply`，不自动迁移用户 MCP/Hook 资产。
 
 ## 背景与根因
 
-`crates/agent-manager-cli/src/main.rs` 的 `Cmd::Completion` 直接把 `Stdout` 交给 `clap_complete::generate`。该依赖在 writer 返回 BrokenPipe 时内部 panic，因此常见的 `completion zsh | head` 以 101 退出。
+`crates/agents-manager-cli/src/main.rs` 的 `Cmd::Completion` 直接把 `Stdout` 交给 `clap_complete::generate`。该依赖在 writer 返回 BrokenPipe 时内部 panic，因此常见的 `completion zsh | head` 以 101 退出。
 
-`.agent-manager/skills/agent-manager-verify/SKILL.md` 目前只列出 cargo/npm/doctor/status 命令：
+`.agents-manager/skills/agents-manager-verify/SKILL.md` 目前只列出 cargo/npm/doctor/status 命令：
 
-- 未比较 `target/debug/agent-manager` 与 PATH 中的真实安装版本；
-- 建议的 `agent-manager sync --dry-run` 与当前 0.4.0 `--apply` 契约不一致，旧版甚至可能默认写入；
+- 未比较 `target/debug/agents-manager` 与 PATH 中的真实安装版本；
+- 建议的 `agents-manager sync --dry-run` 与当前 0.4.0 `--apply` 契约不一致，旧版甚至可能默认写入；
 - 没有临时 HOME 的 apply/retract 生命周期；
 - 没有区分自动化、运行态与人工验收边界。
 
@@ -34,9 +34,9 @@ installed version guard ──► real read-only doctor/status
 | 项         | 值 |
 | ---------- | -- |
 | Language   | Rust 2021 + Bash |
-| 主要 Crate | `agent-manager-cli` |
+| 主要 Crate | `agents-manager-cli` |
 | 依赖模块   | `clap_complete`、CLI output boundary |
-| 测试       | `cargo test -p agent-manager-cli`；verify shell E2E |
+| 测试       | `cargo test -p agents-manager-cli`；verify shell E2E |
 | 平台矩阵   | Cursor / Codex / Claude / Hermes（隔离全局 scope） |
 
 ## Constitution Check
@@ -53,10 +53,10 @@ installed version guard ──► real read-only doctor/status
 
 | Crate/区域 | 文件 | 变更类型 | 说明 |
 | ---------- | ---- | -------- | ---- |
-| `agent-manager-cli` | `src/main.rs` | 修改 | completion 先渲染到内存，再安全写 stdout |
-| `agent-manager-cli` | `src/main.rs` tests | 新增 | BrokenPipe 与普通 IO 错误回归 |
-| project skill | `.agent-manager/skills/agent-manager-verify/SKILL.md` | 修改 | 四层验证门禁 |
-| project skill | `.agent-manager/skills/agent-manager-verify/scripts/verify-closure.sh` | 新增 | 版本检查与隔离 E2E |
+| `agents-manager-cli` | `src/main.rs` | 修改 | completion 先渲染到内存，再安全写 stdout |
+| `agents-manager-cli` | `src/main.rs` tests | 新增 | BrokenPipe 与普通 IO 错误回归 |
+| project skill | `.agents-manager/skills/agents-manager-verify/SKILL.md` | 修改 | 四层验证门禁 |
+| project skill | `.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh` | 新增 | 版本检查与隔离 E2E |
 | docs | `CHANGELOG.md` | 修改 | 记录 CLI 修复与验证增强 |
 
 ### API / 类型
@@ -124,11 +124,11 @@ installed version guard ──► real read-only doctor/status
 
 ## Todos
 
-- [x] T001 为 completion BrokenPipe 与普通 IO 错误补回归测试（验证：`cargo test -p agent-manager-cli completion_`）
-- [x] T002 实现 completion 安全输出并通过真实管道验证（验证：`set -o pipefail; ./target/debug/agent-manager completion zsh | head -n 2`）
+- [x] T001 为 completion BrokenPipe 与普通 IO 错误补回归测试（验证：`cargo test -p agents-manager-cli completion_`）
+- [x] T002 实现 completion 安全输出并通过真实管道验证（验证：`set -o pipefail; ./target/debug/agents-manager completion zsh | head -n 2`）
 - [x] T003 新增版本门禁与临时 HOME 生命周期脚本（验证：`verify-closure.sh sandbox`）
-- [x] T004 更新 `agent-manager-verify` 四层验收说明与 CHANGELOG（验证：人工检查命令无真实 HOME 写入）
-- [ ] T005 运行增强后的 agent-manager-verify 全量验证（验证：workspace、GUI、sandbox、runtime）
+- [x] T004 更新 `agents-manager-verify` 四层验收说明与 CHANGELOG（验证：人工检查命令无真实 HOME 写入）
+- [ ] T005 运行增强后的 agents-manager-verify 全量验证（验证：workspace、GUI、sandbox、runtime）
 
 ## Verification Status
 

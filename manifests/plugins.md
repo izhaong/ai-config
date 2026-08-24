@@ -1,6 +1,6 @@
 # 官方 / 插件 Skills（不纳入本仓库，仅记录安装来源）
 
-本仓库只维护**自研 workflow Skills**。下列为各 IDE 自带或插件 cache，升级插件时会覆盖，请勿复制进 `~/.agent-manager/skills/`。
+本仓库只维护**自研 workflow Skills**。下列为各 IDE 自带或插件 cache，升级插件时会覆盖，请勿复制进 `~/.agents-manager/skills/`。
 
 ## npm / 上游发布
 
@@ -34,10 +34,10 @@ automate、canvas、loop、sdk、split-to-prs 等 — 随 Cursor 更新。
 
 ## Codex 系统（`~/.codex/skills/.system/`）
 
-skill-creator、openai-docs 等 — 勿纳入 agent-manager。
+skill-creator、openai-docs 等 — 勿纳入 agents-manager。
 
 ## 新机器 checklist
 
-1. 克隆本仓库，`cargo build -p agent-manager-cli --release && ./target/release/agent-manager install`
+1. 克隆本仓库，`cargo build -p agents-manager-cli --release && ./target/release/agents-manager install`
 2. 在 Cursor 扩展市场安装上表所需插件
-3. 核对 `~/.config/agent-manager/secrets.env` 后 `agent-manager sync`
+3. 核对 `~/.config/agents-manager/secrets.env` 后 `agents-manager sync`

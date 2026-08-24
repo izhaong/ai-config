@@ -3,7 +3,7 @@
 **Feature Branch**: `003-asset-copy-project`  
 **Created**: 2026-06-23  
 **Status**: Draft  
-**Input**: 将全局（或其它项目）的 skill 等资产复制到某一项目的 `.agent-manager/` 中
+**Input**: 将全局（或其它项目）的 skill 等资产复制到某一项目的 `.agents-manager/` 中
 
 ## User Scenarios & Testing
 
@@ -13,7 +13,7 @@
 
 **Why this priority**: 最常见场景——把个人全局资产下发到具体仓库项目。
 
-**Independent Test**: 全局存在 skill → GUI 源视图批量复制 → 目标项目 `.agent-manager/skills/<name>/` 出现实体副本。
+**Independent Test**: 全局存在 skill → GUI 源视图批量复制 → 目标项目 `.agents-manager/skills/<name>/` 出现实体副本。
 
 **Acceptance Scenarios**:
 
@@ -36,7 +36,7 @@
 
 - 源与目标为同一项目 → 拒绝并提示。
 - 目标已存在同名资产 → 拒绝并提示先删除或重命名。
-- 仅在 **agent-manager 源视图**（非平台浏览）提供复制入口。
+- 仅在 **agents-manager 源视图**（非平台浏览）提供复制入口。
 
 ## Requirements
 
@@ -50,7 +50,7 @@
 
 ### Key Entities
 
-- **源/目标项目**：`user-global` 或已注册项目名，映射到各自 `.agent-manager/` 资产根。
+- **源/目标项目**：`user-global` 或已注册项目名，映射到各自 `.agents-manager/` 资产根。
 - **传输项**：`{ kind, name }` 批量列表。
 
 ## Success Criteria

@@ -3,7 +3,7 @@ description: Karpathy 编码行为准则 — 减少常见 LLM 失误
 alwaysApply: true
 ---
 
-# Karpathy Guidelines（agent-manager）
+# Karpathy Guidelines（agents-manager）
 
 与 `.specify/memory/constitution.md` §3 一致；实现时内化，勿堆砌无关抽象。
 

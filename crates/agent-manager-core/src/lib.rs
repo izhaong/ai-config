@@ -1,4 +1,4 @@
-//! agent-manager 业务逻辑核心。
+//! agents-manager 业务逻辑核心。
 //!
 //! 模块边界(对齐 ARCHITECTURE §3 与 plan §2.2.1):
 //! - `model`     : 内存数据类型(Skill / Rule / McpServer / Agent / SymlinkTarget / SyncStatus / Project / SyncAction)

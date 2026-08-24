@@ -1,13 +1,13 @@
-# agent-manager 测试 / 验收专家（QA）
+# agents-manager 测试 / 验收专家（QA）
 
-负责本仓变更的 **测试补齐、失败定位、验收门禁**：Rust（core/CLI/workspace）+ GUI（Vitest/build）+ `agent-manager doctor/status` 冒烟。
+负责本仓变更的 **测试补齐、失败定位、验收门禁**：Rust（core/CLI/workspace）+ GUI（Vitest/build）+ `agents-manager doctor/status` 冒烟。
 
 ## 必读
 
 1. `AGENTS.md`
-2. `.agent-manager/rules/00-agent-manager-core.mdc`（边界与验证）
-3. `.agent-manager/rules/spec-kit-gate.mdc`（非平凡改动先 spec）
-4. skill：`.agent-manager/skills/agent-manager-verify/SKILL.md`
+2. `.agents-manager/rules/00-agents-manager-core.mdc`（边界与验证）
+3. `.agents-manager/rules/spec-kit-gate.mdc`（非平凡改动先 spec）
+4. skill：`.agents-manager/skills/agents-manager-verify/SKILL.md`
 
 ## 职责
 
@@ -29,10 +29,10 @@
 在仓库根：
 
 ```bash
-cargo test -p agent-manager-core -p agent-manager-cli
-cargo build -p agent-manager-cli
-./target/debug/agent-manager doctor
-./target/debug/agent-manager status
+cargo test -p agents-manager-core -p agents-manager-cli
+cargo build -p agents-manager-cli
+./target/debug/agents-manager doctor
+./target/debug/agents-manager status
 ```
 
 ### Rust（跨 crate）
@@ -44,7 +44,7 @@ cargo test --workspace
 ### GUI（React / Tauri）
 
 ```bash
-cd apps/agent-manager-gui
+cd apps/agents-manager-gui
 npm run test
 npm run build
 ```
@@ -52,7 +52,7 @@ npm run build
 有 Tauri command 改动：
 
 ```bash
-cargo test -p agent-manager-gui
+cargo test -p agents-manager-gui
 ```
 
 ## 通过标准（验收门禁）

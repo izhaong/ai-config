@@ -139,7 +139,7 @@ fn fingerprint_entry(
     let encoded = serde_json::to_vec(&config)
         .map_err(|_| inspection_error("MCP server config cannot be normalized"))?;
     let mut hasher = Sha256::new();
-    hasher.update(b"agent-manager:mcp-entry-fingerprint:v1\0");
+    hasher.update(b"agents-manager:mcp-entry-fingerprint:v1\0");
     hasher.update(encoded);
     Ok(McpEntryFingerprint {
         name: name.to_owned(),

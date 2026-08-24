@@ -1,9 +1,9 @@
-# agent-manager 桌面端 — 技术架构
+# agents-manager 桌面端 — 技术架构
 
 > 状态：Draft v0.1 · 2026-06-12
 > 范围：组件 / 模块边界 / 数据流 / 关键决策"为什么"
 > 上游：`PRD.md`（做什么）·`SCHEDULE.md`（什么时候做）
-> 下游：`.claude/plans/agent-manager/20260612_agent-manager_rust-desktop.plan.md`（具体怎么落地）
+> 下游：`.claude/plans/agents-manager/20260612_agents-manager_rust-desktop.plan.md`（具体怎么落地）
 > 读者：Code Reviewer / 招人 / 一年后回看"为啥这么选"
 
 ---
@@ -14,31 +14,31 @@
 
 ```
                     ┌──────────────────────────────┐
-                    │     agent-managerd (单二进制)     │
+                    │     agents-managerd (单二进制)     │
                     │                              │
    人类 → Tauri  →  │  ┌────────────────────────┐  │  ←─── agent 走
-                    │  │     agent-managerd-gui     │  │      Unix socket
+                    │  │     agents-managerd-gui     │  │      Unix socket
                     │  │   (Tauri 2 + Solid)    │  │      (or HTTP)
                     │  └─────────┬──────────────┘  │
                     │            │                 │
                     │  ┌─────────▼──────────────┐  │
-                    │  │  agent-managerd-daemon     │  │
+                    │  │  agents-managerd-daemon     │  │
                     │  │  (长驻 + 文件监听)      │  │
                     │  └─────────┬──────────────┘  │
                     │            │                 │
                     │  ┌─────────▼──────────────┐  │
-                    │  │  agent-managerd-cli        │  │  ←─── agent 调
-                    │  │  (clap 11 个子命令)    │  │      agent-managerd <sub> --json
+                    │  │  agents-managerd-cli        │  │  ←─── agent 调
+                    │  │  (clap 11 个子命令)    │  │      agents-managerd <sub> --json
                     │  └─────────┬──────────────┘  │
                     │            │                 │
                     │  ┌─────────▼──────────────┐  │
-                    │  │  agent-managerd-core       │  │  ←─── 唯一业务逻辑
+                    │  │  agents-managerd-core       │  │  ←─── 唯一业务逻辑
                     │  │  (no GUI / no Tauri)   │  │
                     │  └────────────────────────┘  │
                     └──────────────────────────────┘
 ```
 
-**核心约束**：`agent-managerd-core` 是**唯一**的业务逻辑归宿，CLI / daemon / GUI 都不重复实现，只**调用**。这样 agent 走 CLI 和人类走 GUI 是**同一份代码**跑出来的结果。
+**核心约束**：`agents-managerd-core` 是**唯一**的业务逻辑归宿，CLI / daemon / GUI 都不重复实现，只**调用**。这样 agent 走 CLI 和人类走 GUI 是**同一份代码**跑出来的结果。
 
 ---
 
@@ -46,15 +46,15 @@
 
 | 组件                | 形态                                           | 何时跑     | 谁启动                        |
 | ------------------- | ---------------------------------------------- | ---------- | ----------------------------- |
-| `agent-managerd-core`   | Rust lib                                       | 编译时     | —                             |
-| `agent-managerd-cli`    | Rust bin                                       | 一次性     | 人类 / agent 调               |
-| `agent-managerd-daemon` | Rust bin（与 cli 同二进制 `agent-managerd watch`） | 长驻       | 用户手动启 / 未来 launchd     |
-| `agent-managerd-gui`    | Tauri 2 应用                                   | 用户开窗时 | 人类点图标 / `agent-managerd gui` |
-| **发布形态**        | 单二进制 `agent-managerd` + macOS `.app`           | —          | —                             |
+| `agents-managerd-core`   | Rust lib                                       | 编译时     | —                             |
+| `agents-managerd-cli`    | Rust bin                                       | 一次性     | 人类 / agent 调               |
+| `agents-managerd-daemon` | Rust bin（与 cli 同二进制 `agents-managerd watch`） | 长驻       | 用户手动启 / 未来 launchd     |
+| `agents-managerd-gui`    | Tauri 2 应用                                   | 用户开窗时 | 人类点图标 / `agents-managerd gui` |
+| **发布形态**        | 单二进制 `agents-managerd` + macOS `.app`           | —          | —                             |
 
 ### 2.1 单二进制 vs 多二进制
 
-**决策**：单二进制分发（`agent-managerd`），子命令分发（`install` / `sync` / `watch` / `gui`）。**不**拆多个 binary。
+**决策**：单二进制分发（`agents-managerd`），子命令分发（`install` / `sync` / `watch` / `gui`）。**不**拆多个 binary。
 
 - **理由 1**：安装 / 升级 / 路径管理只一个
 - **理由 2**：CLI 和 daemon 共享 core lib 零成本
@@ -63,11 +63,11 @@
 
 ---
 
-## 3. 模块边界（agent-managerd-core）
+## 3. 模块边界（agents-managerd-core）
 
 ```
-agent-managerd-core
-├── config         # 读 ~/.config/agent-manager/config.toml（per-user 全局配置）
+agents-managerd-core
+├── config         # 读 ~/.config/agents-manager/config.toml（per-user 全局配置）
 ├── model          # 数据类型：Skill / Rule / McpServer / Agent / SymlinkTarget / SyncStatus
 ├── source         # 资产源解析：扫 skills/ rules/ mcp/ agents/ 目录 → 资产清单
 ├── platform       # 5 个平台适配器：AgentManager + Cursor / Codex / Claude / Hermes
@@ -114,7 +114,7 @@ agent-managerd-core
                              ▼
                     ┌─────────────────┐
                     │ core::sync      │
-                    │ 计算最终要同步的 │   合并全局 + 项目 .agent-manager/
+                    │ 计算最终要同步的 │   合并全局 + 项目 .agents-manager/
                     │ 资产清单         │   应用平台开关
                     └────────┬────────┘
                              │ 产生 target actions
@@ -186,7 +186,7 @@ mcp/servers/<name>.json (逐项)          secrets.env (0600, git 外)
 ```rust
 pub trait PlatformAdapter {
     fn id(&self) -> PlatformId;             // "agentmanager" | "cursor" | "codex" | "claude" | "hermes"
-    fn skills_dir(&self) -> PathBuf;         // ~/.agent-manager/skills 或 ~/.cursor/skills 等
+    fn skills_dir(&self) -> PathBuf;         // ~/.agents-manager/skills 或 ~/.cursor/skills 等
     fn rules_dir(&self) -> PathBuf;
     fn agents_dir(&self) -> PathBuf;
     fn mcp_deploy_path(&self) -> PathBuf;    // mcp.json 或 Hermes config.yaml
@@ -246,7 +246,7 @@ GUI 只调用 projection plan/apply/retract 与 reviewed import bridge；executo
 
 ### 6.4 为啥单二进制分发（不 core lib + 多 binary）
 
-单二进制分发是 §2.1 的反面：拆成 `agent-managerd-core.dll` + `agent-managerd.exe` 之类，**安装路径管理复杂、升级要管多个文件、agent 调起要 PATH 配对**。Rust 静态链接 + LTO 后 ≈ 25MB，**不**是负担。
+单二进制分发是 §2.1 的反面：拆成 `agents-managerd-core.dll` + `agents-managerd.exe` 之类，**安装路径管理复杂、升级要管多个文件、agent 调起要 PATH 配对**。Rust 静态链接 + LTO 后 ≈ 25MB，**不**是负担。
 
 ### 6.5 为啥 Unix socket（不 HTTP / 不命名管道 / 不 Tauri IPC 复用）
 
@@ -336,7 +336,7 @@ pub enum Error {
 
 ### 8.2 日志
 
-- 守护进程：`tracing` + `tracing-subscriber` JSON 输出到 `~/.config/agent-manager/daemon.log`
+- 守护进程：`tracing` + `tracing-subscriber` JSON 输出到 `~/.config/agents-manager/daemon.log`
 - 守护进程**不**把 secrets 写入日志（自定义 `tracing-subscriber` layer 过滤 `secrets.*` 字段）
 - CLI：`--quiet` 时只输完成/失败；不带 `--quiet` 时输人类可读进度
 - GUI：Tauri 前端走自己 console（不开 prod 源）
@@ -349,7 +349,7 @@ pub enum Error {
 
 | 位置                              | secrets 明文 | 备注                      |
 | --------------------------------- | ------------ | ------------------------- |
-| `~/.config/agent-manager/secrets.env` | ✅           | 唯一持久位置              |
+| `~/.config/agents-manager/secrets.env` | ✅           | 唯一持久位置              |
 | 内存中                            | ✅           | 渲染 MCP 时               |
 | SQLite                            | ❌           | 只存"是否设置"元数据      |
 | 日志（daemon.log）                | ❌           | 过滤器拦                  |
@@ -362,7 +362,7 @@ pub enum Error {
 
 - daemon **不**监听 0.0.0.0（只 Unix socket，本机）
 - Unix socket 文件 `0600`，owner = 当前用户
-- `agent-managerd uninstall` 之前要 pid file 检查 daemon 是不是在跑
+- `agents-managerd uninstall` 之前要 pid file 检查 daemon 是不是在跑
 
 ### 9.3 输入校验
 
@@ -377,19 +377,19 @@ pub enum Error {
 ### 10.1 macOS
 
 - `tauri-bundler` 出 `.app` + `.dmg`
-- 默认安装到 `/Applications/agent-managerd.app`
-- CLI 二进制在 `.app/Contents/MacOS/agent-managerd`，symlink 到 `/usr/local/bin/agent-managerd`
+- 默认安装到 `/Applications/agents-managerd.app`
+- CLI 二进制在 `.app/Contents/MacOS/agents-managerd`，symlink 到 `/usr/local/bin/agents-managerd`
 - 未来：launchd plist 实现开机自启（不在 MVP）
 
 ### 10.2 Linux
 
 - AppImage / deb 二选一（先 AppImage，零依赖）
-- CLI 二进制在 `/usr/local/bin/agent-managerd`（deb） 或随 AppImage 走
+- CLI 二进制在 `/usr/local/bin/agents-managerd`（deb） 或随 AppImage 走
 
 ### 10.3 Windows
 
 - MSI / NSIS 二选一
-- CLI 二进制在 `Program Files\agent-managerd\`
+- CLI 二进制在 `Program Files\agents-managerd\`
 - 用户需"开发人员模式"（创建 symlink） 或工具自动 fallback 到 junction
 - best-effort，不在 MVP 重点
 
@@ -401,7 +401,7 @@ pub enum Error {
 | --------------- | ---------------------- | ------------------------------------------------------- | --------------------------------- |
 | 软链            | symlink                | symlink                                                 | junction（fallback）              |
 | Skills 目录     | `~/.cursor/skills` 等  | 同                                                      | `%USERPROFILE%\.cursor\skills` 等 |
-| secrets 路径    | `~/.config/agent-manager/` | `~/.config/agent-manager/` 或 `$XDG_CONFIG_HOME/agent-manager/` | `%APPDATA%\agent-manager\`            |
+| secrets 路径    | `~/.config/agents-manager/` | `~/.config/agents-manager/` 或 `$XDG_CONFIG_HOME/agents-manager/` | `%APPDATA%\agents-manager\`            |
 | Unix socket     | ✅                     | ✅                                                      | ❌（用 TCP localhost 或命名管道） |
 | `notify`        | 完整                   | 完整                                                    | 完整（junctions）                 |
 | Tauri 2 webview | WKWebView（系统自带）  | webkit2gtk（需装）                                      | WebView2（Win10+ 自带）           |

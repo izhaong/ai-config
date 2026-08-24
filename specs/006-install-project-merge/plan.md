@@ -2,7 +2,7 @@
 
 ## 根因
 
-1. `load_context` 把 `AGENT_MANAGER_ROOT=<repo>` 当作资产根 `scan_project_root`，未合并 `~/.agent-manager`
+1. `load_context` 把 `AGENT_MANAGER_ROOT=<repo>` 当作资产根 `scan_project_root`，未合并 `~/.agents-manager`
 2. `entry_matches_token` 用 `/hooks/foo` 子串匹配，误删 `.cursor/hooks/foo` 用户条目
 3. 项目 install 对 commands/skills 等直接 `materialize::deploy` 覆盖已有文件
 
@@ -20,4 +20,4 @@
 - [x] T002 `load_context` / install 作用域修复（验证：lifecycle test）
 - [x] T003 hook merge 仅移除托管条目 + mcpServers 保留 + Claude 共享路径（验证：hook_adapter tests）
 - [x] T004 项目 install 跳过非托管 Create 覆盖（验证：materialize/lifecycle）
-- [x] T005 `cargo test -p agent-manager-core -p agent-manager-cli`
+- [x] T005 `cargo test -p agents-manager-core -p agents-manager-cli`

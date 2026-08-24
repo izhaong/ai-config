@@ -1,5 +1,5 @@
 ---
-description: 按 plan.md ## Todos 实现 agent-manager 功能并验证
+description: 按 plan.md ## Todos 实现 agents-manager 功能并验证
 ---
 
 ## User Input
@@ -18,7 +18,7 @@ $ARGUMENTS
 2. **Checklist**（若 `FEATURE_DIR/checklists/` 存在）：统计未完成项。
 3. **按 `plan.md ## Todos` 顺序实现**；遵守 rules 与 constitution；core 优先。
 4. **每完成一项**：`plan.md` 勾 `- [x]`；更新会话 Todo（若使用）。
-5. **验证**：`/agent-manager-verify` 或 skill `agent-manager-verify`。
+5. **验证**：`/agents-manager-verify` 或 skill `agents-manager-verify`。
 6. **文档**：`CHANGELOG.md`；API 变化时 `AGENTS.md`。
 
 ## 停止条件

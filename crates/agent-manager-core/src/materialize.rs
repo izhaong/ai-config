@@ -21,7 +21,7 @@ use crate::path_independence;
 use crate::paths;
 use crate::sync::link_src_for_create;
 
-const MARKER_NAME: &str = ".agent-manager-deploy.json";
+const MARKER_NAME: &str = ".agents-manager-deploy.json";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeployHealth {
@@ -82,7 +82,7 @@ fn has_copy_marker(dest: &Utf8Path) -> bool {
     }
 }
 
-/// 是否由本工具下发（`.agent-manager-deploy.json` 或 legacy symlink）。
+/// 是否由本工具下发（`.agents-manager-deploy.json` 或 legacy symlink）。
 pub fn is_managed_deploy(dest: &Utf8Path) -> bool {
     if is_symlink_entry(dest) {
         return true;
@@ -123,7 +123,7 @@ pub fn copy_tree(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
 ///
 /// **硬约束**：
 /// - **永远写硬拷贝**（实体复制；不生成 symlink / junction / Unix 硬链接）。
-/// - agent-manager 源（`~/.agent-manager` / `project/.agent-manager`）与各 IDE 平台目录 **互不共享 inode**；
+/// - agents-manager 源（`~/.agents-manager` / `project/.agents-manager`）与各 IDE 平台目录 **互不共享 inode**；
 ///   删/改某一平台副本不影响源，也不影响其它平台。
 /// - MCP：`mcp.json` 为单文件 JSON，下发前 `ensure_platform_mcp_independent` 断开与源的链接。
 pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
@@ -138,7 +138,7 @@ pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
             src: src.to_string(),
             dest: dest.to_string(),
             reason: format!("源不存在: {src}"),
-            hint: "确认资产仍在 ~/.agent-manager 或项目 .agent-manager 中".to_string(),
+            hint: "确认资产仍在 ~/.agents-manager 或项目 .agents-manager 中".to_string(),
         });
     }
 
@@ -226,7 +226,7 @@ pub fn retract_linked_to(dest: &Utf8Path, expected_src: &Utf8Path) -> Result<(),
 
 fn unowned_retract_error(dest: &Utf8Path) -> CoreError {
     CoreError::LinkFailed {
-        src: "agent-manager managed deploy".to_owned(),
+        src: "agents-manager managed deploy".to_owned(),
         dest: dest.to_string(),
         reason: "目标不是本工具下发：没有 marker 或精确匹配的 legacy symlink".to_owned(),
         hint: "保留该外部资产；如需接管，请先通过显式迁移生成计划".to_owned(),
@@ -316,7 +316,7 @@ pub fn check(dest: &Utf8Path, expected_src: &Utf8Path) -> DeployHealth {
     DeployHealth::Unlinked
 }
 
-/// 平台 `dest` 是否与 agent-manager 源 `src` **同名路径下内容一致**（用于图标点亮）。
+/// 平台 `dest` 是否与 agents-manager 源 `src` **同名路径下内容一致**（用于图标点亮）。
 pub fn content_matches_source(kind: AssetKind, src: &Utf8Path, dest: &Utf8Path) -> bool {
     let link_src = link_src_for_create(kind, src);
     content_matches_source_for_dest(&link_src, dest)

@@ -8,8 +8,8 @@ vi.mock("react-i18next", () => ({
 }));
 
 const VALID_JSON = `{
-  "agent-manager": {
-    "command": "agent-manager",
+  "agents-manager": {
+    "command": "agents-manager",
     "args": ["serve"]
   }
 }`;
@@ -39,8 +39,8 @@ describe("AddMcpModal", () => {
 
     expect(onSubmit).toHaveBeenCalledTimes(1);
     expect(onSubmit).toHaveBeenCalledWith(
-      "agent-manager",
-      expect.stringContaining('"command": "agent-manager"'),
+      "agents-manager",
+      expect.stringContaining('"command": "agents-manager"'),
     );
   });
 

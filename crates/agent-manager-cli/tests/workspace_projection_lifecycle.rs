@@ -10,7 +10,7 @@ use assert_cmd::Command;
 use serde_json::Value;
 use tempfile::TempDir;
 
-const BIN: &str = "agent-manager";
+const BIN: &str = "agents-manager";
 
 struct WorkspaceFixture {
     home: TempDir,
@@ -28,7 +28,7 @@ impl WorkspaceFixture {
         )
         .expect("workspace members");
         for member in ["one", "two"] {
-            let asset_root = root.join(format!("members/{member}/.agent-manager"));
+            let asset_root = root.join(format!("members/{member}/.agents-manager"));
             write(
                 &asset_root.join(format!("skills/{member}/SKILL.md")),
                 "---\nname: workspace skill\n---\ncanonical member skill\n",
@@ -77,7 +77,7 @@ impl WorkspaceFixture {
 
     fn configure_three_layer_overlay(&self) {
         for member in ["one", "two"] {
-            let assets = self.member(member).join(".agent-manager");
+            let assets = self.member(member).join(".agents-manager");
             fs::remove_dir_all(&assets).expect("remove default member assets");
         }
 
@@ -85,25 +85,25 @@ impl WorkspaceFixture {
             &self
                 .home
                 .path()
-                .join(".agent-manager/skills/global-default/SKILL.md"),
+                .join(".agents-manager/skills/global-default/SKILL.md"),
             "---\nname: global default\n---\nglobal default\n",
         );
         write(
             &self
                 .workspace
                 .path()
-                .join(".agent-manager/skills/shared/SKILL.md"),
+                .join(".agents-manager/skills/shared/SKILL.md"),
             "---\nname: workspace shared\n---\nworkspace shared\n",
         );
         write(
             &self
                 .workspace
                 .path()
-                .join(".agent-manager/skills/workspace-default/SKILL.md"),
+                .join(".agents-manager/skills/workspace-default/SKILL.md"),
             "---\nname: workspace default\n---\nworkspace default\n",
         );
         write(
-            &self.member("one").join(".agent-manager/skills/shared/SKILL.md"),
+            &self.member("one").join(".agents-manager/skills/shared/SKILL.md"),
             "---\nname: project shared\n---\nproject shared\n",
         );
     }
@@ -226,7 +226,7 @@ fn workspace_plan_overlays_workspace_defaults_for_local_and_empty_members_withou
         "one",
         "shared",
         "project",
-        &fixture.member("one").join(".agent-manager/skills/shared"),
+        &fixture.member("one").join(".agents-manager/skills/shared"),
     );
     assert_source_and_member_target(
         one,
@@ -236,14 +236,14 @@ fn workspace_plan_overlays_workspace_defaults_for_local_and_empty_members_withou
         &fixture
             .workspace
             .path()
-            .join(".agent-manager/skills/workspace-default"),
+            .join(".agents-manager/skills/workspace-default"),
     );
     assert_source_and_member_target(
         one,
         "one",
         "global-default",
         "global",
-        &fixture.home.path().join(".agent-manager/skills/global-default"),
+        &fixture.home.path().join(".agents-manager/skills/global-default"),
     );
 
     let two = member("two");
@@ -252,7 +252,7 @@ fn workspace_plan_overlays_workspace_defaults_for_local_and_empty_members_withou
         "two",
         "shared",
         "workspace",
-        &fixture.workspace.path().join(".agent-manager/skills/shared"),
+        &fixture.workspace.path().join(".agents-manager/skills/shared"),
     );
     assert_source_and_member_target(
         two,
@@ -262,14 +262,14 @@ fn workspace_plan_overlays_workspace_defaults_for_local_and_empty_members_withou
         &fixture
             .workspace
             .path()
-            .join(".agent-manager/skills/workspace-default"),
+            .join(".agents-manager/skills/workspace-default"),
     );
     assert_source_and_member_target(
         two,
         "two",
         "global-default",
         "global",
-        &fixture.home.path().join(".agent-manager/skills/global-default"),
+        &fixture.home.path().join(".agents-manager/skills/global-default"),
     );
     assert!(
         !fixture.home.path().join(".agents").exists()
@@ -277,7 +277,7 @@ fn workspace_plan_overlays_workspace_defaults_for_local_and_empty_members_withou
             && !fixture
                 .home
                 .path()
-                .join(".agent-manager/projection-ledger.sqlite")
+                .join(".agents-manager/projection-ledger.sqlite")
                 .exists(),
         "plan-only workspace overlay must not write HOME targets or a ledger"
     );
@@ -315,12 +315,12 @@ fn workspace_apply_uses_three_layer_overlay_for_each_member_without_writing_home
             "member {member} must project {skill} from its effective source"
         );
     };
-    let workspace_assets = fixture.workspace.path().join(".agent-manager/skills");
-    let global_assets = fixture.home.path().join(".agent-manager/skills");
+    let workspace_assets = fixture.workspace.path().join(".agents-manager/skills");
+    let global_assets = fixture.home.path().join(".agents-manager/skills");
     assert_member_skill_link(
         "one",
         "shared",
-        &fixture.member("one").join(".agent-manager/skills/shared"),
+        &fixture.member("one").join(".agents-manager/skills/shared"),
     );
     assert_member_skill_link("two", "shared", &workspace_assets.join("shared"));
     for member in ["one", "two"] {
@@ -347,7 +347,7 @@ fn workspace_apply_uses_three_layer_overlay_for_each_member_without_writing_home
             && !fixture
                 .home
                 .path()
-                .join(".agent-manager/projection-ledger.sqlite")
+                .join(".agents-manager/projection-ledger.sqlite")
                 .exists(),
         "workspace apply must not create HOME targets or a ledger"
     );
@@ -437,12 +437,12 @@ fn workspace_runtime_failure_reports_rollback_and_not_applied_members_with_exit_
         write(
             &fixture
                 .member("one")
-                .join(format!(".agent-manager/skills/{index:04}-bulk/SKILL.md")),
+                .join(format!(".agents-manager/skills/{index:04}-bulk/SKILL.md")),
             "---\nname: bulk\n---\ncanonical bulk skill\n",
         );
     }
     let first_target = fixture.member("one").join(".agents/skills/0000-bulk");
-    let second_member_source = fixture.member("two").join(".agent-manager/skills/two/SKILL.md");
+    let second_member_source = fixture.member("two").join(".agents-manager/skills/two/SKILL.md");
     let mutation = thread::spawn({
         let first_target = first_target.clone();
         let second_member_source = second_member_source.clone();

@@ -7,8 +7,8 @@ describe("defaultProjectNameFromPath", () => {
     expect(defaultProjectNameFromPath("/Users/me/Code/my-repo")).toBe(
       "my-repo",
     );
-    expect(defaultProjectNameFromPath("C:\\dev\\agent-manager\\")).toBe(
-      "agent-manager",
+    expect(defaultProjectNameFromPath("C:\\dev\\agents-manager\\")).toBe(
+      "agents-manager",
     );
   });
 

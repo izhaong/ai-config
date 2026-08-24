@@ -1,11 +1,11 @@
-//! 5 平台适配器:agent-manager 资产源 + 4 个 IDE 下发目标。
+//! 5 平台适配器:agents-manager 资产源 + 4 个 IDE 下发目标。
 //!
 //! **Skills 路径上游参考**：[vercel-labs/skills](https://github.com/vercel-labs/skills) `src/agents.ts`；
 //! 文档 `docs/reference/vercel-skills-agent-paths.md`，快照 `manifests/vercel-skills-agents.snapshot.json`。
 //! 上游变更时先更新参考文档/快照，再评估是否改本模块。
 //!
 //! 目录约定(PRD §7.1 + ARCHITECTURE §4.3 + §5):
-//! - **agent-manager**: `<asset_root>/skills|rules|agents/` + `<asset_root>/mcp.json`
+//! - **agents-manager**: `<asset_root>/skills|rules|agents/` + `<asset_root>/mcp.json`
 //! - **Cursor**: `<base>/.cursor/skills|rules|agents|commands/` + `mcp.json`
 //! - **Codex**: `<base>/.codex/skills|rules|subagents/` + `mcp.json`（无斜杠 commands）
 //! - **Claude**: `<base>/.claude/skills|rules|subagents|commands/` + `mcp.json`
@@ -74,7 +74,7 @@ pub fn default_hermes_skills_dir() -> Utf8PathBuf {
     crate::hermes_config::default_hermes_skills_dir_at(&home())
 }
 
-/// agent-manager 写入目标：优先 `HERMES_SKILLS_DIR`，退回官方默认。
+/// agents-manager 写入目标：优先 `HERMES_SKILLS_DIR`，退回官方默认。
 fn hermes_skills_deploy_dir() -> Utf8PathBuf {
     std::env::var("HERMES_SKILLS_DIR")
         .ok()
@@ -94,7 +94,7 @@ pub fn supports_at_scope(
         .unwrap_or(false)
 }
 
-// ── agent-manager（资产源）────────────────────────────────────────────
+// ── agents-manager（资产源）────────────────────────────────────────────
 
 struct AgentManagerAdapter {
     asset_root: Utf8PathBuf,
@@ -288,7 +288,7 @@ pub fn for_id(id: PlatformId) -> Result<Box<dyn PlatformAdapter>, CoreError> {
     for_scope(id, &home())
 }
 
-/// GUI / 浏览用 5 平台（含 agent-manager 源），固定顺序。
+/// GUI / 浏览用 5 平台（含 agents-manager 源），固定顺序。
 pub fn ui_platform_ids() -> [PlatformId; 5] {
     [
         PlatformId::AgentManager,
@@ -309,7 +309,7 @@ pub fn deploy_platform_ids() -> [PlatformId; 4] {
     ]
 }
 
-/// 按作用域 + 资产根解析平台目录（agent-manager 读 `asset_root`，其余读 `deploy_base`）。
+/// 按作用域 + 资产根解析平台目录（agents-manager 读 `asset_root`，其余读 `deploy_base`）。
 pub fn for_scope_with_asset(
     id: PlatformId,
     deploy_base: &camino::Utf8Path,
@@ -353,14 +353,14 @@ pub fn kind_asset_path(
 ///
 /// - `deploy_base == $HOME`:与 `for_id` 相同(Hermes 尊重 `HERMES_SKILLS_DIR`)。
 /// - 项目作用域:`deploy_base` 为仓库根,平台目录在 `<repo>/.cursor` 等。
-/// - **不含** agent-manager；请用 `for_scope_with_asset`。
+/// - **不含** agents-manager；请用 `for_scope_with_asset`。
 pub fn for_scope(
     id: PlatformId,
     deploy_base: &camino::Utf8Path,
 ) -> Result<Box<dyn PlatformAdapter>, CoreError> {
     if id == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
-            "agent-manager 平台需 asset_root，请使用 for_scope_with_asset".into(),
+            "agents-manager 平台需 asset_root，请使用 for_scope_with_asset".into(),
         ));
     }
     if deploy_base == home() {
@@ -426,7 +426,7 @@ pub fn asset_kind_label(kind: AssetKind) -> &'static str {
 /// 解析平台字符串（含别名）。
 pub fn parse_platform_str(s: &str) -> Result<PlatformId, CoreError> {
     match s {
-        "agentmanager" | "agent-manager" | "AgentManager" | "am" | "ac" => {
+        "agentmanager" | "agents-manager" | "AgentManager" | "am" | "ac" => {
             Ok(PlatformId::AgentManager)
         }
         "cursor" | "Cursor" | "cu" => Ok(PlatformId::Cursor),

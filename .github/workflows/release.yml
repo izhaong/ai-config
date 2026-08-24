@@ -78,18 +78,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build -p agent-manager-cli --release --target "${{ matrix.target }}"
+          cargo build -p agents-manager-cli --release --target "${{ matrix.target }}"
           VERSION="${{ needs.validate.outputs.version }}"
           TRIPLE="${{ matrix.target }}"
           mkdir -p artifacts/cli
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp "target/${TRIPLE}/release/agent-manager.exe" "artifacts/cli/"
-            powershell Compress-Archive -Path "artifacts/cli/agent-manager.exe" -DestinationPath "artifacts/cli/agent-manager-${VERSION}-${TRIPLE}.zip" -Force
-            rm "artifacts/cli/agent-manager.exe"
+            cp "target/${TRIPLE}/release/agents-manager.exe" "artifacts/cli/"
+            powershell Compress-Archive -Path "artifacts/cli/agents-manager.exe" -DestinationPath "artifacts/cli/agents-manager-${VERSION}-${TRIPLE}.zip" -Force
+            rm "artifacts/cli/agents-manager.exe"
           else
-            cp "target/${TRIPLE}/release/agent-manager" "artifacts/cli/agent-manager"
-            tar -C artifacts/cli -czf "artifacts/cli/agent-manager-${VERSION}-${TRIPLE}.tar.gz" agent-manager
-            rm "artifacts/cli/agent-manager"
+            cp "target/${TRIPLE}/release/agents-manager" "artifacts/cli/agents-manager"
+            tar -C artifacts/cli -czf "artifacts/cli/agents-manager-${VERSION}-${TRIPLE}.tar.gz" agents-manager
+            rm "artifacts/cli/agents-manager"
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -119,7 +119,7 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: apps/agent-manager-gui/package-lock.json
+          cache-dependency-path: apps/agents-manager-gui/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -134,7 +134,7 @@ jobs:
             patchelf \
             libssl-dev
       - name: Install frontend dependencies
-        working-directory: apps/agent-manager-gui
+        working-directory: apps/agents-manager-gui
         run: npm ci
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -142,11 +142,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          projectPath: apps/agent-manager-gui
+          projectPath: apps/agents-manager-gui
           tauriScript: npm run tauri
           args: --target ${{ matrix.target }}
           tagName: ${{ needs.validate.outputs.tag }}
-          releaseName: agent-manager v__VERSION__
+          releaseName: agents-manager v__VERSION__
           releaseBody: |
             Automated release for ${{ needs.validate.outputs.tag }}.
             Full notes are attached when the release job completes.
@@ -174,15 +174,15 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "# agent-manager v${{ needs.validate.outputs.version }}"
+            echo "# agents-manager v${{ needs.validate.outputs.version }}"
             echo
             cat release-notes.md
             echo
             echo "## Downloads"
             echo
             echo "### CLI"
-            echo "- Linux / macOS: \`agent-manager-*-*.tar.gz\`"
-            echo "- Windows: \`agent-manager-*-*.zip\`"
+            echo "- Linux / macOS: \`agents-manager-*-*.tar.gz\`"
+            echo "- Windows: \`agents-manager-*-*.zip\`"
             echo
             echo "### Desktop (Tauri)"
             echo "- Platform installers are attached by the Tauri build (deb/app/dmg/msi/exe)."
@@ -199,7 +199,7 @@ jobs:
           if ((${#files[@]})); then
             gh release upload "$TAG" "${files[@]}" --clobber
           fi
-          gh release edit "$TAG" --title "agent-manager v${{ needs.validate.outputs.version }}" --notes-file release-body.md --draft=false
+          gh release edit "$TAG" --title "agents-manager v${{ needs.validate.outputs.version }}" --notes-file release-body.md --draft=false
       - name: Verify updater manifest on release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

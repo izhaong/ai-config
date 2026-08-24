@@ -1,4 +1,4 @@
-//! `agent-manager serve` — MCP stdio 服务器，供 IDE Agent 外部控制资产。
+//! `agents-manager serve` — MCP stdio 服务器，供 IDE Agent 外部控制资产。
 
 use std::sync::Arc;
 
@@ -148,7 +148,7 @@ impl AgentManagerMcpServer {
         ))
     }
 
-    #[tool(description = "保存单条资产正文到 agent-manager 源目录")]
+    #[tool(description = "保存单条资产正文到 agents-manager 源目录")]
     async fn agent_manager_save(
         &self,
         Parameters(params): Parameters<SaveParam>,
@@ -206,14 +206,14 @@ impl AgentManagerMcpServer {
 
 #[tool_handler(
     router = self.tool_router,
-    name = "agent-manager",
-    instructions = "Manage agent-manager assets across Cursor, Codex, Claude Code, and Hermes. Prefer agent_manager_doctor before sync/deploy. Never expose secrets values."
+    name = "agents-manager",
+    instructions = "Manage agents-manager assets across Cursor, Codex, Claude Code, and Hermes. Prefer agent_manager_doctor before sync/deploy. Never expose secrets values."
 )]
 impl ServerHandler for AgentManagerMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "agent-manager MCP: list/show/save/deploy/retract assets; doctor/status/sync for health and distribution.",
+                "agents-manager MCP: list/show/save/deploy/retract assets; doctor/status/sync for health and distribution.",
             )
     }
 }
@@ -287,7 +287,7 @@ mod tests {
 
     fn projection_fixture() -> TempDir {
         let repo = TempDir::new().expect("temporary project");
-        let source = repo.path().join(".agent-manager");
+        let source = repo.path().join(".agents-manager");
         fs::create_dir_all(source.join("skills/demo")).expect("skill parent");
         fs::write(source.join("skills/demo/SKILL.md"), "# canonical demo\n")
             .expect("canonical skill");
@@ -454,7 +454,7 @@ mod tests {
         let _secret_dir = EnvVarGuard::set("AGENT_MANAGER_SECRETS_DIR", secrets.path());
 
         let repo = projection_fixture();
-        let source = repo.path().join(".agent-manager/mcp/servers/catalog.json");
+        let source = repo.path().join(".agents-manager/mcp/servers/catalog.json");
         fs::create_dir_all(source.parent().expect("MCP source parent")).expect("MCP source parent");
         fs::write(
             source,

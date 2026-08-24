@@ -1,4 +1,4 @@
-# agent-manager 桌面端 — 产品设计稿
+# agents-manager 桌面端 — 产品设计稿
 
 > 状态：Draft v0.2 · 2026-06-21（附录 §19 对齐 Phase 3 已实现 GUI）
 > 范围：GUI 信息架构 / 组件清单 / 状态枚举 / 交互流程
@@ -10,7 +10,7 @@
 > AI 不能画 Figma，也不能判断间距 / 配色 / 留白。本文档只覆盖**信息架构层**
 > —— 屏幕长什么样、状态有几种、点哪跳哪。视觉层（字号、间距、配色）由人在
 > 真实窗口里走查，AI 据此**调 CSS 变量**，不替人做审美决策。
-> 低保真可点原型在 `crates/agent-managerd-gui/fixtures/` 下，**人**滚动鼠标看完，
+> 低保真可点原型在 `crates/agents-managerd-gui/fixtures/` 下，**人**滚动鼠标看完，
 > AI 改代码。
 
 ---
@@ -18,7 +18,7 @@
 ## 1. 设计原则
 
 1. **三栏是常态，不是变体** — 项目 / 资产类型 / 内容；用户定位一次后不会跳栏
-2. **per-item × per-platform 状态徽标是核心** — 一个条目在 **5 个平台**（含 agent-manager）什么状态，肉眼能扫
+2. **per-item × per-platform 状态徽标是核心** — 一个条目在 **5 个平台**（含 agents-manager）什么状态，肉眼能扫
 3. **MCP 是表，不是 JSON** — 一行一条 server；JSON 编辑器**不**出现在产品表面
 4. **secrets 永不明文** — 任何位置、任何状态、任何字体大小下，明文值不可达
 5. **守护进程状态常显** — 用户随时知道 daemon 在不在跑
@@ -50,7 +50,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  agent-managerd  │  [▾ user-global]  Rules / Skills / MCP / Agents          ⚙ │
+│  agents-managerd  │  [▾ user-global]  Rules / Skills / MCP / Agents          ⚙ │
 │              │  ─────────────────────────────────────────────────────── │
 │              │  ● daemon running    branch: develop    ↑0 ↓0            │
 ├──────────────┼──────────────────────────────────────────────────────────┤
@@ -60,7 +60,7 @@
 │ ● user-global│  │   归档 agent 会话到 ~/Notes/                          │ │
 │   (全局)     │  ├─────────────────────────────────────────────────────┤ │
 │   zh-cloud   │  │ public-docs-blog-desensitize           Cc H +X ◯◯◯◯ │ │
-│   agent-manager  │  │   脱敏写 public-docs 博客                             │ │
+│   agents-manager  │  │   脱敏写 public-docs 博客                             │ │
 │   count-web  │  ├─────────────────────────────────────────────────────┤ │
 │ + 新项目     │  │ gitea-pr-lifecycle                     Cc H +X ◯◯◯◯ │ │
 │              │  │   Gitea PR 收尾                                       │ │
@@ -97,7 +97,7 @@
 | **missing** | 应对照缺失 | 源侧应有但平台无 | deploy |
 | **unsupported** | 灰 + 禁用 | 平台不支持该资产类型 | 无操作 |
 
-平台顺序（固定）：**agent-manager** → Cursor → Codex → Claude → Hermes。
+平台顺序（固定）：**agents-manager** → Cursor → Codex → Claude → Hermes。
 
 列表行右侧控件顺序：**五平台 icon** → **更新（↻）** → **删除（🗑）**。详见 PRD §3.5。
 
@@ -291,7 +291,7 @@
 │      → tools: cursor, codex, claude                                       │
 │  ☑ zh-cloud-service      ~/Code/zh-cloud/zh-cloud-service                 │
 │      → tools: cursor, claude                                              │
-│  ☐ agent-manager             ~/Code/agent-manager                                 │
+│  ☐ agents-manager             ~/Code/agents-manager                                 │
 │      → tools: cursor, claude, codex, hermes                               │
 │  ☐ notes-public          ~/Code/notes-public                              │
 │      → tools: —                                                           │
@@ -322,7 +322,7 @@
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Status: ● linked                                                         │
 │  Target: ~/.cursor/skills/obsidian-internal-archive                      │
-│  Source: ~/Code/zh-cloud/agent-manager/skills/obsidian-internal-archive      │
+│  Source: ~/Code/zh-cloud/agents-manager/skills/obsidian-internal-archive      │
 │  Last sync: 2026-06-12 14:23:01 (2 hours ago)                             │
 │                                                                            │
 │  Recent events:                                                            │
@@ -364,9 +364,9 @@
 │     Status: broken (target was removed)                                  │
 │     Fix: [Re-link]                                                       │
 │                                                                            │
-│  ⚠ project: count-web has no .agent-manager/                                 │
+│  ⚠ project: count-web has no .agents-manager/                                 │
 │     No per-project overrides registered                                  │
-│     Fix: [Create .agent-manager/]   [Ignore]                                  │
+│     Fix: [Create .agents-manager/]   [Ignore]                                  │
 │                                                                            │
 │  All other 12 checks passed                                              │
 │  [Re-run doctor]                                                          │
@@ -394,7 +394,7 @@
 │  Daemon                                                                    │
 │  ──────                                                                   │
 │  Status: ● running (pid 12345)                                            │
-│  Socket: ~/.config/agent-manager/daemon.sock                                  │
+│  Socket: ~/.config/agents-manager/daemon.sock                                  │
 │  [Stop daemon]   [Restart daemon]   [Open daemon log]                     │
 │                                                                            │
 │  Theme                                                                     │
@@ -409,7 +409,7 @@
 │                                                                            │
 │  About                                                                     │
 │  ─────                                                                    │
-│  agent-managerd v0.1.0 (M6 GA)                                                │
+│  agents-managerd v0.1.0 (M6 GA)                                                │
 │  core: 0.1.0   gui: 0.1.0   daemon: 0.1.0                                │
 │  Built: 2026-06-12                                                         │
 │                                                                            │
@@ -428,7 +428,7 @@
 ## 11. 组件清单（前端代码组织）
 
 ```
-crates/agent-managerd-gui/src/
+crates/agents-managerd-gui/src/
 ├── app.tsx                  # 根：路由 + 全局状态
 ├── routes/
 │   ├── MainBrowser.tsx      # S1
@@ -599,7 +599,7 @@ S3 用户编辑一行
 | secrets bootstrap 一次性按钮 | secrets 列表 + Set/Unset |
 | explorer 路由 | 单窗口 + modal/drawer |
 | TypeScript + Next.js 15 | Solid + Tauri 2 |
-| SQLite DB 在 `webui/data/` | SQLite 在 `~/.local/share/agent-manager/` |
+| SQLite DB 在 `webui/data/` | SQLite 在 `~/.local/share/agents-manager/` |
 
 ---
 
@@ -622,7 +622,7 @@ S3 用户编辑一行
 
 ## 19. 附录：Phase 3 已实现 GUI（与线框差异）
 
-当前 `apps/agent-manager-gui` 已落地行为（PRD v0.5 §3.5 为权威产品语义）：
+当前 `apps/agents-manager-gui` 已落地行为（PRD v0.5 §3.5 为权威产品语义）：
 
 ### 19.1 布局
 
@@ -646,8 +646,8 @@ S3 用户编辑一行
 
 ### 19.3 关键交互规则
 
-1. **唯一 source**：agent-manager 是唯一可编辑资产源；平台目录只保存投影或外部盘点结果。
-2. **浏览当前平台不收回**：`activePlatform === plat` 且非源浏览 / 或源浏览 agent-manager 时 skip。
+1. **唯一 source**：agents-manager 是唯一可编辑资产源；平台目录只保存投影或外部盘点结果。
+2. **浏览当前平台不收回**：`activePlatform === plat` 且非源浏览 / 或源浏览 agents-manager 时 skip。
 3. **状态**：managed、foreign、conflict、drifted 与 unsupported 由 source-first planner 和 ledger 证明。
 4. **导入**：平台资产只能经 plan digest 与单个 action ID 写入 source；不支持跨平台拷贝。
 
@@ -656,6 +656,6 @@ S3 用户编辑一行
 | 层 | 路径 |
 | --- | --- |
 | 产品语义 | `docs/product/PRD.md` §3.5 |
-| Core | `crates/agent-manager-core/src/projection/`、`platform_scan.rs`（只读 inventory） |
-| GUI | `apps/agent-manager-gui/src/utils/entryPlatformToggle.ts`、`hooks/useAssetOperations.ts` |
+| Core | `crates/agents-manager-core/src/projection/`、`platform_scan.rs`（只读 inventory） |
+| GUI | `apps/agents-manager-gui/src/utils/entryPlatformToggle.ts`、`hooks/useAssetOperations.ts` |
 | 上游路径 | `docs/reference/vercel-skills-agent-paths.md` |

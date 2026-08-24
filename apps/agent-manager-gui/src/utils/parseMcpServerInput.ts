@@ -4,8 +4,8 @@ export interface ParsedMcpServer {
 }
 
 const EXAMPLE = `{
-  "agent-manager": {
-    "command": "agent-manager",
+  "agents-manager": {
+    "command": "agents-manager",
     "args": ["serve"]
   }
 }`;

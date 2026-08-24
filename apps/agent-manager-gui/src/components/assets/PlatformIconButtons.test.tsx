@@ -20,7 +20,7 @@ vi.mock("../../platformIcons", () => ({
     hermes: "/hermes.png",
   },
   PLATFORM_NAME: {
-    agentmanager: "agent-manager",
+    agentmanager: "agents-manager",
     cursor: "Cursor",
     codex: "Codex",
     claude: "Claude",

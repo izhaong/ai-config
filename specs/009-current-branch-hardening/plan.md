@@ -6,11 +6,11 @@
 
 本计划审查当前 feature 分支与工作区未提交变更，修复已证实的质量退化，而不重写 source-first 的平台所有权模型。核心安全语义保持不变：没有 marker 或 legacy symlink 的同内容副本为 `synced`，不可作为普通资产收回。
 
-范围包括被意外清空的 tracked Hook 配置、GUI 平台垃圾桶的 core 能力对齐、共享列表布局的 E2E 选择器恢复、已存在的 GUI lint 错误，以及 Rust 单测的进程级环境变量隔离。默认平台为 agent-manager 和详情抽屉滚动修复保留并回归验证。
+范围包括被意外清空的 tracked Hook 配置、GUI 平台垃圾桶的 core 能力对齐、共享列表布局的 E2E 选择器恢复、已存在的 GUI lint 错误，以及 Rust 单测的进程级环境变量隔离。默认平台为 agents-manager 和详情抽屉滚动修复保留并回归验证。
 
 ## 背景与根因
 
-- `.cursor/hooks.json` 当前仅留下空 `hooks` 对象，删除了 HEAD 中所有 `managedBy: agent-manager` 的 Hook 绑定，且产生尾随空格；依据 hooks asset layout，它是平台投影，不能以空白内容替代受管绑定。
+- `.cursor/hooks.json` 当前仅留下空 `hooks` 对象，删除了 HEAD 中所有 `managedBy: agents-manager` 的 Hook 绑定，且产生尾随空格；依据 hooks asset layout，它是平台投影，不能以空白内容替代受管绑定。
 - `materialize::retract` 明确拒绝没有 ownership record 的 MCP，而 `canRemoveFromPlatform` 只看状态，可能在 MCP 为 `linked` 时暴露垃圾桶。
 - `ListColCheck` 和 `ListColActions` 的组件重构移除了 `list-col-check`、`list-col-actions` 语义 class，现有 Playwright 布局测试等待这些 class 而超时。
 - ESLint 报告 `buttonVariants` 的 Fast Refresh 导出、未使用的 `activePlatform` 参数，以及 `useAssetBrowser` 中由 `?? []` 导致的 memo dependency 警告。
@@ -30,14 +30,14 @@
 | 项 | 值 |
 | --- | --- |
 | Language | Rust + TypeScript |
-| Core crate | `crates/agent-manager-core` |
+| Core crate | `crates/agents-manager-core` |
 | GUI | React 19 + Tauri 2 + Vitest + Playwright |
 | 关键文件 | `materialize.rs`、`platform_scan.rs`、`types.ts`、`ListRowShell.tsx` |
 | 测试 | Cargo test、Clippy、ESLint、Vitest、Playwright |
 
 ## Constitution Check
 
-- [x] 业务所有权语义保留在 `agent-manager-core`；GUI 只根据已知 core 能力决定是否启用操作。
+- [x] 业务所有权语义保留在 `agents-manager-core`；GUI 只根据已知 core 能力决定是否启用操作。
 - [x] 不新增平台路径或同步规则。
 - [x] 不改密钥、用户资产或外部平台实际文件。
 - [x] 每项变更有对应测试或工具验证。
@@ -47,7 +47,7 @@
 | 文件 | 变更类型 | 说明 |
 | --- | --- | --- |
 | `.cursor/hooks.json` | 恢复配置 | 恢复被误删的 tracked Hook 投影 |
-| `.cursor/skills/agent-manager-delivery/SKILL.md` | 恢复规则 | 恢复详细 Plan 门禁 |
+| `.cursor/skills/agents-manager-delivery/SKILL.md` | 恢复规则 | 恢复详细 Plan 门禁 |
 | `apps/.../types.ts` | GUI predicate | 删除能力按 asset kind 与状态判定 |
 | `apps/.../ListRowShell.tsx` | 语义 class | 恢复 E2E 选择器 |
 | `apps/.../button.tsx` | lint | 移除无消费者的导出 |
@@ -68,7 +68,7 @@
 
 ### 配置恢复
 
-恢复 HEAD 中的 tracked `.cursor/hooks.json` 和仓库 delivery skill 详细度文本；不运行 sync、不修改 `~/.agent-manager`，避免越过用户资产边界。
+恢复 HEAD 中的 tracked `.cursor/hooks.json` 和仓库 delivery skill 详细度文本；不运行 sync、不修改 `~/.agents-manager`，避免越过用户资产边界。
 
 ## 边界与风险
 
@@ -88,7 +88,7 @@
 2. `platform_scan.rs`：保持同内容无 marker 副本为 `Synced`。
 3. `npm run lint`：0 error、0 warning。
 4. `npm run test`、`npm run build`、`npm run test:e2e`。
-5. `cargo test -p agent-manager-core -p agent-manager-cli` 与 `cargo clippy -p agent-manager-core -p agent-manager-cli -- -D warnings`。
+5. `cargo test -p agents-manager-core -p agents-manager-cli` 与 `cargo clippy -p agents-manager-core -p agents-manager-cli -- -D warnings`。
 
 ## 回滚
 
@@ -105,5 +105,5 @@
 
 ## 验证记录
 
-- 2026-07-16：`cargo test -p agent-manager-core -p agent-manager-cli`（0 failures）、`cargo clippy -p agent-manager-core -p agent-manager-cli -- -D warnings`（exit 0）、`cargo fmt --check`（exit 0）。
+- 2026-07-16：`cargo test -p agents-manager-core -p agents-manager-cli`（0 failures）、`cargo clippy -p agents-manager-core -p agents-manager-cli -- -D warnings`（exit 0）、`cargo fmt --check`（exit 0）。
 - 2026-07-16：`npm run lint`（exit 0）、`npm run test`（19 files / 88 tests passed）、`npm run build`（exit 0）、`GUI_E2E_URL=http://127.0.0.1:5174 npm run test:e2e`（4 passed）。

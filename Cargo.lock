@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-manager-bus"
+name = "agents-manager-bus"
 version = "0.4.1"
 dependencies = [
  "anyhow",
@@ -43,11 +43,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-manager-cli"
+name = "agents-manager-cli"
 version = "0.4.1"
 dependencies = [
- "agent-manager-core",
- "agent-manager-store",
+ "agents-manager-core",
+ "agents-manager-store",
  "anyhow",
  "assert_cmd",
  "camino",
@@ -68,7 +68,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-manager-core"
+name = "agents-manager-core"
 version = "0.4.1"
 dependencies = [
  "anyhow",
@@ -92,13 +92,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-manager-daemon"
+name = "agents-manager-daemon"
 version = "0.4.1"
 dependencies = [
- "agent-manager-bus",
- "agent-manager-core",
- "agent-manager-store",
- "agent-manager-watcher",
+ "agents-manager-bus",
+ "agents-manager-core",
+ "agents-manager-store",
+ "agents-manager-watcher",
  "anyhow",
  "chrono",
  "clap",
@@ -111,12 +111,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-manager-gui"
+name = "agents-manager-gui"
 version = "0.4.1"
 dependencies = [
- "agent-manager-core",
- "agent-manager-store",
- "agent-manager-watcher",
+ "agents-manager-core",
+ "agents-manager-store",
+ "agents-manager-watcher",
  "camino",
  "reqwest 0.12.28",
  "serde",
@@ -134,19 +134,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-manager-gui-bin"
+name = "agents-manager-gui-bin"
 version = "0.4.1"
 dependencies = [
- "agent-manager-gui",
+ "agents-manager-gui",
  "tauri",
  "tauri-build",
 ]
 
 [[package]]
-name = "agent-manager-store"
+name = "agents-manager-store"
 version = "0.4.1"
 dependencies = [
- "agent-manager-core",
+ "agents-manager-core",
  "anyhow",
  "camino",
  "chrono",
@@ -161,7 +161,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-manager-watcher"
+name = "agents-manager-watcher"
 version = "0.4.1"
 dependencies = [
  "anyhow",

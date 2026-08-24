@@ -1,19 +1,19 @@
 [package]
-name = "agent-manager-cli"
+name = "agents-manager-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "agent-manager 命令行入口:agent / 人类都用,带 --json 结构化输出"
+description = "agents-manager 命令行入口:agent / 人类都用,带 --json 结构化输出"
 
 [[bin]]
-name = "agent-manager"
+name = "agents-manager"
 path = "src/main.rs"
 
 [dependencies]
-agent-manager-core = { path = "../agent-manager-core" }
-agent-manager-store = { path = "../agent-manager-store" }
+agents-manager-core = { path = "../agents-manager-core" }
+agents-manager-store = { path = "../agents-manager-store" }
 clap.workspace = true
 clap_complete = "4.5"
 serde.workspace = true

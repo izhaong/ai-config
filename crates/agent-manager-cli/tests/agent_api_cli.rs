@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use assert_cmd::Command;
 use tempfile::TempDir;
 
-const BIN: &str = "agent-manager";
+const BIN: &str = "agents-manager";
 
 fn setup_project() -> (TempDir, TempDir) {
     let home = TempDir::new().expect("home");
@@ -211,7 +211,7 @@ fn install_is_plan_only_by_default_and_requires_explicit_apply() {
     fs::remove_file(root.path().join("rules/r1.mdc"))
         .expect("install contract uses only an independently supported skill");
     let target = home.path().join(".agents/skills/foo");
-    let ledger = home.path().join(".agent-manager/projection-ledger.sqlite");
+    let ledger = home.path().join(".agents-manager/projection-ledger.sqlite");
 
     let planned = cmd(home.path(), root.path())
         .args(["--json", "install"])

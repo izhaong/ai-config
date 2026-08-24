@@ -19,7 +19,7 @@
 ```text
 .codex/config.toml#mcp_servers.<name>
   -> reviewed ImportPlan (paths/fingerprints/key names only)
-  -> .agent-manager/mcp/servers/<name>.json
+  -> .agents-manager/mcp/servers/<name>.json
   -> normalized equivalence check
   -> explicit AdoptEquivalent
   -> per-entry projection ledger (target bytes unchanged)
@@ -30,14 +30,14 @@
 | 项 | 值 |
 | --- | --- |
 | Language | Rust 2021 + React/TypeScript |
-| 主要 Crate | `agent-manager-core` / `agent-manager-cli` / `agent-manager-gui` |
+| 主要 Crate | `agents-manager-core` / `agents-manager-cli` / `agents-manager-gui` |
 | 依赖模块 | `projection::migration_action`, `projection::migration`, `projection::mcp::codex_toml`, ledger/store |
 | 测试 | `migration_import`, `projection_migration`, GUI command bridge/Vitest |
 | 平台矩阵 | Codex project scope；Cursor 回归不退化 |
 
 ## Constitution Check
 
-- [x] 业务逻辑仅在 `agent-manager-core`
+- [x] 业务逻辑仅在 `agents-manager-core`
 - [x] CLI/GUI 薄封装，无重复解析
 - [x] 平台差异收敛在 projection MCP adapter
 - [x] plan/apply digest-bound、foreign fail-closed
@@ -47,13 +47,13 @@
 
 | 文件 | 职责 |
 | --- | --- |
-| `crates/agent-manager-core/src/projection/migration_action.rs` | Codex import source path、TOML entry normalization、secret preflight |
-| `crates/agent-manager-core/src/projection/migration.rs` | Codex MCP inventory/equivalence/adopt action |
-| `crates/agent-manager-core/tests/migration_import.rs` | import RED/GREEN 与安全边界 |
-| `crates/agent-manager-cli/tests/projection_migration.rs` | CLI plan/apply/rollback、零目标写入 |
-| `apps/agent-manager-gui/src/command_bridge.rs` | 复用 core 的 GUI import/adopt 测试 |
-| `apps/agent-manager-gui/src/**` | Import/Adopt 状态与交互测试，必要的最小 UI 接线 |
-| `apps/agent-manager-gui/src-tauri/Cargo.toml` | 版本统一为 0.4.0 |
+| `crates/agents-manager-core/src/projection/migration_action.rs` | Codex import source path、TOML entry normalization、secret preflight |
+| `crates/agents-manager-core/src/projection/migration.rs` | Codex MCP inventory/equivalence/adopt action |
+| `crates/agents-manager-core/tests/migration_import.rs` | import RED/GREEN 与安全边界 |
+| `crates/agents-manager-cli/tests/projection_migration.rs` | CLI plan/apply/rollback、零目标写入 |
+| `apps/agents-manager-gui/src/command_bridge.rs` | 复用 core 的 GUI import/adopt 测试 |
+| `apps/agents-manager-gui/src/**` | Import/Adopt 状态与交互测试，必要的最小 UI 接线 |
+| `apps/agents-manager-gui/src-tauri/Cargo.toml` | 版本统一为 0.4.0 |
 | `CHANGELOG.md` | Codex MCP 导入与采纳说明 |
 
 新增/扩展内部接口：
@@ -81,11 +81,11 @@ Import 使用现有 durable transaction/rollback；adopt 只新增 ledger，可�
 
 ## Todos
 
-- [x] **T001 Core import RED**：在 `migration_import.rs` 添加 Codex stdio、bearer env、env header、literal Authorization、missing entry、drift 测试；运行 `cargo test -p agent-manager-core --test migration_import codex_mcp -- --nocapture`，预期因 NotImplemented/缺解析失败。
+- [x] **T001 Core import RED**：在 `migration_import.rs` 添加 Codex stdio、bearer env、env header、literal Authorization、missing entry、drift 测试；运行 `cargo test -p agents-manager-core --test migration_import codex_mcp -- --nocapture`，预期因 NotImplemented/缺解析失败。
 - [x] **T002 Core import GREEN**：扩展 `import_source_location` 和 `platform_mcp_entry_from_bytes`，用 `toml_edit` 读取 named table、删除 legacy `type`、生成 `targets:["codex"]` canonical；复跑 T001 全绿。
 - [x] **T003 Adopt RED→GREEN**：为 migration inventory/plan 添加 canonical 与 Codex entry normalized equivalence 测试；实现逐 server `AdoptEquivalent`，apply 仅写 ledger且目标 hash/mode 不变；运行相关 core tests。
 - [x] **T004 CLI RED→GREEN**：新增 CLI 集成测试，覆盖 `import mcp --from codex --to project` plan/apply/rollback 与平台目标零写入；薄接 core 并验证结构化输出。
 - [x] **T005 GUI RED→GREEN**：补 command bridge Rust 测试和 Import/Adopt 前端状态测试；确保 Codex MCP 可 reviewed import、Equivalent 经确认后显式 adopt、目标文件零写入。
 - [x] **T006 版本与文档**：统一所有 0.4.0 manifest 与界面版本，更新 CHANGELOG，并运行 tag-version 脚本。
 - [x] **T007 AI-Maker-Market canary**：用 0.4 CLI 对 11 个 Codex MCP 完成 equivalence/adopt/rollback/re-adopt；前后校验 `.codex/config.toml` hash 相同且无凭据输出。
-- [x] **T008 全量验证**：`cargo test -p agent-manager-core -p agent-manager-cli`、`cargo test -p agent-manager-gui`、`npm run test`、`npm run build`、debug CLI doctor/status；全部退出码 0，代码审查无剩余 Critical/Important。
+- [x] **T008 全量验证**：`cargo test -p agents-manager-core -p agents-manager-cli`、`cargo test -p agents-manager-gui`、`npm run test`、`npm run build`、debug CLI doctor/status；全部退出码 0，代码审查无剩余 Critical/Important。

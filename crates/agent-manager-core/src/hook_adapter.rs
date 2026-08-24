@@ -13,7 +13,7 @@ use crate::paths;
 use crate::platform;
 use crate::template::atomic_write_json;
 
-const MANAGED_BY: &str = "agent-manager";
+const MANAGED_BY: &str = "agents-manager";
 
 /// 平台 hooks 脚本目录（如 `~/.cursor/hooks/`）。
 pub fn platform_hooks_dir(deploy_base: &Utf8Path, plat: PlatformId) -> Utf8PathBuf {
@@ -140,7 +140,7 @@ pub fn retract(
     let token = hook::managed_command_token(script_filename);
     let script_dest = platform_script_path(deploy_base, plat, script_filename);
 
-    // 配置中没有 agent-manager binding 时，脚本无法证明归属；不得触碰外部 hook。
+    // 配置中没有 agents-manager binding 时，脚本无法证明归属；不得触碰外部 hook。
     if !is_deployed(deploy_base, plat, script_filename) {
         return Ok(format!(
             "Hook `{script_filename}` ← {} skipped (external or unowned)",
@@ -286,7 +286,7 @@ pub fn deploy_between_platforms(
     ))
 }
 
-/// 从平台导入到 agent-manager 源：拷贝脚本并合并 `hooks.json`。
+/// 从平台导入到 agents-manager 源：拷贝脚本并合并 `hooks.json`。
 pub fn import_to_source(
     _asset_root: &Utf8Path,
     _deploy_base: &Utf8Path,
@@ -311,7 +311,7 @@ pub fn toggle_platform_lifecycle(
     enabled: bool,
 ) -> Result<(), CoreError> {
     if plat == PlatformId::AgentManager {
-        return Err(CoreError::InvalidPath("源视图请切换 agent-manager 平台".into()));
+        return Err(CoreError::InvalidPath("源视图请切换 agents-manager 平台".into()));
     }
     if !platform::supports_at_scope(plat, crate::model::AssetKind::Hook, deploy_base) {
         return Err(CoreError::UnsupportedAsset {
@@ -958,7 +958,7 @@ fn platform_event(plat: PlatformId, canonical: &str) -> &'static str {
 fn default_matcher(plat: PlatformId, canonical: &str) -> Option<String> {
     match (plat, canonical) {
         (PlatformId::Cursor, "afterShellExecution" | "beforeShellExecution") => {
-            Some(r"agent-manager\b".into())
+            Some(r"agents-manager\b".into())
         }
         (PlatformId::Codex | PlatformId::Claude, "afterFileEdit" | "afterTabFileEdit") => {
             Some("Edit|Write".into())
@@ -1348,7 +1348,7 @@ mod tests {
             description: "d".into(),
             bindings: vec![hook::HookBinding {
                 lifecycle: "afterShellExecution".into(),
-                matcher: Some(r"agent-manager\b".into()),
+                matcher: Some(r"agents-manager\b".into()),
                 command: "./hooks/run.sh".into(),
             }],
         }
@@ -1361,7 +1361,7 @@ mod tests {
             "hooks": {
                 "afterShellExecution": [
                     { "command": "./hooks/other.sh" },
-                    { "command": "./hooks/run.sh", "managedBy": "agent-manager", "hook": "run.sh" }
+                    { "command": "./hooks/run.sh", "managedBy": "agents-manager", "hook": "run.sh" }
                 ]
             }
         });
@@ -1381,8 +1381,8 @@ mod tests {
             "version": 1,
             "hooks": {
                 "beforeSubmitPrompt": [
-                    { "command": ".cursor/hooks/speak-lifecycle.py beforeSubmitPrompt", "managedBy": "agent-manager", "hook": "speak-lifecycle.py" },
-                    { "command": ".cursor/hooks/test-prompt-hook.sh", "managedBy": "agent-manager", "hook": "test-prompt-hook.sh" }
+                    { "command": ".cursor/hooks/speak-lifecycle.py beforeSubmitPrompt", "managedBy": "agents-manager", "hook": "speak-lifecycle.py" },
+                    { "command": ".cursor/hooks/test-prompt-hook.sh", "managedBy": "agents-manager", "hook": "test-prompt-hook.sh" }
                 ]
             }
         });
@@ -1430,7 +1430,7 @@ mod tests {
         fs::create_dir_all(&hooks).unwrap();
         fs::write(
             asset.join("hooks.json"),
-            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agent-manager"}]}}"#,
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agents-manager"}]}}"#,
         )
         .unwrap();
         fs::write(hooks.join("run.sh"), "#!/bin/sh\n").unwrap();
@@ -1454,7 +1454,7 @@ mod tests {
     fn deploy_cursor_project_uses_dot_cursor_hooks_path() {
         let tmp = TempDir::new().unwrap();
         let repo = tmp.path().join("repo");
-        let asset = repo.join(".agent-manager");
+        let asset = repo.join(".agents-manager");
         let hooks = asset.join("hooks");
         fs::create_dir_all(&hooks).unwrap();
         fs::write(
@@ -1483,7 +1483,7 @@ mod tests {
         fs::create_dir_all(&hooks).unwrap();
         fs::write(
             asset.join("hooks.json"),
-            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agent-manager"}]}}"#,
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agents-manager"}]}}"#,
         )
         .unwrap();
         fs::write(hooks.join("run.sh"), "#!/bin/sh\necho codex\n").unwrap();
@@ -1519,7 +1519,7 @@ mod tests {
         fs::create_dir_all(&hooks).unwrap();
         fs::write(
             asset.join("hooks.json"),
-            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agent-manager"}]}}"#,
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agents-manager"}]}}"#,
         )
         .unwrap();
         fs::write(hooks.join("run.sh"), "#!/bin/sh\necho claude\n").unwrap();
@@ -1559,7 +1559,7 @@ mod tests {
         fs::create_dir_all(&hooks).unwrap();
         fs::write(
             asset.join("hooks.json"),
-            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/speak-lifecycle.py afterShellExecution","matcher":"agent-manager"}]}}"#,
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/speak-lifecycle.py afterShellExecution","matcher":"agents-manager"}]}}"#,
         )
         .unwrap();
         fs::write(
@@ -1598,7 +1598,7 @@ mod tests {
         fs::create_dir_all(&hooks).unwrap();
         fs::write(
             asset.join("hooks.json"),
-            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agent-manager"}]}}"#,
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":"./hooks/run.sh","matcher":"agents-manager"}]}}"#,
         )
         .unwrap();
         fs::write(hooks.join("run.sh"), "#!/bin/sh\necho hermes\n").unwrap();
@@ -1655,7 +1655,7 @@ mod tests {
             "hooks": {
                 "PostToolUse": [
                     { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/tmp/other.sh" }] },
-                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/tmp/.codex/hooks/run.sh", "managedBy": "agent-manager", "hook": "run.sh" }] }
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/tmp/.codex/hooks/run.sh", "managedBy": "agents-manager", "hook": "run.sh" }] }
                 ]
             }
         });
@@ -1684,17 +1684,17 @@ mod tests {
 
         std::fs::write(
             cursor_cfg.as_std_path(),
-            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":".cursor/hooks/run.sh","managedBy":"agent-manager","hook":"run.sh"}]}}"#,
+            r#"{"version":1,"hooks":{"afterShellExecution":[{"command":".cursor/hooks/run.sh","managedBy":"agents-manager","hook":"run.sh"}]}}"#,
         )
         .unwrap();
         std::fs::write(
             codex_cfg.as_std_path(),
-            r#"{"version":1,"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"/tmp/.codex/hooks/run.sh","managedBy":"agent-manager","hook":"run.sh"}]}]}}"#,
+            r#"{"version":1,"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"/tmp/.codex/hooks/run.sh","managedBy":"agents-manager","hook":"run.sh"}]}]}}"#,
         )
         .unwrap();
         std::fs::write(
             claude_cfg.as_std_path(),
-            r#"{"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"/tmp/.claude/hooks/run.sh","managedBy":"agent-manager","hook":"run.sh"}]}]}}"#,
+            r#"{"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"/tmp/.claude/hooks/run.sh","managedBy":"agents-manager","hook":"run.sh"}]}]}}"#,
         )
         .unwrap();
 
@@ -1710,7 +1710,7 @@ mod tests {
             "hooks": {
                 "PostToolUse": [
                     { "matcher": "Write", "hooks": [{ "type": "command", "command": "/tmp/third-party.sh" }] },
-                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/tmp/.claude/hooks/run.sh", "managedBy": "agent-manager", "hook": "run.sh" }] }
+                    { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/tmp/.claude/hooks/run.sh", "managedBy": "agents-manager", "hook": "run.sh" }] }
                 ]
             }
         });
@@ -1940,7 +1940,7 @@ mod tests {
       { "command": "./hooks/test-prompt-hook.sh" }
     ],
     "beforeShellExecution": [
-      { "command": "./hooks/speak-lifecycle.py beforeShellExecution", "matcher": "agent-manager" }
+      { "command": "./hooks/speak-lifecycle.py beforeShellExecution", "matcher": "agents-manager" }
     ]
   }
 }"#,
@@ -1987,7 +1987,7 @@ mod tests {
             );
         }
         // Shell 事件应当出现在 PreToolUse 下而非 SessionStart；source 里指定的 matcher
-        // （这里是 `agent-manager`）应被原样保留（不会被默认 Bash 覆盖）。
+        // （这里是 `agents-manager`）应被原样保留（不会被默认 Bash 覆盖）。
         let pre_tool_use = hooks_obj
             .get("PreToolUse")
             .and_then(|v| v.as_array())

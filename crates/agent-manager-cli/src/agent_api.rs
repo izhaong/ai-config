@@ -25,7 +25,7 @@ pub struct EnvSummary {
     pub mcp_json: Option<String>,
 }
 
-/// 解析可选 root；空则使用 `~/.agent-manager`，但不创建目录或播种资产。
+/// 解析可选 root；空则使用 `~/.agents-manager`，但不创建目录或播种资产。
 pub fn resolve_scope_root(root: Option<&str>) -> Utf8PathBuf {
     match root.filter(|s| !s.is_empty()) {
         Some(s) => paths::resolve_asset_root(Utf8Path::new(s)),
@@ -65,7 +65,7 @@ pub fn parse_platform(s: &str) -> Result<PlatformId, String> {
         "codex" => Ok(PlatformId::Codex),
         "claude" | "claudecode" | "claude-code" => Ok(PlatformId::Claude),
         "hermes" => Ok(PlatformId::Hermes),
-        "agentmanager" | "agent-manager" => Ok(PlatformId::AgentManager),
+        "agentmanager" | "agents-manager" => Ok(PlatformId::AgentManager),
         other => Err(format!(
             "未知平台 `{other}`；可用: cursor, codex, claude, hermes, agentmanager"
         )),
@@ -167,7 +167,7 @@ mod tests {
 
         assert_eq!(
             root,
-            Utf8PathBuf::from_path_buf(home.join(".agent-manager")).unwrap()
+            Utf8PathBuf::from_path_buf(home.join(".agents-manager")).unwrap()
         );
         assert!(
             !root.exists(),

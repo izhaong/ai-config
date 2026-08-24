@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 const mocks = vi.hoisted(() => ({
-  saveAsset: vi.fn(() => Promise.resolve("mcp `agent-manager` 已保存")),
+  saveAsset: vi.fn(() => Promise.resolve("mcp `agents-manager` 已保存")),
   deployAssetFromPlatform: vi.fn(() =>
     Promise.resolve("mcp `demo`: cursor → codex OK"),
   ),
@@ -126,17 +126,17 @@ describe("useAssetOperations MCP add", () => {
     expect(result.current.addMcpOpen).toBe(true);
 
     const configJson = JSON.stringify(
-      { command: "agent-manager", args: ["serve"] },
+      { command: "agents-manager", args: ["serve"] },
       null,
       2,
     );
     await act(async () => {
-      await result.current.submitAddMcp("agent-manager", configJson);
+      await result.current.submitAddMcp("agents-manager", configJson);
     });
 
     expect(mocks.saveAsset).toHaveBeenCalledWith(
       "mcp",
-      "agent-manager",
+      "agents-manager",
       configJson,
       "user-global",
     );

@@ -1,11 +1,11 @@
 [package]
-name = "agent-manager-watcher"
+name = "agents-manager-watcher"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "agent-manager 文件监听:skills/ rules/ agents/ + mcp.json,notify + debouncer-mini 200ms"
+description = "agents-manager 文件监听:skills/ rules/ agents/ + mcp.json,notify + debouncer-mini 200ms"
 
 [dev-dependencies]
 tempfile = "3"

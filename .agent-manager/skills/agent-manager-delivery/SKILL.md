@@ -1,9 +1,9 @@
 ---
-name: agent-manager-delivery
-description: agent-manager 交付（贴合 Cursor）：用户下发任务 → Agent 自动分支、spec、plan+Todos、实现、验证。
+name: agents-manager-delivery
+description: agents-manager 交付（贴合 Cursor）：用户下发任务 → Agent 自动分支、spec、plan+Todos、实现、验证。
 ---
 
-# agent-manager 模块交付（贴合 Cursor）
+# agents-manager 模块交付（贴合 Cursor）
 
 用户只说任务；流程适配 **Cursor Plan + Todo**，Spec Kit 只负责**落盘**。
 
@@ -28,7 +28,7 @@ description: agent-manager 交付（贴合 Cursor）：用户下发任务 → Ag
 
 ### 1. 分支 + FEATURE_DIR
 
-见 `.agent-manager/rules/gitflow-spec-kit.mdc`、`.agent-manager/rules/spec-kit-gate.mdc`。
+见 `.agents-manager/rules/gitflow-spec-kit.mdc`、`.agents-manager/rules/spec-kit-gate.mdc`。
 
 ### 2. spec + plan（含 Todos）
 
@@ -45,7 +45,7 @@ Todos：`- [ ] T001 …（验证：…）`；末项 verify。
 
 ### 4. 验证
 
-`agent-manager-verify` skill；失败则修复重跑。
+`agents-manager-verify` skill；失败则修复重跑。
 
 ### 5. 收尾
 

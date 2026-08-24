@@ -4,7 +4,7 @@ target/
 **/*.pdb
 
 # Tauri (Phase 3 启用)
-# apps/agent-manager-gui/target/
+# apps/agents-manager-gui/target/
 
 # IDE / 编辑器
 .idea/
@@ -14,13 +14,13 @@ target/
 .DS_Store
 
 # 守护进程运行时
-.agent-manager/daemon.sock
-.agent-manager/daemon.pid
-.agent-manager/daemon.log
-.agent-manager/*.db
-.agent-manager/*.db-wal
-.agent-manager/*.db-shm
-.agent-manager/secrets.env
+.agents-manager/daemon.sock
+.agents-manager/daemon.pid
+.agents-manager/daemon.log
+.agents-manager/*.db
+.agents-manager/*.db-wal
+.agents-manager/*.db-shm
+.agents-manager/secrets.env
 
 # Secrets 文件模板不入仓
 # mcp/secrets.env.example 仍入仓(PRD §8 反模式:不留真实密钥入仓)
@@ -33,18 +33,18 @@ node_modules/
 **/*.tmp
 
 # Tauri 2 GUI(Phase 3 W8)
-apps/agent-manager-gui/dist/
-apps/agent-manager-gui/node_modules/
-apps/agent-manager-gui/.vite/
-apps/agent-manager-gui/src-tauri/target/
+apps/agents-manager-gui/dist/
+apps/agents-manager-gui/node_modules/
+apps/agents-manager-gui/.vite/
+apps/agents-manager-gui/src-tauri/target/
 
-# Tauri 2 build artifacts(apps/agent-manager-gui)
-apps/agent-manager-gui/gen/
-apps/agent-manager-gui/src-tauri/gen/
+# Tauri 2 build artifacts(apps/agents-manager-gui)
+apps/agents-manager-gui/gen/
+apps/agents-manager-gui/src-tauri/gen/
 
 # Playwright e2e 产物
-apps/agent-manager-gui/test-results/
-apps/agent-manager-gui/e2e/output/
+apps/agents-manager-gui/test-results/
+apps/agents-manager-gui/e2e/output/
 
 # Hook 本地测试状态
 **/.test-state/

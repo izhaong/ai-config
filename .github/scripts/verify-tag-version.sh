@@ -23,9 +23,9 @@ read_version() {
 }
 
 CARGO_VERSION="$(read_version "$ROOT/Cargo.toml" '^version = ')"
-PKG_VERSION="$(read_version "$ROOT/apps/agent-manager-gui/package.json" '"version"')"
-TAURI_ROOT="$(read_version "$ROOT/apps/agent-manager-gui/tauri.conf.json" '"version"')"
-TAURI_SRC="$(read_version "$ROOT/apps/agent-manager-gui/src-tauri/tauri.conf.json" '"version"')"
+PKG_VERSION="$(read_version "$ROOT/apps/agents-manager-gui/package.json" '"version"')"
+TAURI_ROOT="$(read_version "$ROOT/apps/agents-manager-gui/tauri.conf.json" '"version"')"
+TAURI_SRC="$(read_version "$ROOT/apps/agents-manager-gui/src-tauri/tauri.conf.json" '"version"')"
 
 fail=0
 check() {
@@ -39,8 +39,8 @@ check() {
 
 check "Cargo.toml" "$CARGO_VERSION"
 check "package.json" "$PKG_VERSION"
-check "apps/agent-manager-gui/tauri.conf.json (tauri-action)" "$TAURI_ROOT"
-check "apps/agent-manager-gui/src-tauri/tauri.conf.json" "$TAURI_SRC"
+check "apps/agents-manager-gui/tauri.conf.json (tauri-action)" "$TAURI_ROOT"
+check "apps/agents-manager-gui/src-tauri/tauri.conf.json" "$TAURI_SRC"
 
 if [[ "$fail" -ne 0 ]]; then
   exit 1

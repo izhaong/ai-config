@@ -24,8 +24,8 @@ jobs:
         run: |
           set -euo pipefail
           V="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          PKG="$(grep -m1 '"version"' apps/agent-manager-gui/package.json | sed -E 's/.*"([^"]+)".*/\1/')"
-          TAURI="$(grep -m1 '"version"' apps/agent-manager-gui/src-tauri/tauri.conf.json | sed -E 's/.*"([^"]+)".*/\1/')"
+          PKG="$(grep -m1 '"version"' apps/agents-manager-gui/package.json | sed -E 's/.*"([^"]+)".*/\1/')"
+          TAURI="$(grep -m1 '"version"' apps/agents-manager-gui/src-tauri/tauri.conf.json | sed -E 's/.*"([^"]+)".*/\1/')"
           echo "Cargo.toml=$V package.json=$PKG tauri.conf.json=$TAURI"
           test "$V" = "$PKG"
           test "$V" = "$TAURI"
@@ -52,16 +52,16 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy
         run: |
-          cargo clippy -p agent-manager-core -p agent-manager-cli -p agent-manager-daemon \
-            -p agent-manager-bus -p agent-manager-watcher -p agent-manager-store \
+          cargo clippy -p agents-manager-core -p agents-manager-cli -p agents-manager-daemon \
+            -p agents-manager-bus -p agents-manager-watcher -p agents-manager-store \
             --all-targets -- -D warnings
       - name: cargo test
         run: |
-          cargo test -p agent-manager-core -p agent-manager-cli -p agent-manager-store \
-            -p agent-manager-daemon -p agent-manager-bus -p agent-manager-watcher \
+          cargo test -p agents-manager-core -p agents-manager-cli -p agents-manager-store \
+            -p agents-manager-daemon -p agents-manager-bus -p agents-manager-watcher \
             -- --test-threads=1
       - name: cargo build release (CLI)
-        run: cargo build -p agent-manager-cli --release
+        run: cargo build -p agents-manager-cli --release
 
   gui-smoke:
     name: gui frontend smoke
@@ -73,9 +73,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: apps/agent-manager-gui/package-lock.json
+          cache-dependency-path: apps/agents-manager-gui/package-lock.json
       - name: npm ci && build frontend
-        working-directory: apps/agent-manager-gui
+        working-directory: apps/agents-manager-gui
         run: |
           npm ci
           npm run build

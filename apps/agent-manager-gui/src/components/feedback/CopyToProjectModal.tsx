@@ -17,7 +17,7 @@ function targetAssetRoot(
     return globalAssetRoot;
   }
   const project = projects.find((p) => p.name === toProject);
-  return project ? `${project.root_path}/.agent-manager` : "";
+  return project ? `${project.root_path}/.agents-manager` : "";
 }
 
 interface CopyToProjectModalProps {

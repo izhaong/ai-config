@@ -37,7 +37,7 @@ use super::planner::{
 
 static TEMP_LINK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-const APPLY_LOCK_NAME: &str = ".agent-manager-projection.lock";
+const APPLY_LOCK_NAME: &str = ".agents-manager-projection.lock";
 
 /// Resolve a secret only when a plan-bound MCP source declares its exact variable name. Core
 /// deliberately has no environment or HOME fallback: callers choose their own secret boundary.
@@ -2145,7 +2145,7 @@ fn render_hermes_unified_yaml(
             key("command"),
             YamlValue::String(format!(".hermes/hooks/{}", member.id.name)),
         );
-        binding.insert(key("managedBy"), YamlValue::String("agent-manager".to_owned()));
+        binding.insert(key("managedBy"), YamlValue::String("agents-manager".to_owned()));
         binding.insert(key("hook"), YamlValue::String(member.id.name.clone()));
         lifecycle.push(YamlValue::Mapping(binding));
     }
@@ -2211,7 +2211,7 @@ fn yaml_hook_is_managed(entry: &YamlValue, name: &str) -> bool {
     mapping
         .get(YamlValue::String("managedBy".to_owned()))
         .and_then(YamlValue::as_str)
-        == Some("agent-manager")
+        == Some("agents-manager")
         && mapping
             .get(YamlValue::String("hook".to_owned()))
             .and_then(YamlValue::as_str)
@@ -2363,7 +2363,7 @@ fn render_hook_json(
         let entry = if platform == crate::model::PlatformId::Cursor {
             serde_json::json!({
                 "command": command,
-                "managedBy": "agent-manager",
+                "managedBy": "agents-manager",
                 "hook": member.id.name,
             })
         } else {
@@ -2371,7 +2371,7 @@ fn render_hook_json(
                 "hooks": [{
                     "type": "command",
                     "command": command,
-                    "managedBy": "agent-manager",
+                    "managedBy": "agents-manager",
                     "hook": member.id.name,
                 }]
             })
@@ -2391,7 +2391,7 @@ fn render_hook_json(
 
 fn hook_entry_is_owned_by(entry: &Value, removals: &BTreeSet<&String>) -> bool {
     let owned = |entry: &Value| {
-        entry.get("managedBy").and_then(Value::as_str) == Some("agent-manager")
+        entry.get("managedBy").and_then(Value::as_str) == Some("agents-manager")
             && entry
                 .get("hook")
                 .and_then(Value::as_str)
@@ -2973,7 +2973,7 @@ fn generated_temporary_path(
         .file_name()
         .ok_or_else(|| CoreError::InvalidPath("projection target has no file name".to_owned()))?;
     let sequence = TEMP_LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    Ok(parent.join(format!(".{filename}.agent-manager-generated-{sequence}.tmp")))
+    Ok(parent.join(format!(".{filename}.agents-manager-generated-{sequence}.tmp")))
 }
 
 fn write_private_generated_file(path: &Utf8Path, content: &[u8]) -> Result<(), CoreError> {
@@ -2995,7 +2995,7 @@ fn copy_temporary_path(parent: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathB
         .file_name()
         .ok_or_else(|| CoreError::InvalidPath("projection target has no file name".to_owned()))?;
     let sequence = TEMP_LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    Ok(parent.join(format!(".{filename}.agent-manager-copy-{sequence}.tmp")))
+    Ok(parent.join(format!(".{filename}.agents-manager-copy-{sequence}.tmp")))
 }
 
 /// Copy only regular files/directories. In particular, never flatten or follow a symlink inside
@@ -3772,7 +3772,7 @@ fn create_sibling_symlink(
         .file_name()
         .ok_or_else(|| CoreError::InvalidPath("projection target has no file name".to_owned()))?;
     let sequence = TEMP_LINK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temporary = parent.join(format!(".{filename}.agent-manager-{sequence}.tmp"));
+    let temporary = parent.join(format!(".{filename}.agents-manager-{sequence}.tmp"));
     #[cfg(unix)]
     std::os::unix::fs::symlink(source.as_std_path(), temporary.as_std_path())?;
     #[cfg(windows)]

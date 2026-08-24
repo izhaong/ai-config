@@ -7,7 +7,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use crate::error::CoreError;
 use crate::paths::{self, SyncRoots};
 
-/// 子仓是否已有独立 `.agent-manager` 内容（非空 skills / rules / mcp 等）。
+/// 子仓是否已有独立 `.agents-manager` 内容（非空 skills / rules / mcp 等）。
 pub fn member_has_local_assets(member_asset: &Utf8Path) -> bool {
     if !member_asset.is_dir() {
         return false;
@@ -33,7 +33,7 @@ pub fn member_has_local_assets(member_asset: &Utf8Path) -> bool {
     member_asset.join("hooks.json").is_file()
 }
 
-/// 工作区成员的有效资产根：子仓优先，否则继承 workspace `.agent-manager`。
+/// 工作区成员的有效资产根：子仓优先，否则继承 workspace `.agents-manager`。
 pub fn effective_asset_root_for_member(
     member_repo: &Utf8Path,
     workspace_root: &Utf8Path,
@@ -139,24 +139,24 @@ mod tests {
     fn effective_asset_inherits_workspace() {
         let tmp = TempDir::new().unwrap();
         let ws = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        fs::create_dir_all(ws.join(".agent-manager/skills/foo")).unwrap();
-        fs::write(ws.join(".agent-manager/skills/foo/SKILL.md"), "x").unwrap();
+        fs::create_dir_all(ws.join(".agents-manager/skills/foo")).unwrap();
+        fs::write(ws.join(".agents-manager/skills/foo/SKILL.md"), "x").unwrap();
         let member = ws.join("child");
         fs::create_dir_all(&member).unwrap();
         let asset = effective_asset_root_for_member(&member, &ws);
-        assert_eq!(asset, ws.join(".agent-manager"));
+        assert_eq!(asset, ws.join(".agents-manager"));
     }
 
     #[test]
     fn effective_asset_prefers_member_when_present() {
         let tmp = TempDir::new().unwrap();
         let ws = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        fs::create_dir_all(ws.join(".agent-manager/skills/global")).unwrap();
-        fs::write(ws.join(".agent-manager/skills/global/SKILL.md"), "g").unwrap();
+        fs::create_dir_all(ws.join(".agents-manager/skills/global")).unwrap();
+        fs::write(ws.join(".agents-manager/skills/global/SKILL.md"), "g").unwrap();
         let member = ws.join("child");
-        fs::create_dir_all(member.join(".agent-manager/skills/local")).unwrap();
-        fs::write(member.join(".agent-manager/skills/local/SKILL.md"), "l").unwrap();
+        fs::create_dir_all(member.join(".agents-manager/skills/local")).unwrap();
+        fs::write(member.join(".agents-manager/skills/local/SKILL.md"), "l").unwrap();
         let asset = effective_asset_root_for_member(&member, &ws);
-        assert_eq!(asset, member.join(".agent-manager"));
+        assert_eq!(asset, member.join(".agents-manager"));
     }
 }

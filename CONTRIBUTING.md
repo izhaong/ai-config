@@ -1,16 +1,16 @@
-# Contributing to agent-manager
+# Contributing to agents-manager
 
-Thank you for improving agent-manager. This project uses **Git Flow** with **`develop`** as the integration branch.
+Thank you for improving agents-manager. This project uses **Git Flow** with **`develop`** as the integration branch.
 
 ## Getting started
 
-1. Fork [izhaong/agent-manager](https://github.com/izhaong/agent-manager) on GitHub (or clone from your Gitea fork if you use the dual-remote setup).
+1. Fork [izhaong/agents-manager](https://github.com/izhaong/agents-manager) on GitHub (or clone from your Gitea fork if you use the dual-remote setup).
 2. Create a branch from `develop`: `feat/123-short-name` or `fix/123-short-name`.
 3. Install [Rust 1.78+](https://rustup.rs/) and run:
 
    ```bash
    cargo fmt
-   cargo test -p agent-manager-core -p agent-manager-cli
+   cargo test -p agents-manager-core -p agents-manager-cli
    ```
 
 4. Open a Pull Request **into `develop`**.
@@ -40,9 +40,9 @@ docs: 更新 README Quick Start
 
 ## Code guidelines
 
-- Business logic belongs in `crates/agent-manager-core`; CLI/GUI call core, do not duplicate sync rules.
+- Business logic belongs in `crates/agents-manager-core`; CLI/GUI call core, do not duplicate sync rules.
 - Do **not** commit real tokens, passwords, or private hostnames — use placeholders in tests and docs.
-- User assets live under `~/.agent-manager/`; this repo ships code and templates only.
+- User assets live under `~/.agents-manager/`; this repo ships code and templates only.
 
 ## Pull requests
 
@@ -55,9 +55,9 @@ docs: 更新 README Quick Start
 Version numbers must stay in sync across:
 
 - `Cargo.toml` (`[workspace.package].version`)
-- `apps/agent-manager-gui/package.json`
-- `apps/agent-manager-gui/tauri.conf.json`（**tauri-action / GUI 安装包版本**）
-- `apps/agent-manager-gui/src-tauri/tauri.conf.json`
+- `apps/agents-manager-gui/package.json`
+- `apps/agents-manager-gui/tauri.conf.json`（**tauri-action / GUI 安装包版本**）
+- `apps/agents-manager-gui/src-tauri/tauri.conf.json`
 
 Release checklist:
 
@@ -72,33 +72,33 @@ Release checklist:
    git push github vX.Y.Z
    ```
 
-5. GitHub Actions **Release** workflow validates the tag, builds CLI + Tauri GUI artifacts, and publishes [GitHub Releases](https://github.com/izhaong/agent-manager/releases) with CHANGELOG notes.
+5. GitHub Actions **Release** workflow validates the tag, builds CLI + Tauri GUI artifacts, and publishes [GitHub Releases](https://github.com/izhaong/agents-manager/releases) with CHANGELOG notes.
 
 ### GUI auto-update signing
 
-Desktop builds use [Tauri updater](https://v2.tauri.app/plugin/updater/). The **public key** is in `apps/agent-manager-gui/tauri.conf.json`; maintainers must add repository secrets before release:
+Desktop builds use [Tauri updater](https://v2.tauri.app/plugin/updater/). The **public key** is in `apps/agents-manager-gui/tauri.conf.json`; maintainers must add repository secrets before release:
 
 | Secret                               | Value                                                                                                                                                |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TAURI_SIGNING_PRIVATE_KEY`          | Contents of `~/.tauri/agent-manager.key` (generate: `cd apps/agent-manager-gui && CI=true npm run tauri signer generate -- -w ~/.tauri/agent-manager.key -p ""`) |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Contents of `~/.tauri/agents-manager.key` (generate: `cd apps/agents-manager-gui && CI=true npm run tauri signer generate -- -w ~/.tauri/agents-manager.key -p ""`) |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Empty string if the key has no password                                                                                                              |
 
-Local `pnpm tauri:build` loads `~/.tauri/agent-manager.key` via `scripts/tauri-build.mjs` (no manual `export` needed).
+Local `pnpm tauri:build` loads `~/.tauri/agents-manager.key` via `scripts/tauri-build.mjs` (no manual `export` needed).
 
-`tauri-action` signs update bundles and uploads `latest.json` to the GitHub Release when `TAURI_SIGNING_PRIVATE_KEY` is configured. Installed apps check `https://github.com/izhaong/agent-manager/releases/latest/download/latest.json` on startup.
+`tauri-action` signs update bundles and uploads `latest.json` to the GitHub Release when `TAURI_SIGNING_PRIVATE_KEY` is configured. Installed apps check `https://github.com/izhaong/agents-manager/releases/latest/download/latest.json` on startup.
 
 Releases published **before** updater signing (e.g. v0.3.0) do not include `latest.json`; cut a new tag after secrets are set, or upload a manifest manually:
 
 ```bash
-cd apps/agent-manager-gui
+cd apps/agents-manager-gui
 node scripts/generate-latest-json.mjs \
   --version 0.3.1 --tag v0.3.1 \
   --platform darwin-aarch64 \
-  --asset agent-manager.app.tar.gz \
-  --sig ../../target/release/bundle/macos/agent-manager.app.tar.gz.sig
+  --asset agents-manager.app.tar.gz \
+  --sig ../../target/release/bundle/macos/agents-manager.app.tar.gz.sig
 gh release upload v0.3.1 latest.json \
-  ../../target/release/bundle/macos/agent-manager.app.tar.gz \
-  ../../target/release/bundle/macos/agent-manager.app.tar.gz.sig --clobber
+  ../../target/release/bundle/macos/agents-manager.app.tar.gz \
+  ../../target/release/bundle/macos/agents-manager.app.tar.gz.sig --clobber
 ```
 
 To rebuild an existing tag manually: Actions → **Release** → **Run workflow** → enter `vX.Y.Z`.
@@ -113,4 +113,4 @@ git remote -v
 git push origin develop && git push github develop
 ```
 
-Questions? Open a [GitHub Discussion](https://github.com/izhaong/agent-manager/discussions) or an issue.
+Questions? Open a [GitHub Discussion](https://github.com/izhaong/agents-manager/discussions) or an issue.

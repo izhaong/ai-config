@@ -1,7 +1,7 @@
 //! 平台侧资产扫描（反向同步 / platform view）。
 //!
 //! 从各平台适配器目录枚举 skills / rules / agents / MCP server，
-//! 并与 agent-manager 源对比得出 `SourceState`。
+//! 并与 agents-manager 源对比得出 `SourceState`。
 
 use std::fs;
 
@@ -19,7 +19,7 @@ use crate::source::{self, ScanResult};
 use crate::sync::{asset_dest_for_at_base, link_src_for_create};
 use crate::template::read_mcp_json;
 
-/// 平台条目相对 agent-manager 源的状态。
+/// 平台条目相对 agents-manager 源的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceState {
@@ -40,9 +40,9 @@ pub struct PlatformAssetEntry {
     pub kind: AssetKind,
     pub description: String,
     pub platform_path: String,
-    /// 相对 agent-manager 源的纳管态（兼容 import 提示）
+    /// 相对 agents-manager 源的纳管态（兼容 import 提示）
     pub source_state: SourceState,
-    /// 5 平台同步状态（含 agent-manager 源）
+    /// 5 平台同步状态（含 agents-manager 源）
     pub states: std::collections::HashMap<PlatformId, LinkState>,
     /// Hook 专用：各生命周期开关状态（仅 `kind == Hook` 时有值）
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -133,7 +133,7 @@ pub fn scan_platform_assets(
     Ok(out)
 }
 
-/// agent-manager 源视图：直接枚举 asset_root，条目均为已纳管。
+/// agents-manager 源视图：直接枚举 asset_root，条目均为已纳管。
 fn scan_agentmanager_assets(
     kind: AssetKind,
     default_root: &Utf8Path,
@@ -270,7 +270,7 @@ fn is_noise_entry_name(name: &str) -> bool {
     let is_readme = stem.eq_ignore_ascii_case("README");
     name.starts_with('.')
         || crate::link::is_legacy_bak_entry_name(name)
-        || name.ends_with(".agent-manager-deploy.json")
+        || name.ends_with(".agents-manager-deploy.json")
         || name.ends_with(".orig")
         || name.ends_with('~')
         || is_readme
@@ -739,7 +739,7 @@ fn compute_entry_states(
                 name,
             )
         } else if plat == PlatformId::AgentManager {
-            // IDE 视图下，agent-manager icon 仅反映源是否存在该资产（避免被平台副本元数据干扰）
+            // IDE 视图下，agents-manager icon 仅反映源是否存在该资产（避免被平台副本元数据干扰）
             if src.as_ref().is_some_and(|s| s.exists()) {
                 LinkState::Linked
             } else if browse_plat != PlatformId::AgentManager
@@ -786,7 +786,7 @@ fn browse_platform_link_state(
     browse_plat: PlatformId,
     _name: &str,
 ) -> LinkState {
-    // agent-manager 源视图：列表行在源中存在即视为已链接
+    // agents-manager 源视图：列表行在源中存在即视为已链接
     if browse_plat == PlatformId::AgentManager {
         if let Some(src_path) = src {
             if src_path.exists() {
@@ -818,7 +818,7 @@ fn browse_platform_link_state(
     }
 }
 
-/// 无 agent-manager 源时：目标平台是否与当前浏览平台上的资产内容一致（跨 IDE 硬拷贝）。
+/// 无 agents-manager 源时：目标平台是否与当前浏览平台上的资产内容一致（跨 IDE 硬拷贝）。
 fn platform_mirror_link_state(
     kind: AssetKind,
     name: &str,
@@ -972,7 +972,7 @@ fn is_symlink_path(path: &Utf8Path) -> bool {
         .unwrap_or(false)
 }
 
-// ── 从平台导入到 agent-manager 源 ─────────────────────────────────────
+// ── 从平台导入到 agents-manager 源 ─────────────────────────────────────
 
 /// 将平台 skill 目录复制到 `asset_root/skills/<name>/`。
 pub fn import_skill_from_platform(
@@ -984,7 +984,7 @@ pub fn import_skill_from_platform(
 ) -> Result<Utf8PathBuf, CoreError> {
     if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
-            "agent-manager 为资产源，不能从自身导入".into(),
+            "agents-manager 为资产源，不能从自身导入".into(),
         ));
     }
     let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
@@ -1035,7 +1035,7 @@ pub fn import_rule_from_platform(
 ) -> Result<Utf8PathBuf, CoreError> {
     if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
-            "agent-manager 为资产源，不能从自身导入".into(),
+            "agents-manager 为资产源，不能从自身导入".into(),
         ));
     }
     let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
@@ -1075,7 +1075,7 @@ pub fn import_agent_from_platform(
 ) -> Result<Utf8PathBuf, CoreError> {
     if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
-            "agent-manager 为资产源，不能从自身导入".into(),
+            "agents-manager 为资产源，不能从自身导入".into(),
         ));
     }
     let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
@@ -1123,7 +1123,7 @@ pub fn import_command_from_platform(
 ) -> Result<Utf8PathBuf, CoreError> {
     if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
-            "agent-manager 为资产源，不能从自身导入".into(),
+            "agents-manager 为资产源，不能从自身导入".into(),
         ));
     }
     let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
@@ -1160,7 +1160,7 @@ pub fn import_mcp_from_platform(
 ) -> Result<Utf8PathBuf, CoreError> {
     if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
-            "agent-manager 为资产源，不能从自身导入".into(),
+            "agents-manager 为资产源，不能从自身导入".into(),
         ));
     }
     let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
@@ -1186,7 +1186,7 @@ pub fn import_hook_from_platform(
 ) -> Result<Utf8PathBuf, CoreError> {
     if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
-            "agent-manager 为资产源，不能从自身导入".into(),
+            "agents-manager 为资产源，不能从自身导入".into(),
         ));
     }
     let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
@@ -1421,8 +1421,8 @@ mod tests {
             PlatformId::Cursor,
             AssetKind::Prompt,
             root,
-            &root.join(".agent-manager"),
-            &root.join(".agent-manager"),
+            &root.join(".agents-manager"),
+            &root.join(".agents-manager"),
         )
         .expect_err("Prompt must not enter the legacy scanner");
         assert!(err.to_string().contains("source-first projection planner"));
@@ -1481,7 +1481,7 @@ mod tests {
     fn content_equal_unmanaged_copy_is_synced_not_linked() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(tmp.path()).unwrap();
-        let source = root.join(".agent-manager/skills/demo/SKILL.md");
+        let source = root.join(".agents-manager/skills/demo/SKILL.md");
         let target = root.join(".cursor/skills/demo/SKILL.md");
         touch(&source, "# same\n");
         touch(&target, "# same\n");
@@ -1551,7 +1551,7 @@ mod tests {
             "---\ndescription: backend java\n---\n# backend",
         );
         touch(
-            &agents.join("backend-java-dev.md.agent-manager-deploy.json"),
+            &agents.join("backend-java-dev.md.agents-manager-deploy.json"),
             "{\"version\":1,\"source\":\"/tmp/x\"}",
         );
 
@@ -1597,7 +1597,7 @@ mod tests {
         );
         touch(&claude_skills.join("scripts").join("run.sh"), "#!/bin/sh\n");
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1612,7 +1612,7 @@ mod tests {
         assert!(dest.join("SKILL.md").is_file());
         assert!(dest.join("scripts/run.sh").is_file());
         assert!(
-            !claude_skills.join(".agent-manager-deploy.json").exists(),
+            !claude_skills.join(".agents-manager-deploy.json").exists(),
             "导入纳管不应生成 deploy marker"
         );
 
@@ -1644,7 +1644,7 @@ mod tests {
         fs::create_dir_all(&claude_skill).unwrap();
         fs::write(claude_skill.join("SKILL.md"), "# Find\n").unwrap();
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1690,7 +1690,7 @@ mod tests {
         fs::create_dir_all(&hermes_skill).unwrap();
         fs::write(hermes_skill.join("SKILL.md"), "# Find\n").unwrap();
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1717,7 +1717,7 @@ mod tests {
         fs::create_dir_all(&hermes_skill).unwrap();
         fs::write(hermes_skill.join("SKILL.md"), "# ext\n").unwrap();
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1764,7 +1764,7 @@ mod tests {
         fs::create_dir_all(&cursor_skill).unwrap();
         fs::write(cursor_skill.join("SKILL.md"), "# Demo\n").unwrap();
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         fs::create_dir_all(asset_root.join("skills/demo")).unwrap();
         fs::write(asset_root.join("skills/demo/SKILL.md"), "# Demo\n").unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
@@ -1796,7 +1796,7 @@ mod tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
@@ -1817,7 +1817,7 @@ mod tests {
         assert_eq!(
             states.get(&PlatformId::AgentManager),
             Some(&LinkState::Missing),
-            "仅存在于 Cursor 的 MCP 在 Cursor 视图下 agent-manager icon 应显示源缺失"
+            "仅存在于 Cursor 的 MCP 在 Cursor 视图下 agents-manager icon 应显示源缺失"
         );
     }
 
@@ -1835,7 +1835,7 @@ mod tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = crate::asset_ops::ScopeRoots {
@@ -1884,7 +1884,7 @@ mod tests {
         crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
         fs::write(&cursor_mcp, r#"{"mcpServers":{"demo":{"command":"npx"}}}"#).unwrap();
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
@@ -1906,7 +1906,7 @@ mod tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".agent-manager");
+        let asset_root = home.join(".agents-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
         let cfg = serde_json::json!({ "command": "uvx", "args": ["demo"] });
         mcp_json::upsert_server_in_document(&asset_root, "svc", cfg.clone()).unwrap();
@@ -1969,7 +1969,7 @@ mod tests {
         let project = TempDir::new().unwrap();
         let global_root = Utf8Path::from_path(global.path()).unwrap();
         let project_root = Utf8Path::from_path(project.path()).unwrap();
-        let global_asset = global_root.join(".agent-manager");
+        let global_asset = global_root.join(".agents-manager");
         fs::create_dir_all(global_asset.join("hooks")).unwrap();
         fs::write(
             global_asset.join("hooks.json"),
@@ -1993,7 +1993,7 @@ mod tests {
         )
         .unwrap();
 
-        let project_asset = project_root.join(".agent-manager");
+        let project_asset = project_root.join(".agents-manager");
         fs::create_dir_all(&project_asset).unwrap();
 
         let dest = copy_asset_to_asset_root(
@@ -2086,7 +2086,7 @@ mod tests {
     fn import_hook_from_cursor_project_scope() {
         let tmp = TempDir::new().unwrap();
         let repo = Utf8Path::from_path(tmp.path()).unwrap();
-        let asset_root = repo.join(".agent-manager");
+        let asset_root = repo.join(".agents-manager");
         fs::create_dir_all(asset_root.join("hooks")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 

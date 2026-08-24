@@ -1,4 +1,4 @@
-//! agent-manager 守护进程占位(Phase 2 实装)。
+//! agents-manager 守护进程占位(Phase 2 实装)。
 
 #![allow(dead_code)]
 
@@ -35,7 +35,7 @@ impl Default for Daemon {
 fn main() {
     let _daemon = Daemon::new();
     eprintln!(
-        "agent-managerd v{} (Phase 0 占位;Phase 2 起实装 watcher + bus + IPC)",
+        "agents-managerd v{} (Phase 0 占位;Phase 2 起实装 watcher + bus + IPC)",
         env!("CARGO_PKG_VERSION")
     );
     eprintln!("Phase 0 不进入事件循环;退出");

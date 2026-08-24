@@ -642,7 +642,7 @@ fn apply_refuses_to_run_while_another_projection_lock_exists() {
     fs::write(
         request
             .deploy_base
-            .join(".agent-manager-projection.lock")
+            .join(".agents-manager-projection.lock")
             .as_std_path(),
         "held",
     )

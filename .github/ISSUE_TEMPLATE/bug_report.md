@@ -17,7 +17,7 @@ labels: bug
 ## Environment
 
 - OS:
-- `agent-manager --version`:
+- `agents-manager --version`:
 - IDE (Cursor / Codex / Claude / Hermes):
 
 ## Logs / `--json` output

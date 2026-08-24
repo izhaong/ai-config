@@ -1,16 +1,16 @@
 [workspace]
 resolver = "2"
-# Phase 3 启用 apps/agent-manager-gui
+# Phase 3 启用 apps/agents-manager-gui
 # 升 Tauri 2.5 latest 解决 tauri-utils 2.9 vs tauri-build 2.0 上游冲突
 members = [
-    "crates/agent-manager-core",
-    "crates/agent-manager-cli",
-    "crates/agent-manager-daemon",
-    "crates/agent-manager-bus",
-    "crates/agent-manager-watcher",
-    "crates/agent-manager-store",
-    "apps/agent-manager-gui",
-    "apps/agent-manager-gui/src-tauri",
+    "crates/agents-manager-core",
+    "crates/agents-manager-cli",
+    "crates/agents-manager-daemon",
+    "crates/agents-manager-bus",
+    "crates/agents-manager-watcher",
+    "crates/agents-manager-store",
+    "apps/agents-manager-gui",
+    "apps/agents-manager-gui/src-tauri",
 ]
 
 [workspace.package]
@@ -18,7 +18,7 @@ version = "0.4.1"
 edition = "2021"
 rust-version = "1.78"
 license = "MIT"
-repository = "https://github.com/izhaong/agent-manager"
+repository = "https://github.com/izhaong/agents-manager"
 
 [workspace.dependencies]
 # 异步

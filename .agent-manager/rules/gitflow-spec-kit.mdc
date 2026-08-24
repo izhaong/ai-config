@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Git Flow + Spec Kit（Agent 自治）
 
-与 [spec-kit-gate.mdc](./spec-kit-gate.mdc)、[00-agent-manager-core.mdc](./00-agent-manager-core.mdc) 同时生效；冲突时 **本规则优先**（分支与规格流程）。
+与 [spec-kit-gate.mdc](./spec-kit-gate.mdc)、[00-agents-manager-core.mdc](./00-agents-manager-core.mdc) 同时生效；冲突时 **本规则优先**（分支与规格流程）。
 
 ## 用户侧零负担
 

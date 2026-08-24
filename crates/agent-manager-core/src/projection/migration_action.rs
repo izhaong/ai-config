@@ -569,7 +569,7 @@ struct ImportApplyLock {
 impl ImportApplyLock {
     fn acquire(transaction_root: &Utf8Path) -> Result<Self, CoreError> {
         validate_private_directory(transaction_root)?;
-        let path = transaction_root.join(".agent-manager-import.lock");
+        let path = transaction_root.join(".agents-manager-import.lock");
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -878,7 +878,7 @@ fn copy_directory_atomically(
         .parent()
         .ok_or_else(|| CoreError::InvalidPath("canonical destination has no parent".to_owned()))?;
     let temporary = Builder::new()
-        .prefix(".agent-manager-import-")
+        .prefix(".agents-manager-import-")
         .tempdir_in(parent.as_std_path())
         .map_err(CoreError::Io)?;
     let temporary_path = Utf8Path::from_path(temporary.path())
