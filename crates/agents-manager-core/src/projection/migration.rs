@@ -189,7 +189,7 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
     let mut issues = Vec::new();
     let mut legacy_canonical_agents = Vec::new();
     let mut canonical_hook_findings = Vec::new();
-    for root in layers {
+    for root in &layers {
         for asset in canonical_assets(
             root,
             request.scope,
