@@ -680,7 +680,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Skill,
             name: "demo".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.agents-manager/skills/demo"),
+            source_path: Utf8PathBuf::from("/home/user/.agents/skills/demo"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -720,7 +720,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Mcp,
             name: "catalog".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.agents-manager/mcp/servers/catalog.json"),
+            source_path: Utf8PathBuf::from("/home/user/.agents/mcp/servers/catalog.json"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -754,7 +754,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Hook,
             name: "format.sh".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.agents-manager/hooks/format.sh"),
+            source_path: Utf8PathBuf::from("/home/user/.agents/hooks/format.sh"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -781,7 +781,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Rule,
             name: "review".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.agents-manager/rules/review.mdc"),
+            source_path: Utf8PathBuf::from("/home/user/.agents/rules/review.mdc"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };
@@ -807,7 +807,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Mcp,
             name: "catalog".to_owned(),
-            source_path: Utf8PathBuf::from("/repo/.agents-manager/mcp/servers/catalog.json"),
+            source_path: Utf8PathBuf::from("/repo/.agents/mcp/servers/catalog.json"),
             layer: SourceLayer::Project,
             fingerprint: "source-v1".to_owned(),
         };
@@ -832,7 +832,7 @@ mod tests {
         let asset = EffectiveAsset {
             kind: AssetKind::Command,
             name: "review".to_owned(),
-            source_path: Utf8PathBuf::from("/home/user/.agents-manager/commands/review.md"),
+            source_path: Utf8PathBuf::from("/home/user/.agents/commands/review.md"),
             layer: SourceLayer::Global,
             fingerprint: "source-v1".to_owned(),
         };

@@ -68,7 +68,7 @@
 
 ### 配置恢复
 
-恢复 HEAD 中的 tracked `.cursor/hooks.json` 和仓库 delivery skill 详细度文本；不运行 sync、不修改 `~/.agents-manager`，避免越过用户资产边界。
+恢复 HEAD 中的 tracked `.cursor/hooks.json` 和仓库 delivery skill 详细度文本；不运行 sync、不修改 `~/.agents`，避免越过用户资产边界。
 
 ## 边界与风险
 

@@ -893,3 +893,36 @@ fn ledger_read_failure_warns_and_never_proves_generated_ownership() {
     assert_eq!(plan.warnings.len(), 1);
     assert_eq!(plan.warnings[0].code, "ledger_unavailable");
 }
+
+#[test]
+fn source_occupying_shared_agents_skills_target_is_noop() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let deploy_base = root.join("deploy");
+    let source_dir = deploy_base.join(".agents/skills/review");
+    fs::create_dir_all(source_dir.as_std_path()).unwrap();
+    fs::write(source_dir.join("SKILL.md").as_std_path(), "canonical\n").unwrap();
+    let fingerprint = path_content_digest(&source_dir).unwrap();
+    let asset = EffectiveAsset {
+        kind: AssetKind::Skill,
+        name: "review".to_owned(),
+        source_path: source_dir.clone(),
+        layer: SourceLayer::Project,
+        fingerprint,
+    };
+    let mut request = request(root, vec![asset], vec![PlatformId::Cursor, PlatformId::Codex]);
+    request.deploy_base = deploy_base;
+    let ledger = MemoryProjectionLedger::default();
+
+    let sync = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    assert_eq!(sync.actions.len(), 1);
+    assert!(matches!(sync.actions[0].kind, ProjectionActionKind::Noop));
+    assert_eq!(sync.actions[0].reason_code, "source_is_canonical_target");
+    assert!(ledger.list_scope("project:/fixture").unwrap().is_empty());
+
+    request.operation = ProjectionOperation::Retract;
+    let retract = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    assert!(matches!(retract.actions[0].kind, ProjectionActionKind::Noop));
+    assert_eq!(retract.actions[0].reason_code, "source_is_canonical_target");
+    assert!(source_dir.join("SKILL.md").is_file());
+}

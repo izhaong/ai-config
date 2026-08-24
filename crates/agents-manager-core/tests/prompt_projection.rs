@@ -56,11 +56,11 @@ fn project_template_root() -> Utf8PathBuf {
 
 #[test]
 fn project_template_seeds_the_canonical_agents_prompt() {
-    let prompt = project_template_root().join(".agents-manager/prompts/AGENTS.md");
+    let prompt = project_template_root().join(".agents/prompts/AGENTS.md");
 
     assert!(
         prompt.is_file(),
-        "the project template must seed the complete prompt at .agents-manager/prompts/AGENTS.md"
+        "the project template must seed the complete prompt at .agents/prompts/AGENTS.md"
     );
     assert!(
         !fs::read_to_string(prompt.as_std_path())
@@ -86,7 +86,7 @@ fn project_template_root_agents_is_an_exact_canonical_prompt_link() {
     );
     assert_eq!(
         fs::read_link(agents.as_std_path()).unwrap(),
-        std::path::PathBuf::from(".agents-manager/prompts/AGENTS.md"),
+        std::path::PathBuf::from(".agents/prompts/AGENTS.md"),
         "the project entry must link exactly to the canonical prompt"
     );
 }
@@ -108,7 +108,7 @@ fn prompt_plans_one_project_entry_for_all_platforms() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
     write(
-        &root.join("project/.agents-manager/prompts/AGENTS.md"),
+        &root.join("project/.agents/prompts/AGENTS.md"),
         "canonical project entry\n",
     );
     let request = project_request(root);
@@ -148,7 +148,7 @@ fn external_agents_link_is_reported_without_overwrite() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
     write(
-        &root.join("project/.agents-manager/prompts/AGENTS.md"),
+        &root.join("project/.agents/prompts/AGENTS.md"),
         "canonical project entry\n",
     );
     let external = root.join("external/AGENTS.md");
@@ -190,11 +190,11 @@ fn prompt_overlay_then_reapply_is_an_unchanged_noop() {
     let temp = TempDir::new().unwrap();
     let root = Utf8Path::from_path(temp.path()).unwrap();
     write(
-        &root.join("global/.agents-manager/prompts/AGENTS.md"),
+        &root.join("global/.agents/prompts/AGENTS.md"),
         "global entry\n",
     );
     write(
-        &root.join("project/.agents-manager/prompts/AGENTS.md"),
+        &root.join("project/.agents/prompts/AGENTS.md"),
         "project entry\n",
     );
     let request = project_request(root);

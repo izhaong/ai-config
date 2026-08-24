@@ -4,7 +4,7 @@
 
 ## 不变边界
 
-- Canonical source 只有 `~/.agents-manager/`、workspace layer 与 `<repo>/.agents-manager/`；平台目录绝不自动回流。
+- Canonical source 只有 `~/.agents/`、workspace layer 与 `<repo>/.agents/`；平台目录绝不自动回流。
 - 投影顺序固定为 **Skills → Rules → MCP → Agents → Commands → Hooks**。
 - `direct_link` 只用于一项专用路径；聚合配置一律以具名 entry `generated`，保留外部字段。
 - `unsupported` 是安全结果，不允许 fallback 到用户全局配置、虚构目录或历史路径。
@@ -19,7 +19,7 @@
 
 | 平台 | user / project target | 投影 |
 | --- | --- | --- |
-| Cursor、Codex | `.agents/skills/<name>/`（同一物理 target） | `direct_link`；显示 shared-target 可见性 |
+| Cursor、Codex | `.agents/skills/<name>/`（同一物理 target） | `direct_link`；显示 shared-target 可见性。**当 canonical source 已是 `.agents/skills` 时，source 与 target 同路径，planner 产出 `Noop`（`source_is_canonical_target`），绝不 `AdoptEquivalent` / retract 源目录** |
 | Claude | `.claude/skills/<name>/` | `direct_link` |
 | Hermes user | `~/.hermes/config.yaml#skills.external_dirs` | `external_directory`，引用 canonical skills 目录 |
 | Hermes project | — | `unsupported` |

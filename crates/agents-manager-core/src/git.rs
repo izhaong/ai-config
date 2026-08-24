@@ -1,4 +1,4 @@
-//! `~/.agents-manager` 目录的 Git 版本控制（本地仓库 + 可选远程同步）。
+//! `~/.agents` 目录的 Git 版本控制（本地仓库 + 可选远程同步）。
 //!
 //! 通过系统 `git` 命令操作；未安装 git 时返回 `git_available: false` 而不 panic。
 

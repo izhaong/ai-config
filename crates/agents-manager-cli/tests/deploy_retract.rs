@@ -115,7 +115,7 @@ fn status_does_not_initialize_global_asset_root() {
         .success();
 
     assert!(
-        !home.path().join(".agents-manager").exists(),
+        !home.path().join(".agents").exists(),
         "status must not create or seed the global asset root"
     );
 }
@@ -124,7 +124,7 @@ fn status_does_not_initialize_global_asset_root() {
 fn project_sync_apply_writes_mcp_under_project_deploy_base() {
     let home = TempDir::new().unwrap();
     let repo = TempDir::new().unwrap();
-    let asset_root = repo.path().join(".agents-manager");
+    let asset_root = repo.path().join(".agents");
     fs::create_dir_all(asset_root.join("mcp/servers")).unwrap();
     fs::write(
         asset_root.join("mcp/servers/project-only.json"),

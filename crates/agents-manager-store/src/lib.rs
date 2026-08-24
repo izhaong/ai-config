@@ -194,18 +194,18 @@ fn immutable_sqlite_uri(path: &Path) -> Result<String, StoreError> {
 
 // ── 默认路径 ─────────────────────────────────────────────────────
 
-/// `$XDG_DATA_HOME/agents-manager/store.sqlite` 或 OS 约定,fallback 到 `~/.agents-manager/store.sqlite`。
+/// `$XDG_DATA_HOME/agents-manager/store.sqlite` 或 OS 约定,fallback 到 `~/.agents/store.sqlite`。
 ///
 /// 优先级:
 /// 1. `$XDG_DATA_HOME/agents-manager/store.sqlite`(Linux)
 /// 2. `dirs::data_dir()`(OS 默认:macOS=`~/Library/Application Support`,Win=`%APPDATA%`)
-/// 3. `~/.agents-manager/store.sqlite`(sandbox / chroot fallback)
+/// 3. `~/.agents/store.sqlite`(sandbox / chroot fallback)
 pub fn default_path() -> Result<PathBuf, StoreError> {
     if let Some(base) = dirs::data_dir() {
         return Ok(base.join("agents-manager").join("store.sqlite"));
     }
     let home = dirs::home_dir().ok_or(StoreError::DataDirUnknown)?;
-    Ok(home.join(".agents-manager").join("store.sqlite"))
+    Ok(home.join(".agents").join("store.sqlite"))
 }
 
 // ── 本地错误 ─────────────────────────────────────────────────────

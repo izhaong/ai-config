@@ -34,7 +34,7 @@ $ARGUMENTS
 4. **编写 spec.md**（基于 `spec-template.md`）：
    - User Scenarios（P1/P2…，可独立验收）
    - Functional Requirements（须可测试）
-   - 明确 **不涉及** 用户 `~/.agents-manager/` 资产内容变更（除非工具行为本身）
+   - 明确 **不涉及** 用户 `~/.agents/` 资产内容变更（除非工具行为本身）
    - 成功标准对齐 constitution §5 验证
 5. **不写实现代码**；仅产出/更新 spec。
 6. Agent 继续写 `plan.md`（含 `## Todos`），不要求用户输入 `/speckit.plan`。

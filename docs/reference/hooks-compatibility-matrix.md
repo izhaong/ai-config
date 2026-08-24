@@ -1,10 +1,10 @@
 # Hooks 三端兼容矩阵
 
-本文定义 `agents-manager` 在 Cursor / Claude / Codex 三端的 Hook 下发兼容策略，目标是让同一份 `.agents-manager/hooks.json` 在不同平台可预测执行。
+本文定义 `agents-manager` 在 Cursor / Claude / Codex 三端的 Hook 下发兼容策略，目标是让同一份 `.agents/hooks.json` 在不同平台可预测执行。
 
 ## 统一原则
 
-- 源资产唯一入口：`.agents-manager/hooks.json` + `.agents-manager/hooks/`
+- 源资产唯一入口：`.agents/hooks.json` + `.agents/hooks/`
 - 平台差异收敛在 `agents-manager-core` 的 `hook_adapter`，不在平台配置手工分叉维护
 - 脚本输出统一 JSON（建议 `{"continue":true}`），`stderr` 仅用于错误信息
 
@@ -46,5 +46,5 @@
 当新映射行为不符合预期时，可按以下顺序回滚：
 
 1. 从平台配置删除本次托管条目（保留第三方 hooks）
-2. 重新从 `.agents-manager/hooks.json` 生成旧策略
+2. 重新从 `.agents/hooks.json` 生成旧策略
 3. 必要时在源 manifest 显式指定 matcher 覆盖默认值

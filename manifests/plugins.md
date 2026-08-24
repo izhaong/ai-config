@@ -1,6 +1,6 @@
 # 官方 / 插件 Skills（不纳入本仓库，仅记录安装来源）
 
-本仓库只维护**自研 workflow Skills**。下列为各 IDE 自带或插件 cache，升级插件时会覆盖，请勿复制进 `~/.agents-manager/skills/`。
+本仓库只维护**自研 workflow Skills**。下列为各 IDE 自带或插件 cache，升级插件时会覆盖，请勿复制进 `~/.agents/skills/`。
 
 ## npm / 上游发布
 

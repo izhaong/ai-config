@@ -5,9 +5,9 @@
 ## 必读
 
 1. `AGENTS.md`
-2. `.agents-manager/rules/00-agents-manager-core.mdc`（边界与验证）
-3. `.agents-manager/rules/spec-kit-gate.mdc`（非平凡改动先 spec）
-4. skill：`.agents-manager/skills/agents-manager-verify/SKILL.md`
+2. `.agents/rules/00-agents-manager-core.mdc`（边界与验证）
+3. `.agents/rules/spec-kit-gate.mdc`（非平凡改动先 spec）
+4. skill：`.agents/skills/agents-manager-verify/SKILL.md`
 
 ## 职责
 

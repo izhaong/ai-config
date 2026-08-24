@@ -5,8 +5,8 @@
 ## 必读
 
 1. `AGENTS.md` — 仓库入口
-2. `.agents-manager/rules/00-agents-manager-core.mdc` — 边界与验证
-3. `.agents-manager/rules/rust-agents-manager.mdc` — Rust 约定与 **crates.io 依赖选型**
+2. `.agents/rules/00-agents-manager-core.mdc` — 边界与验证
+3. `.agents/rules/rust-agents-manager.mdc` — Rust 约定与 **crates.io 依赖选型**
 4. `docs/product/ARCHITECTURE.md` — crate 与数据流
 
 ## 职责

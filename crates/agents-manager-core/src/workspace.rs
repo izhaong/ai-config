@@ -139,24 +139,24 @@ mod tests {
     fn effective_asset_inherits_workspace() {
         let tmp = TempDir::new().unwrap();
         let ws = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        fs::create_dir_all(ws.join(".agents-manager/skills/foo")).unwrap();
-        fs::write(ws.join(".agents-manager/skills/foo/SKILL.md"), "x").unwrap();
+        fs::create_dir_all(ws.join(".agents/skills/foo")).unwrap();
+        fs::write(ws.join(".agents/skills/foo/SKILL.md"), "x").unwrap();
         let member = ws.join("child");
         fs::create_dir_all(&member).unwrap();
         let asset = effective_asset_root_for_member(&member, &ws);
-        assert_eq!(asset, ws.join(".agents-manager"));
+        assert_eq!(asset, ws.join(".agents"));
     }
 
     #[test]
     fn effective_asset_prefers_member_when_present() {
         let tmp = TempDir::new().unwrap();
         let ws = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        fs::create_dir_all(ws.join(".agents-manager/skills/global")).unwrap();
-        fs::write(ws.join(".agents-manager/skills/global/SKILL.md"), "g").unwrap();
+        fs::create_dir_all(ws.join(".agents/skills/global")).unwrap();
+        fs::write(ws.join(".agents/skills/global/SKILL.md"), "g").unwrap();
         let member = ws.join("child");
-        fs::create_dir_all(member.join(".agents-manager/skills/local")).unwrap();
-        fs::write(member.join(".agents-manager/skills/local/SKILL.md"), "l").unwrap();
+        fs::create_dir_all(member.join(".agents/skills/local")).unwrap();
+        fs::write(member.join(".agents/skills/local/SKILL.md"), "l").unwrap();
         let asset = effective_asset_root_for_member(&member, &ws);
-        assert_eq!(asset, member.join(".agents-manager"));
+        assert_eq!(asset, member.join(".agents"));
     }
 }

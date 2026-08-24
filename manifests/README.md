@@ -1,6 +1,6 @@
 # Manifests 索引
 
-本目录记录 **不纳入 agents-manager 仓库** 的外部 Skills / 插件来源，避免与自研 `~/.agents-manager/skills/` 混淆。
+本目录记录 **不纳入 agents-manager 仓库** 的外部 Skills / 插件来源，避免与自研 `~/.agents/skills/` 混淆。
 
 ---
 
@@ -8,21 +8,21 @@
 
 | 类型        | 存放位置                      | 纳入 agents-manager 仓库 |
 | ----------- | ----------------------------- | ------------------- |
-| 自研工作流  | `~/.agents-manager/skills/<name>/` | ❌ 否（用户目录）   |
+| 自研工作流  | `~/.agents/skills/<name>/` | ❌ 否（用户目录）   |
 | Cursor 插件 | `~/.cursor/plugins/cache/`    | ❌ 否，仅在此记录   |
 | Claude 插件 | `~/.claude/plugins/cache/`    | ❌ 否               |
 
-插件 skill **禁止**复制进 `~/.agents-manager/` 冒充自研；见 [`plugins.md`](./plugins.md)。
+插件 skill **禁止**复制进 `~/.agents/` 冒充自研；见 [`plugins.md`](./plugins.md)。
 
 ---
 
 ## 新机器 Checklist
 
 1. 安装 agents-manager，`agents-manager install`
-2. 在 `~/.agents-manager/` 维护或恢复自研 skills
+2. 在 `~/.agents/` 维护或恢复自研 skills
 3. 配置 `~/.config/agents-manager/secrets.env` 后 `agents-manager sync`
 
-自研 Skills 索引见 `~/.agents-manager/skills/README.md`。
+自研 Skills 索引见 `~/.agents/skills/README.md`。
 
 ## 上游平台路径
 

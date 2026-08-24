@@ -270,18 +270,26 @@ pub fn inventory(request: &InventoryRequest) -> Result<MigrationInventory, CoreE
     entries.extend(canonical_hook_findings);
     let mut unsupported = Vec::new();
 
-    scan_skill_root(
-        &request.deploy_base,
-        &request.deploy_base.join(".agents/skills"),
-        InventoryProvenance::PlatformCurrent,
-        true,
-        vec![PlatformId::Cursor, PlatformId::Codex],
-        &effective,
-        &external,
-        request.scope,
-        &mut entries,
-        &mut issues,
-    )?;
+    let agents_skills = request.deploy_base.join(".agents/skills");
+    let agents_skills_is_canonical = layers.iter().any(|root| {
+        root.asset_root.join("skills") == agents_skills
+            || root.asset_root == request.deploy_base.join(".agents")
+            || root.asset_root == request.deploy_base
+    });
+    if !agents_skills_is_canonical {
+        scan_skill_root(
+            &request.deploy_base,
+            &agents_skills,
+            InventoryProvenance::PlatformCurrent,
+            true,
+            vec![PlatformId::Cursor, PlatformId::Codex],
+            &effective,
+            &external,
+            request.scope,
+            &mut entries,
+            &mut issues,
+        )?;
+    }
     scan_skill_root(
         &request.deploy_base,
         &request.deploy_base.join(".claude/skills"),
@@ -1134,7 +1142,7 @@ mod hook_inventory_p1_red_tests {
     fn cursor_catalog_lifecycles_are_valid_canonical_hook_bindings() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = global_request(home, &asset_root);
         let lifecycle_names = [
             "beforeReadFile",
@@ -1208,7 +1216,7 @@ mod hook_inventory_p1_red_tests {
     fn malformed_native_hook_container_shapes_are_blocking() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = global_request(home, &asset_root);
         let scalar = home.join(".cursor/hooks.json");
         let array = home.join(".codex/hooks.json");
@@ -1236,7 +1244,7 @@ mod hook_inventory_p1_red_tests {
     fn malformed_native_hook_document_roots_are_blocking() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = global_request(home, &asset_root);
         let cursor = home.join(".cursor/hooks.json");
         let hermes = home.join(".hermes/config.yaml");
@@ -1267,7 +1275,7 @@ mod hook_inventory_p1_red_tests {
     fn platform_hook_binding_cannot_pair_with_a_different_script_root() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = global_request(home, &asset_root);
         let container = home.join(".cursor/hooks.json");
         write(
@@ -1295,7 +1303,7 @@ mod hook_inventory_p1_red_tests {
     fn inventory_recognizes_current_adapter_hook_command_paths() {
         let global_temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(global_temp.path()).unwrap();
-        let global_assets = home.join(".agents-manager");
+        let global_assets = home.join(".agents");
         let global_request = global_request(home, &global_assets);
         let cursor_container = home.join(".cursor/hooks.json");
         let codex_container = home.join(".codex/hooks.json");
@@ -1363,7 +1371,7 @@ mod hook_inventory_p1_red_tests {
 
         let project_temp = TempDir::new().unwrap();
         let project = Utf8Path::from_path(project_temp.path()).unwrap();
-        let project_assets = project.join(".agents-manager");
+        let project_assets = project.join(".agents");
         let project_request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Project,
@@ -1418,7 +1426,7 @@ mod hook_inventory_p1_red_tests {
     fn claude_only_project_binding_can_use_the_shared_cursor_hook_script_root() {
         let temp = TempDir::new().unwrap();
         let project = Utf8Path::from_path(temp.path()).unwrap();
-        let project_assets = project.join(".agents-manager");
+        let project_assets = project.join(".agents");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Project,
@@ -1459,7 +1467,7 @@ mod hook_inventory_p1_red_tests {
     fn unknown_nested_command_does_not_forge_a_platform_hook_binding() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = global_request(home, &asset_root);
         let container = home.join(".cursor/hooks.json");
         write(
@@ -1490,7 +1498,7 @@ mod hook_inventory_p1_red_tests {
     fn platform_hook_binding_digest_is_isolated_from_siblings_and_unknown_fields() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = global_request(home, &asset_root);
         let container = home.join(".cursor/hooks.json");
         for name in ["alpha.sh", "beta.sh"] {
@@ -1555,7 +1563,7 @@ mod hook_inventory_p1_red_tests {
     fn hook_inventory_fingerprints_canonical_bindings_and_nested_platform_matchers() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let source = asset_root.join("hooks/run.sh");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
@@ -1650,7 +1658,7 @@ mod hook_inventory_p1_red_tests {
     fn invalid_hook_lifecycle_and_unresolvable_command_leaf_are_never_canonical_sources() {
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Global,
@@ -1727,7 +1735,7 @@ mod hook_inventory_p1_red_tests {
 
         let temp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(temp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let request = InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Global,
@@ -4610,7 +4618,7 @@ mod tests {
         InventoryRequest {
             canonical_layers: vec![CanonicalLayerRoot {
                 layer: SourceLayer::Global,
-                asset_root: root.join(".agents-manager"),
+                asset_root: root.join(".agents"),
             }],
             deploy_base: root.join("repo"),
             scope: InventoryScope::Project,
@@ -4794,8 +4802,8 @@ mod tests {
         let root = Utf8Path::from_path(temp.path()).unwrap();
         let home = root.join("home");
         let workspace = root.join("workspace");
-        let global = home.join(".agents-manager");
-        let workspace_assets = workspace.join(".agents-manager");
+        let global = home.join(".agents");
+        let workspace_assets = workspace.join(".agents");
         let request = InventoryRequest {
             canonical_layers: vec![
                 CanonicalLayerRoot {
@@ -5002,9 +5010,9 @@ mod tests {
         let home = root.join("home");
         let workspace = root.join("workspace");
         let project = workspace.join("project");
-        let global = home.join(".agents-manager");
-        let workspace_assets = workspace.join(".agents-manager");
-        let project_assets = project.join(".agents-manager");
+        let global = home.join(".agents");
+        let workspace_assets = workspace.join(".agents");
+        let project_assets = project.join(".agents");
 
         for (asset_root, label) in [
             (&global, "global"),
@@ -5322,7 +5330,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(temp.path()).unwrap();
         let home = root.join("home");
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let outside = root.join("outside/.agents-manager");
         write(&outside.join("skills/shared/SKILL.md"), OUTSIDE_SENTINEL);
         write(&outside.join("rules/shared.mdc"), OUTSIDE_SENTINEL);
@@ -5369,9 +5377,9 @@ mod tests {
         let root = Utf8Path::from_path(temp.path()).unwrap();
         let global = root.join("home/.agents-manager");
         let workspace = root.join("workspace");
-        let workspace_assets = workspace.join(".agents-manager");
+        let workspace_assets = workspace.join(".agents");
         let project = workspace.join("project");
-        let project_assets = project.join(".agents-manager");
+        let project_assets = project.join(".agents");
 
         write(&global.join("rules/global-rule.mdc"), "global rule\n");
         write(
@@ -5590,8 +5598,8 @@ mod tests {
         let root = Utf8Path::from_path(temp.path()).unwrap();
         let home = root.join("home");
         let workspace = root.join("workspace");
-        let global = home.join(".agents-manager");
-        let workspace_assets = workspace.join(".agents-manager");
+        let global = home.join(".agents");
+        let workspace_assets = workspace.join(".agents");
         let request = InventoryRequest {
             canonical_layers: vec![
                 CanonicalLayerRoot {
@@ -5871,4 +5879,34 @@ mod tests {
                 && !issue.path.starts_with(workspace.join(".hermes"))
         }));
     }
+
+    #[test]
+    fn inventory_skips_platform_agents_skills_when_canonical_source_is_same_path() {
+        let temp = TempDir::new().unwrap();
+        let root = Utf8Path::from_path(temp.path()).unwrap();
+        let asset_root = root.join("repo").join(".agents");
+        write(&asset_root.join("skills/demo/SKILL.md"), "canonical skill\n");
+        let request = InventoryRequest {
+            canonical_layers: vec![CanonicalLayerRoot {
+                layer: SourceLayer::Project,
+                asset_root: asset_root.clone(),
+            }],
+            deploy_base: root.join("repo"),
+            scope: InventoryScope::Project,
+        };
+
+        let result = inventory(&request).unwrap();
+        let demo_entries: Vec<_> = result
+            .entries
+            .iter()
+            .filter(|entry| entry.name == "demo" && entry.kind == AssetKind::Skill)
+            .collect();
+        assert_eq!(
+            demo_entries.len(),
+            1,
+            "canonical and platform .agents/skills must not double-count: {demo_entries:?}"
+        );
+        assert_eq!(demo_entries[0].provenance, InventoryProvenance::Canonical);
+    }
+
 }

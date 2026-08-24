@@ -95,7 +95,7 @@ fn prompt_import_plan_is_deterministic_redacted_and_read_only() {
     assert_eq!(action.action, ImportActionKind::CreateSource);
     assert_eq!(
         action.destination_path,
-        root.join("repo/.agents-manager/prompts/AGENTS.md")
+        root.join("repo/.agents/prompts/AGENTS.md")
     );
     assert_eq!(action.destination_layer, SourceLayer::Project);
     assert_eq!(action.secret_preflight.status, ImportSecretStatus::Clear);
@@ -132,7 +132,7 @@ fn selected_prompt_import_creates_canonical_source_and_preserves_platform_origin
     assert!(report.transaction_id.is_some());
     assert_eq!(fs::read(&request.source_path).unwrap(), original);
     assert_eq!(
-        fs::read(root.join("repo/.agents-manager/prompts/AGENTS.md")).unwrap(),
+        fs::read(root.join("repo/.agents/prompts/AGENTS.md")).unwrap(),
         original
     );
     let transaction_id = report.transaction_id.unwrap();
@@ -148,7 +148,7 @@ fn import_requires_selection_and_rejects_stale_source_without_writing() {
     let request = prompt_request(root, false);
     write(&request.source_path, "reviewed\n");
     let plan = build_import_plan(std::slice::from_ref(&request)).unwrap();
-    let destination = root.join("repo/.agents-manager/prompts/AGENTS.md");
+    let destination = root.join("repo/.agents/prompts/AGENTS.md");
 
     let no_selection = apply_import_plan(
         &plan,
@@ -174,7 +174,7 @@ fn replace_requires_explicit_plan_and_rollback_refuses_post_state_drift() {
     let root = utf8(temp.path());
     let request = prompt_request(root, false);
     write(&request.source_path, "imported\n");
-    let destination = root.join("repo/.agents-manager/prompts/AGENTS.md");
+    let destination = root.join("repo/.agents/prompts/AGENTS.md");
     write(&destination, "canonical\n");
 
     assert!(build_import_plan(std::slice::from_ref(&request)).is_err());
@@ -243,7 +243,7 @@ fn mcp_literal_secret_preflight_blocks_apply_without_serializing_the_value() {
         &root.join("transactions"),
     )
     .is_err());
-    assert!(!root.join("repo/.agents-manager/mcp/servers/demo.json").exists());
+    assert!(!root.join("repo/.agents/mcp/servers/demo.json").exists());
 }
 
 #[test]
@@ -293,7 +293,7 @@ http_headers = { Accept = "application/json", Content-Type = "application/json" 
 
     assert_eq!(fs::read(&source).unwrap(), before);
     let gitea: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join("repo/.agents-manager/mcp/servers/gitea.json")).unwrap(),
+        &fs::read(root.join("repo/.agents/mcp/servers/gitea.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(gitea["targets"], serde_json::json!(["codex"]));
@@ -304,7 +304,7 @@ http_headers = { Accept = "application/json", Content-Type = "application/json" 
     );
     assert!(gitea["config"].get("type").is_none());
     let jenkins: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join("repo/.agents-manager/mcp/servers/jenkins.json")).unwrap(),
+        &fs::read(root.join("repo/.agents/mcp/servers/jenkins.json")).unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -346,7 +346,7 @@ http_headers = {{ Authorization = "{sentinel}" }}
         &root.join("transactions"),
     )
     .is_err());
-    assert!(!root.join("repo/.agents-manager/mcp/servers/gitea.json").exists());
+    assert!(!root.join("repo/.agents/mcp/servers/gitea.json").exists());
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn codex_mcp_missing_named_entry_is_read_only_error() {
     assert!(result.is_err());
     assert_eq!(fs::read(&source).unwrap(), before);
     assert!(!root
-        .join("repo/.agents-manager/mcp/servers/missing.json")
+        .join("repo/.agents/mcp/servers/missing.json")
         .exists());
 }
 
@@ -442,7 +442,7 @@ fn rollback_restores_an_unchanged_replaced_canonical_source() {
     let root = utf8(temp.path());
     let request = prompt_request(root, true);
     write(&request.source_path, "imported\n");
-    let destination = root.join("repo/.agents-manager/prompts/AGENTS.md");
+    let destination = root.join("repo/.agents/prompts/AGENTS.md");
     write(&destination, "canonical before import\n");
     let plan = build_import_plan(&[request]).unwrap();
     let report = apply_import_plan(
@@ -470,7 +470,7 @@ fn rollback_refuses_a_concurrent_import_lock_without_changing_the_canonical_sour
     let root = utf8(temp.path());
     let request = prompt_request(root, true);
     write(&request.source_path, "imported\n");
-    let destination = root.join("repo/.agents-manager/prompts/AGENTS.md");
+    let destination = root.join("repo/.agents/prompts/AGENTS.md");
     write(&destination, "canonical before import\n");
     let plan = build_import_plan(&[request]).unwrap();
     let transaction_root = root.join("transactions");
@@ -627,7 +627,7 @@ fn mcp_nested_credential_like_field_is_redacted_and_blocks_import() {
         &root.join("transactions"),
     )
     .is_err());
-    assert!(!root.join("repo/.agents-manager/mcp/servers/demo.json").exists());
+    assert!(!root.join("repo/.agents/mcp/servers/demo.json").exists());
 }
 
 #[test]
@@ -695,7 +695,7 @@ fn import_apply_refuses_a_preexisting_transaction_lock_without_writing() {
     );
 
     assert!(result.is_err());
-    assert!(!root.join("repo/.agents-manager/prompts/AGENTS.md").exists());
+    assert!(!root.join("repo/.agents/prompts/AGENTS.md").exists());
     assert_eq!(
         fs::read(transaction_root.join(".agents-manager-import.lock")).unwrap(),
         b"active or requires inspection\n"
@@ -739,9 +739,9 @@ fn import_apply_is_zero_write_when_an_unselected_sibling_is_secret_blocked() {
     );
 
     assert!(result.is_err());
-    assert!(!root.join("repo/.agents-manager/prompts/AGENTS.md").exists());
+    assert!(!root.join("repo/.agents/prompts/AGENTS.md").exists());
     assert!(!root
-        .join("repo/.agents-manager/mcp/servers/blocked.json")
+        .join("repo/.agents/mcp/servers/blocked.json")
         .exists());
 }
 
@@ -796,7 +796,7 @@ fn skill_import_preserves_executable_mode_and_mode_changes_stale_the_plan() {
     )
     .unwrap();
     let mode = fs::metadata(
-        root.join("repo/.agents-manager/skills/demo/scripts/run.sh")
+        root.join("repo/.agents/skills/demo/scripts/run.sh")
             .as_std_path(),
     )
     .unwrap()

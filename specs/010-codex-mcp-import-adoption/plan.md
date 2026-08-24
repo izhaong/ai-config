@@ -19,7 +19,7 @@
 ```text
 .codex/config.toml#mcp_servers.<name>
   -> reviewed ImportPlan (paths/fingerprints/key names only)
-  -> .agents-manager/mcp/servers/<name>.json
+  -> .agents/mcp/servers/<name>.json
   -> normalized equivalence check
   -> explicit AdoptEquivalent
   -> per-entry projection ledger (target bytes unchanged)

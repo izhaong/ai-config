@@ -28,7 +28,7 @@ description: agents-manager 交付（贴合 Cursor）：用户下发任务 → A
 
 ### 1. 分支 + FEATURE_DIR
 
-见 `.agents-manager/rules/gitflow-spec-kit.mdc`、`.agents-manager/rules/spec-kit-gate.mdc`。
+见 `.agents/rules/gitflow-spec-kit.mdc`、`.agents/rules/spec-kit-gate.mdc`。
 
 ### 2. spec + plan（含 Todos）
 

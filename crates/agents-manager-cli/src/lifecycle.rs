@@ -804,8 +804,8 @@ mod tests {
         let home_tmp = tempfile::tempdir().expect("home");
         let _home = HomeGuard::set_to(home_tmp.path());
 
-        std::fs::create_dir_all(ws.join(".agents-manager/skills/foo")).unwrap();
-        std::fs::write(ws.join(".agents-manager/skills/foo/SKILL.md"), "SKILL").unwrap();
+        std::fs::create_dir_all(ws.join(".agents/skills/foo")).unwrap();
+        std::fs::write(ws.join(".agents/skills/foo/SKILL.md"), "SKILL").unwrap();
         std::fs::create_dir_all(ws.join("child")).unwrap();
         std::fs::write(
             ws.join(".gitmodules"),

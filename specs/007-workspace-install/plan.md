@@ -14,7 +14,7 @@
 ```
 member/.agents-manager 有内容? → 用 member
 否则 workspace/.agents-manager 存在? → 用 workspace
-否则 scan 仅 global (~/.agents-manager)
+否则 scan 仅 global (~/.agents)
 ```
 
 ## Todos

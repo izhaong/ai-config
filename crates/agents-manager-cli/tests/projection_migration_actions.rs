@@ -24,7 +24,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let home = TempDir::new().expect("temporary HOME");
-        let asset_root = home.path().join(".agents-manager");
+        let asset_root = home.path().join(".agents");
         fs::create_dir_all(&asset_root).expect("canonical asset root");
         Self { home, asset_root }
     }
@@ -555,7 +555,7 @@ impl ProjectFixture {
     fn new() -> Self {
         let home = TempDir::new().expect("temporary HOME");
         let project = home.path().join("project");
-        let asset_root = project.join(".agents-manager");
+        let asset_root = project.join(".agents");
         fs::create_dir_all(&project).expect("project root");
         Self {
             home,
@@ -667,7 +667,7 @@ bearer_token_env_var = "PROJECT_GITEA_TOKEN"
     );
     let report: Value = serde_json::from_slice(&applied.stdout).unwrap();
     let transaction_id = report["transaction_id"].as_str().unwrap();
-    let canonical = fixture.project.join(".agents-manager/mcp/servers/gitea.json");
+    let canonical = fixture.project.join(".agents/mcp/servers/gitea.json");
     let canonical_json: Value = serde_json::from_slice(&fs::read(&canonical).unwrap()).unwrap();
     assert_eq!(canonical_json["targets"], serde_json::json!(["codex"]));
     assert_eq!(
@@ -716,7 +716,7 @@ fn prompt_import_requires_reviewed_plan_and_preserves_platform_original() {
         plan["actions"][0]["destination_path"].as_str(),
         fixture
             .project
-            .join(".agents-manager/prompts/AGENTS.md")
+            .join(".agents/prompts/AGENTS.md")
             .to_str()
     );
     assert_eq!(plan["actions"][0]["secret_preflight"]["status"], "clear");
@@ -754,7 +754,7 @@ fn prompt_import_requires_reviewed_plan_and_preserves_platform_original() {
     );
     assert_eq!(fs::read(&agents).unwrap(), b"# Project instructions\n");
     assert_eq!(
-        fs::read(fixture.project.join(".agents-manager/prompts/AGENTS.md")).unwrap(),
+        fs::read(fixture.project.join(".agents/prompts/AGENTS.md")).unwrap(),
         b"# Project instructions\n"
     );
 }
@@ -769,7 +769,7 @@ fn migration_rollback_restores_unchanged_import_and_refuses_drift() {
     assert!(applied.status.success());
     let report: Value = serde_json::from_slice(&applied.stdout).unwrap();
     let transaction_id = report["transaction_id"].as_str().unwrap();
-    let canonical = fixture.project.join(".agents-manager/prompts/AGENTS.md");
+    let canonical = fixture.project.join(".agents/prompts/AGENTS.md");
     write(&canonical, "user changed canonical after import\n");
 
     let drifted = fixture

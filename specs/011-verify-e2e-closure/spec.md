@@ -24,7 +24,7 @@
 
 ### User Story 2 - 隔离验证同步生命周期 (Priority: P1)
 
-维护者可以在临时 HOME 和临时资产根中验证 plan、apply、status、retract/uninstall，不触碰真实 `~/.agents-manager` 与 IDE 配置。
+维护者可以在临时 HOME 和临时资产根中验证 plan、apply、status、retract/uninstall，不触碰真实 `~/.agents` 与 IDE 配置。
 
 **Why this priority**: 同步类命令可能因旧版本默认写入，真实环境冒烟不能作为安全默认。
 

@@ -11,25 +11,25 @@
 
 **写一套（skills / rules / mcp / agents）→ 同步到多个 AI 编码平台。**
 
-- **写一套**：本工具在 **agents-manager 平台目录**（`~/.agents-manager/` 或 `<project>/.agents-manager/`）维护 skills / rules / mcp / agents / commands
+- **写一套**：本工具在 **agents-manager 平台目录**（`~/.agents/` 或 `<project>/.agents/`）维护 skills / rules / mcp / agents / commands
 - **投影到多个平台**：Cursor / Codex / Claude Code / Hermes 只消费 source 的逐项链接或受管生成物，不是事实源
-- **分层**：全局（user-global，`~/.agents-manager/`）+ 项目（per-project，`<repo>/.agents-manager/` 与全局**同目录结构**）
+- **分层**：全局（user-global，`~/.agents/`）+ 项目（per-project，`<repo>/.agents/` 与全局**同目录结构**）
 
 ### 1.1 资产根目录同构（全局 ≡ 项目）
 
-项目拥有**独立的** skills / rules / mcp / agents，物理布局与 `~/.agents-manager/` **完全一致**，仅根路径不同：
+项目拥有**独立的** skills / rules / mcp / agents，物理布局与 `~/.agents/` **完全一致**，仅根路径不同：
 
 ```
-~/.agents-manager/                    <repo>/.agents-manager/
+~/.agents/                    <repo>/.agents/
 ├── skills/<name>/SKILL.md       ├── skills/<name>/SKILL.md
 ├── rules/*.mdc                  ├── rules/*.mdc
 ├── mcp/servers/<name>.json      ├── mcp/servers/<name>.json
 └── agents/                      └── agents/
 ```
 
-- 选中 **user-global**：读 / 写 `~/.agents-manager/` 下四类资产
-- 选中 **已注册项目**：读 / 写 `<repo>/.agents-manager/` 下四类资产（与全局 merge 后展示；编辑落盘在项目树）
-- 注册项目时若 `<repo>/.agents-manager/` 不存在，工具创建 source 目录；不创建平台配置副本
+- 选中 **user-global**：读 / 写 `~/.agents/` 下四类资产
+- 选中 **已注册项目**：读 / 写 `<repo>/.agents/` 下四类资产（与全局 merge 后展示；编辑落盘在项目树）
+- 注册项目时若 `<repo>/.agents/` 不存在，工具创建 source 目录；不创建平台配置副本
 
 ---
 
@@ -83,7 +83,7 @@
                     +
 ┌──────────────────────────────────────────────┐
 │  项目（per-project, 可选）                    │
-│  source = <project>/.agents-manager/               │
+│  source = <project>/.agents/               │
 │  ├─ skills/   (覆盖或附加)                   │
 │  ├─ rules/    (覆盖或附加)                   │
 │  ├─ mcp/      (覆盖或附加)                   │
@@ -107,13 +107,13 @@
 - **平台级开关** — 每个条目可独立勾选"同步到哪些平台"（`platforms: [cursor, claude, codex, hermes]`）
 - **幂等** — 重复跑同步结果一致
 - **父目录自愈** — 首次 deploy 时若平台目标父目录不存在（如 `~/.cursor/skills/` 或 `<repo>/.cursor/skills/`），工具自动创建，**不**因父目录缺失导致硬拷贝 / `mcp.json` 写入失败
-- **运行期刷新（GUI）** — 监听 `~/.agents-manager/` 与各已注册项目的 `<repo>/.agents-manager/`；debounce 后自动刷新资产列表与 per-platform 链接状态（无需手动点刷新）
+- **运行期刷新（GUI）** — 监听 `~/.agents/` 与各已注册项目的 `<repo>/.agents/`；debounce 后自动刷新资产列表与 per-platform 链接状态（无需手动点刷新）
 
 ### 3.3 持久化
 
 | 数据类型                                   | 存放位置                                   | 理由                                            |
 | ------------------------------------------ | ------------------------------------------ | ----------------------------------------------- |
-| **资产源**                                 | 文件系统（仓库 + `<project>/.agents-manager/`） | 资产本身要进 git 协作                           |
+| **资产源**                                 | 文件系统（仓库 + `<project>/.agents/`） | 资产本身要进 git 协作                           |
 | **同步状态**（per-item × per-platform）    | **SQLite**（守护进程）                     | 关系性查询："哪些项目下哪些条目没同步到 Hermes" |
 | **per-platform 勾选**                      | **SQLite**                                 | "skill `foo` 同步到哪些平台"这种状态随项目变化  |
 | **事件日志**                               | **SQLite**                                 | 排错用，可选导出                                |
@@ -126,14 +126,14 @@
 
 | 作用域          | 资产扫描根（读 / 编辑 / 合并） | 平台下发根（deploy / retract / 链接状态） |
 | --------------- | ------------------------------ | ----------------------------------------- |
-| **user-global** | `~/.agents-manager/`                | `$HOME` → `~/.cursor/`、`~/.claude/` 等   |
-| **已注册项目**  | `<repo>/.agents-manager/`           | `<repo>/` → `<repo>/.cursor/` 等          |
+| **user-global** | `~/.agents/`                | `$HOME` → `~/.cursor/`、`~/.claude/` 等   |
+| **已注册项目**  | `<repo>/.agents/`           | `<repo>/` → `<repo>/.cursor/` 等          |
 
-- `projects.root_path` 存**仓库根**；注册时可填仓库根或 `.agents-manager/`，入库前规范化为仓库根
-- **资产根同构**：`<repo>/.agents-manager/` 目录树与 `~/.agents-manager/` 相同（`skills/`、`rules/`、`agents/`、`mcp.json`）
-- 列表（GUI）：选中项目时**仅**展示 `<repo>/.agents-manager/` 内条目；user-global 仅展示 `~/.agents-manager/`（列表不混入另一侧）
+- `projects.root_path` 存**仓库根**；注册时可填仓库根或 `.agents/`，入库前规范化为仓库根
+- **资产根同构**：`<repo>/.agents/` 目录树与 `~/.agents/` 相同（`skills/`、`rules/`、`agents/`、`mcp.json`）
+- 列表（GUI）：选中项目时**仅**展示 `<repo>/.agents/` 内条目；user-global 仅展示 `~/.agents/`（列表不混入另一侧）
 - 同步计划（`compute_for_project`）：仍为 `scan_with_override` 合并（同 name 覆盖，供批量 sync）
-- 项目作用域 deploy **不得**写入 `$HOME` 平台目录；不得把仓库根当资产根直接扫 `skills/`（须经 `.agents-manager/`）
+- 项目作用域 deploy **不得**写入 `$HOME` 平台目录；不得把仓库根当资产根直接扫 `skills/`（须经 `.agents/`）
 - **Hermes（官方路径对齐）**：
   - **Skills**：始终 `$HOME/.hermes/skills`（`HERMES_SKILLS_DIR` 可选；非默认路径同步进 `config.yaml` → `skills.external_dirs`）。项目作用域也写 `$HOME`，不写 `<repo>/.hermes/skills`。
   - **Rules**：仅项目级 `<repo>/.cursor/rules/*.mdc`（Hermes 从 CWD 加载；user-global 不下发）。
@@ -185,7 +185,7 @@ GUI 的 agents-manager 视图是唯一可编辑 source。平台视图只读盘�
 #### D — 项目级覆盖
 
 1. 某项目需要 `skill-foo` 走项目内的版本，**不**影响全局
-2. 在 `<project>/.agents-manager/skills/skill-foo/` 创建项目版本
+2. 在 `<project>/.agents/skills/skill-foo/` 创建项目版本
 3. 工具自动：项目下 `skill-foo` 指向项目源，覆盖全局同名
 4. GUI 选中该项目后单条下发写入 `<project>/.cursor/skills/skill-foo` 等（**不**写 `~/.cursor/`）
 
@@ -268,7 +268,7 @@ GUI 的 agents-manager 视图是唯一可编辑 source。平台视图只读盘�
 ### 6.2 GUI（人类视角）
 
 - **布局**：左 = 项目 + 资产类型 + **五平台**浏览切换；右 = 统一资产列表 + 工具栏 + 编辑抽屉
-- **项目注册**：点击「+ 注册项目」打开**应用内表单**（项目名 + 仓库根路径）；提示文案说明资产在 `<repo>/.agents-manager/`、下发在 `<repo>/.cursor` 等。**不**使用 WebView 原生 `prompt` / `confirm`（Tauri 下不可靠）
+- **项目注册**：点击「+ 注册项目」打开**应用内表单**（项目名 + 仓库根路径）；提示文案说明资产在 `<repo>/.agents/`、下发在 `<repo>/.cursor` 等。**不**使用 WebView 原生 `prompt` / `confirm`（Tauri 下不可靠）
 - **项目移除**：点击项目旁 `×` 弹出**确认模态框**后再调用 `projects.remove`
 - **Tauri 命令参数**：前端 `invoke` 使用 camelCase（如 `rootPath`），与 Rust 命令签名映射由 Tauri 处理
 - **列表行右侧**（从左到右）：**五平台 favicon 按钮** → **更新（↻）** → **删除（🗑）**；行为见 §3.5
@@ -300,16 +300,16 @@ GUI 的 agents-manager 视图是唯一可编辑 source。平台视图只读盘�
 - **A-8** 删一条 MCP server → 4 份 `mcp.json` 都不再包含它（**不**残留）
 - **A-9** 任意 CLI 子命令 `--json` 都能解析，**不**夹杂人类文本
 - **A-10** `doctor --json` 给出 "软链接断在哪 / secrets 缺哪个" 的结构化诊断
-- **A-11** 项目下 `.agents-manager/skills/foo/` 创建后，**在该项目作用域**下发，4 个 IDE 在工作区看到的是项目版（链接在 `<repo>/.cursor/` 等）；其他项目 / user-global 仍见全局版
+- **A-11** 项目下 `.agents/skills/foo/` 创建后，**在该项目作用域**下发，4 个 IDE 在工作区看到的是项目版（链接在 `<repo>/.cursor/` 等）；其他项目 / user-global 仍见全局版
 - **A-12** `secrets.env` 在所有写入路径上都是 0600
 - **A-13** GUI 全屏找不到 secrets 明文值
 - **A-14** SQLite DB 中没有任何字段保存 secrets 明文值
-- **A-15** GUI 选中已注册项目时，资产列表**仅**来自 `<repo>/.agents-manager/`（空目录则空列表，不显示全局 `~/.agents-manager/` 条目）
+- **A-15** GUI 选中已注册项目时，资产列表**仅**来自 `<repo>/.agents/`（空目录则空列表，不显示全局 `~/.agents/` 条目）
 - **A-16** 项目作用域单条 deploy 后，副本仅出现在 `<repo>/.cursor`、`<repo>/.claude` 等平台目录，**不**出现在 `~/.cursor` 等用户主目录
-- **A-17** GUI 运行期间修改 `~/.agents-manager/` 或已注册项目 `<repo>/.agents-manager/`，资产列表与链接状态在约 2s 内自动刷新（文件监听 + debounce）
+- **A-17** GUI 运行期间修改 `~/.agents/` 或已注册项目 `<repo>/.agents/`，资产列表与链接状态在约 2s 内自动刷新（文件监听 + debounce）
 - **A-18** 平台目标父目录首次不存在时，deploy 自动创建父目录并成功完成，**不**报 `No such file or directory`
 - **A-19** Tauri GUI 注册 / 移除项目使用应用内模态框，**不**依赖 `window.prompt` / `window.confirm`
-- **A-21** 注册项目后 `<repo>/.agents-manager/` 自动具备与 `~/.agents-manager/` 相同的 `skills/`、`rules/`、`agents/` 子目录及 `mcp.json` 占位
+- **A-21** 注册项目后 `<repo>/.agents/` 自动具备与 `~/.agents/` 相同的 `skills/`、`rules/`、`agents/` 子目录及 `mcp.json` 占位
 - **A-22** 在平台视图浏览 Hermes 时，点击 Hermes icon **不**收回该 skill；在 agents-manager 源视图点击 agents-manager icon **不**收回 agents-manager 平台目录
 - **A-23** `npx skills` 等外部装入且内容一致的 skill 显示 **synced**；点击对应平台 icon 覆盖下发为 **linked**（写 marker），**更新**按钮可将 agents-manager 副本推到各已激活平台
 - **A-24** 点击 agents-manager icon 收回时，提示为 `← agentsmanager OK`，**不**使用「从源收回」文案；其它 IDE 平台副本保留
@@ -356,7 +356,7 @@ GUI 的 agents-manager 视图是唯一可编辑 source。平台视图只读盘�
 | **M2 — Phase 0 完成**     | 仓库进入 Rust 工具期，行为**未变**（旧 `install.sh` / 旧 webui 仍可用）  |
 | **M3 — Phase 1 完成**     | CLI 完全取代旧脚本，行为对齐；`mcp/` 资产从整文件重构为逐项              |
 | **M4 — Phase 2 完成**     | 守护进程 + 事件总线工作                                                  |
-| **M5 — Phase 3 完成**     | Tauri GUI 完全取代 webui；项目级 `.agents-manager/` 适配完成                  |
+| **M5 — Phase 3 完成**     | Tauri GUI 完全取代 webui；项目级 `.agents/` 适配完成                  |
 | **M6 — GA**               | 旧 `install.sh` / 旧 webui 删除；README 更新；MCP 整文件资产下线         |
 | **M7 — Deprecate Legacy** | 老命令忽略；旧数据迁完                                                   |
 
@@ -413,7 +413,7 @@ A：重构为逐项 `mcp/servers/<name>.json`。迁移器自动拆老模板到�
 **Q：旧 `install.sh` 删了之后 `git pull` 还能用吗？**
 A：M6 之后 `git pull` OK，只是 `install.sh` 不存在了；改用 `agents-manager install --all`。M7 之后进入"老命令忽略"。
 
-**Q：项目下 `.agents-manager/` 内容会进项目仓吗？**
+**Q：项目下 `.agents/` 内容会进项目仓吗？**
 A：看你 `.gitignore`。工具**不**自动 gitignore；项目仓 owner 自己决定是否进仓。
 
 ### 12.2 关键产品决策
@@ -446,8 +446,8 @@ A：看你 `.gitignore`。工具**不**自动 gitignore；项目仓 owner 自己
 
 | 时间       | 决策                                                                                                                                                              | 触发                          |
 | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| 2026-06-14 | **项目 `.agents-manager` 同构**：`<repo>/.agents-manager/` 与 `~/.agents-manager/` 目录结构一致（skills/rules/agents/mcp.json）；注册时自动初始化                                | 对话需求                      |
-| 2026-06-14 | **项目作用域下发根**：已注册项目 deploy/retract 目标为 `<repo>/.cursor` 等，资产扫描根为 `<repo>/.agents-manager/`；user-global 仍为 `~/.agents-manager` → `$HOME` 平台目录 | Phase 3 W9 实现与对话需求     |
+| 2026-06-14 | **项目 `.agents-manager` 同构**：`<repo>/.agents/` 与 `~/.agents/` 目录结构一致（skills/rules/agents/mcp.json）；注册时自动初始化                                | 对话需求                      |
+| 2026-06-14 | **项目作用域下发根**：已注册项目 deploy/retract 目标为 `<repo>/.cursor` 等，资产扫描根为 `<repo>/.agents/`；user-global 仍为 `~/.agents` → `$HOME` 平台目录 | Phase 3 W9 实现与对话需求     |
 | 2026-06-14 | **GUI 项目注册 UX**：Tauri WebView 禁用原生 `prompt`/`confirm`；改用 `RegisterProjectModal` + `ConfirmModal`                                                      | 注册按钮无响应排障            |
 | 2026-06-14 | **GUI 运行期监听**：监听全局与各项目 `.agents-manager` 资产根，debounce 后刷新列表与 LinkState                                                                         | 对话需求                      |
 | 2026-06-14 | **agents**：目录型 / 单文件均支持；4 平台 deploy；CLI 增 `agent list/show/reveal`；列表 description 解析与 skill 对齐                                             | Phase 3 W9 能力完善           |

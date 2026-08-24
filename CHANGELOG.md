@@ -6,6 +6,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Breaking
+
+- **产品与 crate 更名为 `agents-manager`**：二进制 `agents-manager`、环境变量 `AGENTS_MANAGER_*`（原 `AGENT_MANAGER_*`）、GitHub 仓库 `https://github.com/izhaong/agents-manager`。
+- **Canonical 资产根改为 Agent Skills 规范路径**：用户级 `~/.agents/`，项目级 `<repo>/.agents/`（不再使用 `~/.agents-manager/` / `~/.ai-config/` 作为资产根）。Cursor/Codex Skills 与源同路径时投影为 `Noop`（`source_is_canonical_target`），不会 `AdoptEquivalent` 或 retract 源目录。
+- **工具状态目录仍为 `agents-manager` 命名**：`~/.config/agents-manager/secrets.env`、`<deploy_base>/.agents-manager/projection-ledger.sqlite`、`.agents-manager-deploy.json` 等不变。
+
+### Added
+
+- **自投影守卫**：planner / executor / legacy `link` 拒绝源路径等于目标路径的破坏性动作；`doctor` 报告 `legacy_asset_roots`（只读提示）。
+- **本地适配脚本**：[`scripts/migrate-agents-root.sh`](scripts/migrate-agents-root.sh) 清理 `~/.agents/.agents` 嵌套副本，并将 `mcp.json` 拆到 `mcp/servers/`。
+
+### Changed
+
+- Cursor / Codex 的 `skills_dir` 默认指向 `.agents/skills`（与 Spec 008 / agentskills.io 一致）；`.cursor/skills` / `.codex/skills` 仅作 legacy inventory。
+
 ## [0.4.1] - 2026-07-29
 
 ### Added
@@ -43,7 +58,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **source-first T001 安全止血**：`retract` / `uninstall` 在缺少 marker、精确 legacy link 或 MCP 具名所有权记录时 fail-closed，不再删除普通平台副本或整份 MCP 配置；`status` / `doctor` / scope 解析不再初始化资产根或回写 Hook。项目 MCP 渲染使用项目 deploy base；doctor 仅报告字面 MCP secret 的计数及遗留 secret 文件元数据，不输出值。
-- **install 项目级增量合并**（Gitea #22）：`AGENT_MANAGER_ROOT=<repo>` 时正确解析 `<repo>/.agents-manager` + `~/.agents-manager` 合并源并下发到仓库根；hook merge 仅移除 `managedBy: agents-manager` 条目；项目作用域跳过覆盖非托管文件。
+- **install 项目级增量合并**（Gitea #22）：`AGENTS_MANAGER_ROOT=<repo>` 时正确解析 `<repo>/.agents` + `~/.agents` 合并源并下发到仓库根；hook merge 仅移除 `managedBy: agents-manager` 条目；项目作用域跳过覆盖非托管文件。
 - **GUI 平台按钮状态**：强化激活/未激活平台按钮的视觉对比。
 
 ### Added
@@ -58,7 +73,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **资产同步 Hooks（第六类）+ 生命周期 TTS**：源资产为 Cursor 格式 `hooks/hooks.json` + 扁平脚本（如 `hooks/lifecycle-tts.sh`）；列表项对应 manifest 中各生命周期下的 hook 对象，**title = command 路径中的文件名**，**description = 脚本开头 `"""..."""`**；唯一性按文件名 + 脚本内容。`install` / `sync` 按脚本 merge 下发四平台（adapter 兼容 Codex / Claude / Hermes）。默认 `lifecycle-tts` TTS 播报；`AGENT_MANAGER_TTS=0` 可关闭。
+- **资产同步 Hooks（第六类）+ 生命周期 TTS**：源资产为 Cursor 格式 `hooks/hooks.json` + 扁平脚本（如 `hooks/lifecycle-tts.sh`）；列表项对应 manifest 中各生命周期下的 hook 对象，**title = command 路径中的文件名**，**description = 脚本开头 `"""..."""`**；唯一性按文件名 + 脚本内容。`install` / `sync` 按脚本 merge 下发四平台（adapter 兼容 Codex / Claude / Hermes）。默认 `lifecycle-tts` TTS 播报；`AGENTS_MANAGER_TTS=0` 可关闭。
 
 ### Changed
 
@@ -69,7 +84,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **GUI 跨项目复制资产**：在 agents-manager 源视图勾选资产后，顶栏「复制到项目」可将 skill/rule/agent/command/mcp 从全局或其它项目复制到目标项目 `.agents-manager/`（实体副本；目标同名时拒绝）。
+- **GUI 跨项目复制资产**：在 agents-manager 源视图勾选资产后，顶栏「复制到项目」可将 skill/rule/agent/command/mcp 从全局或其它项目复制到目标项目 `.agents/`（实体副本；目标同名时拒绝）。
 
 ### Changed
 
@@ -78,8 +93,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **跨平台同步冲突**：以左侧当前浏览平台为对比基准；目标平台已有同名不同内容时弹出对比框，展示各平台差异并手动选择覆盖来源。
-- **平台 icon 对比基准**：浏览某 IDE 平台时，各平台 icon 状态均相对该平台内容计算（不再默认对照 `~/.agents-manager`）。
-- **GUI 平台 icon**：`synced`（仅存在于某平台、未进 `~/.agents-manager`）与 `linked` 一样显示为**激活**；未进则灰显。
+- **平台 icon 对比基准**：浏览某 IDE 平台时，各平台 icon 状态均相对该平台内容计算（不再默认对照 `~/.agents`）。
+- **GUI 平台 icon**：`synced`（仅存在于某平台、未进 `~/.agents`）与 `linked` 一样显示为**激活**；未进则灰显。
 - **doctor**：各平台独立硬拷贝 / 自有 `mcp.json` 与源不一致时**不再**计为 `wrong_type` / `wrong_source`；图标状态即真相。
 - **GUI 项目级 MCP**：跨平台同步与状态展示修复；**其它平台 icon 可点击切换**，当前浏览平台 icon **仅展示状态**（`cursor-default`），MCP 收回请点其它平台 icon 或行内删除。
 
@@ -92,7 +107,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **GUI 注册项目**：项目名可选（默认取目录名）；路径输入框支持系统文件夹选择器。
 - **MCP 外部控制**：`agents-manager serve` 启动 stdio MCP 服务器（list/show/save/deploy/retract/doctor/status/sync/env），供 Cursor / Claude Code 等 Agent 原生操作资产。
 - **Agent Skill**：`.cursor/skills/agents-manager-agent/SKILL.md` — 教 Agent 何时用 MCP 或 CLI `--json`。
-- **GUI 添加 MCP**：顶栏「+」打开 `AddMcpModal`，粘贴 JSON 写入 `~/.agents-manager/mcp.json` 并可选 deploy。
+- **GUI 添加 MCP**：顶栏「+」打开 `AddMcpModal`，粘贴 JSON 写入 `~/.agents/mcp.json` 并可选 deploy。
 
 ### Changed
 
@@ -117,7 +132,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **GUI Claude Marketplace 导入**：顶栏「购物袋」；多选 Skill 与平台后，先写入 agents-manager 源再 deploy 到各 IDE。
 - **参考文档**：`docs/reference/vercel-skills-agent-paths.md`、`manifests/vercel-skills-agents.snapshot.json`。
 - **AI 协作配置**：`.cursor/`（rules、agents、skills、commands）、`.specify/`（constitution、Spec Kit 模板与脚本）、`specs/`；扩充 `AGENTS.md`、`CLAUDE.md`。
-- **Commands 同步**：新增第 5 类资产 `command`（`~/.agents-manager/commands/<name>.md`），下发至 **Cursor** 与 **Claude**。
+- **Commands 同步**：新增第 5 类资产 `command`（`~/.agents/commands/<name>.md`），下发至 **Cursor** 与 **Claude**。
 - CLI `agents-manager command list|show|reveal`；`sync` / GUI 与 rules 同链路（实体复制 + `.agents-manager-deploy.json`）。
 - CLI `agents-manager mcp migrate-hermes`：将遗留 `~/.hermes/mcp.json` 合并进 `~/.hermes/config.yaml` 的 `mcp_servers`。
 - Core `hermes_config` 模块：YAML 读/写/比对、原子写、备份、`normalize_server_for_hermes`、`ensure_external_skills_dir`。
@@ -144,7 +159,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
-- **`global-config/`**：早期仓库内资产目录已废弃；用户全局资产统一在 `~/.agents-manager/`。
+- **`global-config/`**：早期仓库内资产目录已废弃；用户全局资产统一在 `~/.agents/`。
 
 ### Breaking
 
@@ -154,7 +169,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- GUI **项目作用域**：资产从 `<repo>/.agents-manager/` 读取，下发到 `<repo>/.cursor` 等平台目录（与全局 `~/.agents-manager` 同构）。
+- GUI **项目作用域**：资产从 `<repo>/.agents/` 读取，下发到 `<repo>/.cursor` 等平台目录（与全局 `~/.agents` 同构）。
 - GUI 注册/移除项目改用应用内模态框；注册时自动创建 `.agents-manager` 标准目录树。
 - GUI 工具栏「刷新」按钮；资产根目录文件监听（含 `mcp.json` 原子写入）。
 - CLI `agent` 子命令；core `for_scope` / `ensure_asset_layout` / `link_src_for_create`。
@@ -190,7 +205,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- MCP user assets consolidated to a **single** `~/.agents-manager/mcp.json` (legacy `mcp/servers/` migrated on install).
+- MCP user assets consolidated to a **single** `~/.agents/mcp.json` (legacy `mcp/servers/` migrated on install).
 - Test MCP fixtures sanitized (placeholders only; no real tokens or private hosts).
 
 ### Security

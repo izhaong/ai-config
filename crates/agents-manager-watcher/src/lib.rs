@@ -12,7 +12,7 @@ use thiserror::Error;
 
 const DEBOUNCE_MS: u64 = 200;
 
-/// 需要监听的资产根目录列表（`~/.agents-manager` 或项目 `.agents-manager` 等价路径）。
+/// 需要监听的资产根目录列表（`~/.agents` 或项目 `.agents-manager` 等价路径）。
 #[derive(Debug, Clone, Default)]
 pub struct WatchRoots {
     pub asset_roots: Vec<Utf8PathBuf>,

@@ -3,17 +3,17 @@
 **Feature Branch**: `006-install-project-merge`  
 **Created**: 2026-06-26  
 **Status**: Complete  
-**Input**: Gitea #22 — `AGENT_MANAGER_ROOT=<repo> agents-manager install` 破坏项目 MCP / hooks / 命令
+**Input**: Gitea #22 — `AGENTS_MANAGER_ROOT=<repo> agents-manager install` 破坏项目 MCP / hooks / 命令
 
 ## User Scenarios
 
 ### US1 - 项目 install 不破坏手写配置 (P1)
 
-**Given** 父仓已有 `.cursor/hooks.json`、`.claude/settings.json`（含 `mcpServers`）与完整 MCP 列表，**When** `AGENT_MANAGER_ROOT=<repo> agents-manager install`，**Then** 仅合并 agents-manager 托管条目，用户 hooks / MCP / 命令不被整文件覆盖或误删。
+**Given** 父仓已有 `.cursor/hooks.json`、`.claude/settings.json`（含 `mcpServers`）与完整 MCP 列表，**When** `AGENTS_MANAGER_ROOT=<repo> agents-manager install`，**Then** 仅合并 agents-manager 托管条目，用户 hooks / MCP / 命令不被整文件覆盖或误删。
 
 ### US2 - 正确解析项目作用域 (P1)
 
-**Given** `AGENT_MANAGER_ROOT` 指向仓库根（非 `~/.agents-manager`），**When** install，**Then** 资产源 = `<repo>/.agents-manager` 合并 `~/.agents-manager`，下发目标 = `<repo>/.cursor` 等（非 `$HOME`）。
+**Given** `AGENTS_MANAGER_ROOT` 指向仓库根（非 `~/.agents`），**When** install，**Then** 资产源 = `<repo>/.agents` 合并 `~/.agents`，下发目标 = `<repo>/.cursor` 等（非 `$HOME`）。
 
 ### US3 - Claude 共享 `.cursor/hooks/` (P2)
 

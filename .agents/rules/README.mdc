@@ -10,4 +10,4 @@
 | [gui-agents-manager.mdc](./gui-agents-manager.mdc)             | `apps/agents-manager-gui/**`  | React + Tauri；ahooks / es-toolkit / shadcn 选型             |
 | [hooks-asset-layout.mdc](./hooks-asset-layout.mdc)   | `hooks/**`、`hooks.json` | Hook 仅「单文件」或「单目录整包」；可同步单元约定            |
 
-Commands：`.agents-manager/commands/` · Skills：`.agents-manager/skills/` · Agents：`.agents-manager/agents/`
+Commands：`.agents/commands/` · Skills：`.agents/skills/` · Agents：`.agents/agents/`

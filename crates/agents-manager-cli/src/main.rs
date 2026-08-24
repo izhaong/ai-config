@@ -453,7 +453,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// 解析资产根目录:优先级 `--root` > `AGENTS_MANAGER_ROOT` > `~/.agents-manager`。
+/// 解析资产根目录:优先级 `--root` > `AGENTS_MANAGER_ROOT` > `~/.agents`。
 /// 命令入口只解析路径；初始化/播种必须由显式写操作负责。
 fn resolve_root(flag: Option<&str>) -> Utf8PathBuf {
     let raw = match flag {

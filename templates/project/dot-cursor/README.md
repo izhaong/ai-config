@@ -3,7 +3,7 @@
 本目录为 **Cursor / Claude / Codex / Hermes** 共用的项目级配置**唯一正文**。
 
 - **`.claude/`** 下 `rules`、`skills`、`plans`、`agents` 等通过 symlink 指向此处，请勿在 `.claude/` 单独改副本。
-- **全局** 通用规则在 `~/.agents-manager/rules/`；此处只放**本项目特有**约定。
+- **全局** 通用规则在 `~/.agents/rules/`；此处只放**本项目特有**约定。
 
 ## 目录
 
@@ -18,5 +18,5 @@
 ## 维护
 
 1. 改项目规则 → 只编辑 `rules/*.mdc`
-2. 改通用提交/编码准则 → 编辑 `~/.agents-manager/rules/`，再 `agents-manager sync`
-3. 新增全局 skill → `~/.agents-manager/skills/`，再 `agents-manager sync`
+2. 改通用提交/编码准则 → 编辑 `~/.agents/rules/`，再 `agents-manager sync`
+3. 新增全局 skill → `~/.agents/skills/`，再 `agents-manager sync`

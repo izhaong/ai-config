@@ -1,6 +1,6 @@
 //! 检测下发目标是否与源共用路径 / symlink / 硬链接（同 inode）。
 //!
-//! agents-manager 下发策略：**实体硬拷贝**，平台目录与 `~/.agents-manager` / `project/.agents-manager`
+//! agents-manager 下发策略：**实体硬拷贝**，平台目录与 `~/.agents` / `project/.agents-manager`
 //! 之间不得共享 inode；各 IDE 平台之间也不得互相链接。
 
 use camino::{Utf8Path, Utf8PathBuf};

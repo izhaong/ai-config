@@ -3,7 +3,7 @@
 //! 设计要点(PRD §8.1 / §10 A-3 / ARCHITECTURE §10):
 //! - 三态:`Symlink` / `Junction`(Windows fallback,避免开发者模式)/ `Hardlink`
 //! - 幂等:目标已存在且指向同一源 → noop;跑 N 遍与跑 1 遍结果一致
-//! - 覆盖:目标已存在且非同一链接 → 直接删除后重建（版本历史由 `~/.agents-manager` Git 承担）
+//! - 覆盖:目标已存在且非同一链接 → 直接删除后重建（版本历史由 `~/.agents` Git 承担）
 //! - 收回:`unlink` 只删本工具创建的链接,非本工具的拒
 //! - 健康检查:`check` 返回四态(Linked / Broken / WrongSource / WrongType)
 //!
@@ -89,13 +89,23 @@ pub fn is_legacy_bak_entry_name(name: &str) -> bool {
 /// 5. 权限不足 → `CoreError::PermissionDenied`
 ///
 /// 注:`src` 是相对 / 绝对路径都会原样写入链接(不强制规范化);调用方应
-/// 保证 `src` 是本工具管理的稳定路径(`~/.agents-manager/skills/foo`)。
+/// 保证 `src` 是本工具管理的稳定路径(`~/.agents/skills/foo`)。
 pub fn link(src: &Utf8Path, dest: &Utf8Path, kind: LinkKind) -> Result<(), CoreError> {
-    // 0. 入参校验:dest 不能是 src(防自环)。
+    // 0. 入参校验:dest 不能是 src(防自环)。含 canonicalize，覆盖 `.agents/skills` 源即目标。
     if src == dest {
         return Err(CoreError::InvalidPath(format!(
             "src 与 dest 相同,无法创建自环链接: {src}"
         )));
+    }
+    if let (Ok(s), Ok(d)) = (
+        fs::canonicalize(src.as_std_path()),
+        fs::canonicalize(dest.as_std_path()),
+    ) {
+        if s == d {
+            return Err(CoreError::InvalidPath(format!(
+                "src 与 dest 解析为同一路径,无法创建自环链接: {src}"
+            )));
+        }
     }
 
     // 1. dest 已存在?

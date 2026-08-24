@@ -287,7 +287,7 @@ mod tests {
 
     fn projection_fixture() -> TempDir {
         let repo = TempDir::new().expect("temporary project");
-        let source = repo.path().join(".agents-manager");
+        let source = repo.path().join(".agents");
         fs::create_dir_all(source.join("skills/demo")).expect("skill parent");
         fs::write(source.join("skills/demo/SKILL.md"), "# canonical demo\n")
             .expect("canonical skill");
@@ -454,7 +454,7 @@ mod tests {
         let _secret_dir = EnvVarGuard::set("AGENTS_MANAGER_SECRETS_DIR", secrets.path());
 
         let repo = projection_fixture();
-        let source = repo.path().join(".agents-manager/mcp/servers/catalog.json");
+        let source = repo.path().join(".agents/mcp/servers/catalog.json");
         fs::create_dir_all(source.parent().expect("MCP source parent")).expect("MCP source parent");
         fs::write(
             source,

@@ -42,7 +42,7 @@ docs: 更新 README Quick Start
 
 - Business logic belongs in `crates/agents-manager-core`; CLI/GUI call core, do not duplicate sync rules.
 - Do **not** commit real tokens, passwords, or private hostnames — use placeholders in tests and docs.
-- User assets live under `~/.agents-manager/`; this repo ships code and templates only.
+- User assets live under `~/.agents/`; this repo ships code and templates only.
 
 ## Pull requests
 

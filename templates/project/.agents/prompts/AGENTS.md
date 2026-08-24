@@ -7,15 +7,15 @@
 1. 本文件（项目摘要与路由）。
 2. [`.cursor/README.md`](./.cursor/README.md) — 项目 AI 配置总览。
 3. [`.cursor/rules/00-project-core.mdc`](./.cursor/rules/00-project-core.mdc) — 项目核心约束（`alwaysApply`）。
-4. 全局通用规则：`~/.agents-manager/rules/`（由 `agents-manager sync` 下发到各 IDE）。
+4. 全局通用规则：`~/.agents/rules/`（由 `agents-manager sync` 下发到各 IDE）。
 
 ## 通用规则（agents-manager，四端同源）
 
-跨项目编码与提交准则见 **`~/.agents-manager/rules/*.mdc`**（用户全局资产，本机不在 git）。agents-manager 工具仓自身规则见 **`agents-manager/.cursor/rules/`**。勿在本仓库重复粘贴全文。
+跨项目编码与提交准则见 **`~/.agents/rules/*.mdc`**（用户全局资产，本机不在 git）。agents-manager 工具仓自身规则见 **`agents-manager/.cursor/rules/`**。勿在本仓库重复粘贴全文。
 
 | 入口 | 路径 |
 | --- | --- |
-| Codex | `~/.agents-manager/` 经 `agents-manager install` 链接到各 IDE |
+| Codex | `~/.agents/` 经 `agents-manager install` 链接到各 IDE |
 | Hermes（在 agents-manager 目录） | [`agents-manager/HERMES.md`](../../agents-manager/HERMES.md) |
 | Hermes（在本项目） | [`HERMES.md`](./HERMES.md) |
 
@@ -33,8 +33,8 @@ Claude Code / Codex 通过 **`.claude/` → `.cursor/` symlink** 读取同一套
 ## 工作流硬约束（摘要）
 
 - 业务变更走 **Issue → 分支 → 小步提交 → PR**，勿直推 `main` / `develop`（若适用）。
-- Commit：中文 Conventional Commits，见 `~/.agents-manager/rules/` 中提交规范（或 zh-cloud `.claude/rules/conventional-commits.mdc`）。
-- 编码纪律：见 `~/.agents-manager/rules/` 或 zh-cloud Karpathy 规则。
+- Commit：中文 Conventional Commits，见 `~/.agents/rules/` 中提交规范（或 zh-cloud `.claude/rules/conventional-commits.mdc`）。
+- 编码纪律：见 `~/.agents/rules/` 或 zh-cloud Karpathy 规则。
 - 不输出真实 token、密钥；示例仅用占位符。
 
 ## 执行约定

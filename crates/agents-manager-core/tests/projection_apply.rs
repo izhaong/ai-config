@@ -1832,3 +1832,50 @@ fn durable_adoption_rollback_refuses_ledger_drift_without_touching_any_member() 
             .is_symlink());
     }
 }
+
+#[test]
+fn apply_rejects_adopt_when_source_is_canonical_target() {
+    let temp = TempDir::new().unwrap();
+    let root = Utf8Path::from_path(temp.path()).unwrap();
+    let deploy_base = root.join("deploy");
+    let source_dir = deploy_base.join(".agents/skills/review");
+    fs::create_dir_all(source_dir.as_std_path()).unwrap();
+    fs::write(source_dir.join("SKILL.md").as_std_path(), "body\n").unwrap();
+    let fingerprint = path_content_digest(&source_dir).unwrap();
+    let asset = EffectiveAsset {
+        kind: AssetKind::Skill,
+        name: "review".to_owned(),
+        source_path: source_dir.clone(),
+        layer: SourceLayer::Project,
+        fingerprint,
+    };
+    let request = ProjectionRequest {
+        operation: ProjectionOperation::Sync,
+        scope_key: "project:/fixture".to_owned(),
+        scope: DeploymentScope::Project,
+        deploy_base: deploy_base.clone(),
+        assets: vec![asset],
+        platforms: vec![PlatformId::Cursor],
+    };
+    let ledger = MemoryProjectionLedger::default();
+    let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
+    assert_eq!(plan.actions[0].reason_code, "source_is_canonical_target");
+
+    // Forge a hostile AdoptEquivalent action against the same path.
+    let mut hostile = plan.clone();
+    hostile.actions[0].kind = ProjectionActionKind::AdoptEquivalent;
+    hostile.actions[0].reason_code = "equivalent_requires_explicit_adoption".to_owned();
+    let action_id = hostile.action_ids[0].clone();
+    let err = apply_projection_plan(
+        &hostile,
+        &ExecutorContext::new(&ledger, deploy_base.clone(), root.join("backup")),
+        ApplyOptions::with_selected_action_ids(&hostile, [action_id]),
+    )
+    .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("source_is_canonical_target") || msg.contains("canonical source"),
+        "unexpected error: {msg}"
+    );
+    assert!(source_dir.join("SKILL.md").is_file());
+}

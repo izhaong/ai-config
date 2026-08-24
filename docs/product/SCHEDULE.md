@@ -30,7 +30,7 @@
 | M2 — Phase 0 完成 | W2 | ⬜ | `crates/` workspace + CI + pre-commit 禁 sh + 旧命令仍可用 |
 | M3 — Phase 1 完成 | W5 | ⬜ | CLI 取代 `install.sh` + `scripts/*.mjs`；MCP 整文件 → 逐项重构完成 |
 | M4 — Phase 2 完成 | W7 | ⬜ | 守护进程 + 事件总线 |
-| M5 — Phase 3 完成 | W10 | ⬜ | Tauri GUI 取代 webui；项目级 `.agents-manager/` 适配 |
+| M5 — Phase 3 完成 | W10 | ⬜ | Tauri GUI 取代 webui；项目级 `.agents/` 适配 |
 | M6 — GA | W11 | ⬜ | 旧脚本/webui 删除；README 更新；`SCHEDULE.md` 进入"维护期" |
 | M7 — Deprecate Legacy | W23（GA + 3 月） | ⬜ | 老命令完全忽略；旧 DB 迁完可删 |
 

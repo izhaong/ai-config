@@ -55,7 +55,7 @@ use agents_manager_core::asset_ops::AssetFileDetail;
 pub struct AppState {
     /// SQLite 持久化(W9 起:projects 表)
     pub store: Arc<Store>,
-    /// 默认资产根(`~/.agents-manager/`;启动时自动创建子目录)
+    /// 默认资产根(`~/.agents/`;启动时自动创建子目录)
     pub default_root: Arc<RwLock<Utf8PathBuf>>,
     /// 资产目录文件监听句柄(项目增删时重启)
     pub watcher: Mutex<Option<WatcherHandle>>,
@@ -80,7 +80,7 @@ impl AppState {
     }
 }
 
-/// 启动时确保 `~/.agents-manager` 为 Git 仓库，并应用 store 中的远程配置。
+/// 启动时确保 `~/.agents` 为 Git 仓库，并应用 store 中的远程配置。
 fn bootstrap_git_repo(root: &Utf8Path, store: &Store) -> GitEnsureOutcome {
     let config = store.settings().git_config().unwrap_or_default();
     let branch = config.branch.as_str();
@@ -113,7 +113,7 @@ struct AssetEntry {
     kind: AssetKind,
     /// 对 skill:来自 `SKILL.md` 第一个 `# title` 行 / frontmatter;其它类型空字符串。
     description: String,
-    /// 源路径(本仓库或项目 `.agents-manager/`),给详情面板用。
+    /// 源路径(本仓库或项目 `.agents/`),给详情面板用。
     source_path: String,
     /// per-platform 链接状态(4 平台键都存在)。
     states: std::collections::HashMap<PlatformId, LinkState>,
@@ -135,6 +135,7 @@ struct DoctorSummary {
     missing_secrets: Vec<String>,
     unregistered_projects: Vec<String>,
     platform_capability_issues: Vec<PlatformIssue>,
+    legacy_asset_roots: Vec<String>,
     exit_code: u8,
 }
 
@@ -170,6 +171,7 @@ async fn cmd_doctor(state: State<'_, AppState>) -> Result<DoctorSummary, String>
                 reason: i.reason,
             })
             .collect(),
+        legacy_asset_roots: report.legacy_asset_roots,
         exit_code: report.exit_code,
     })
 }
@@ -279,7 +281,7 @@ fn platform_label(p: PlatformId) -> &'static str {
 /// 扫资产源,返回每条 per-platform 链接状态。
 ///
 /// `project` 为 `None` 或 `"user-global"` → 走默认根(本仓库);否则按名字查
-/// `Store` 拿 `Project.root_path`,扫该项目的 `.agents-manager/`,与默认根做 override 合并。
+/// `Store` 拿 `Project.root_path`,扫该项目的 `.agents/`,与默认根做 override 合并。
 #[tauri::command]
 async fn cmd_list(
     state: State<'_, AppState>,
@@ -288,7 +290,7 @@ async fn cmd_list(
     // 委托给 `resolve_scope` — 与其它 command 走同一路径,避免实现漂移。
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
 
-    // 2. 扫（项目作用域仅 `<repo>/.agents-manager/`；user-global 仅 `~/.agents-manager/`）
+    // 2. 扫（项目作用域仅 `<repo>/.agents/`；user-global 仅 `~/.agents/`）
     let scan = scan_assets_for_scope(&default_root, &asset_root)?;
 
     // 3. 扁平成 (kind, name, src) 列表
@@ -1087,7 +1089,7 @@ fn core_err_to_string(e: CoreError) -> String {
     e.to_string()
 }
 
-// ── Tauri command: ~/.agents-manager Git 同步 ─────────────────────────
+// ── Tauri command: ~/.agents Git 同步 ─────────────────────────
 
 #[derive(Debug, Serialize)]
 struct GitBootstrapResponse {

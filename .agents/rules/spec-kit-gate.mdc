@@ -69,4 +69,4 @@ alwaysApply: true
 ## 与 Claude Code / 全局规则
 
 - Claude 读 `AGENTS.md` + 本规则；落盘结构相同，语义对齐 Cursor Plan/Todo。
-- 本仓 `.agents-manager/rules/spec-kit-gate.mdc` + `gitflow-spec-kit.mdc` 为 **agents-manager 权威**；与 `~/.cursor/rules/spec-kit-sdd-gate.mdc` 一致，冲突时以本仓为准。
+- 本仓 `.agents/rules/spec-kit-gate.mdc` + `gitflow-spec-kit.mdc` 为 **agents-manager 权威**；与 `~/.cursor/rules/spec-kit-sdd-gate.mdc` 一致，冲突时以本仓为准。

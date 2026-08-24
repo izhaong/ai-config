@@ -877,7 +877,7 @@ mod deploy_from_platform_tests {
     fn prompt_legacy_mutators_fail_before_touching_platform_files() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(&asset_root).unwrap();
         let sentinel = asset_root.join("keep.txt");
         fs::write(&sentinel, "keep").unwrap();
@@ -926,7 +926,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -961,7 +961,7 @@ mod deploy_from_platform_tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let skill_dir = asset_root.join("skills/keep-me");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(skill_dir.join("SKILL.md"), "# keep\n").unwrap();
@@ -990,7 +990,7 @@ mod deploy_from_platform_tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("hooks")).unwrap();
         fs::write(
             asset_root.join("hooks/speak-lifecycle.py"),
@@ -1033,7 +1033,7 @@ mod deploy_from_platform_tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         let bundle = asset_root.join("hooks/lifecycle-tts");
         fs::create_dir_all(bundle.join("scripts")).unwrap();
         fs::write(bundle.join("scripts/run.sh"), "#!/bin/sh\n").unwrap();
@@ -1070,7 +1070,7 @@ mod deploy_from_platform_tests {
         fs::create_dir_all(&hermes_skill).unwrap();
         fs::write(hermes_skill.join("SKILL.md"), "# npx only\n").unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1100,7 +1100,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = ScopeRoots {
@@ -1155,7 +1155,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = ScopeRoots {
@@ -1175,7 +1175,7 @@ mod deploy_from_platform_tests {
     #[test]
     fn retract_agentsmanager_mcp_does_not_delete_source_server() {
         let tmp = TempDir::new().unwrap();
-        let asset_root = Utf8Path::from_path(tmp.path()).unwrap().join(".agents-manager");
+        let asset_root = Utf8Path::from_path(tmp.path()).unwrap().join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
         mcp_json::upsert_server_in_document(
             &asset_root,
@@ -1209,7 +1209,7 @@ mod deploy_from_platform_tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = ScopeRoots {

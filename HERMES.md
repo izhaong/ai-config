@@ -1,16 +1,16 @@
 # Hermes 入口（agents-manager 工具仓）
 
-**Rules 单一源**：本仓使用 `.agents-manager/rules/*.mdc`；用户级资产使用 `~/.agents-manager/rules/*.mdc`。平台目录由 source-first projection 生成，绝不作为正文副本提交。
+**Rules 单一源**：本仓使用 `.agents/rules/*.mdc`；用户级资产使用 `~/.agents/rules/*.mdc`。平台目录由 source-first projection 生成，绝不作为正文副本提交。
 
-在 **agents-manager 目录**内改工具代码时，先读项目 `.agents-manager/rules/`。
+在 **agents-manager 目录**内改工具代码时，先读项目 `.agents/rules/`。
 
 | 规则             | 路径（用户目录）                                |
 | ---------------- | ----------------------------------------------- |
-| 编码行为准则     | `~/.agents-manager/rules/karpathy-guidelines.mdc`    |
-| Git 提交规范     | `~/.agents-manager/rules/git-commit-conventions.mdc` |
-| Notes 文档工作流 | `~/.agents-manager/rules/notes-wiki-workflow.mdc`    |
+| 编码行为准则     | `~/.agents/rules/karpathy-guidelines.mdc`    |
+| Git 提交规范     | `~/.agents/rules/git-commit-conventions.mdc` |
+| Notes 文档工作流 | `~/.agents/rules/notes-wiki-workflow.mdc`    |
 
-**在 zh-cloud 等业务目录**跑 Hermes：读该目录 `AGENTS.md`，其中指向 `~/.agents-manager/rules/` 与项目级 `.cursor/rules/`。
+**在 zh-cloud 等业务目录**跑 Hermes：读该目录 `AGENTS.md`，其中指向 `~/.agents/rules/` 与项目级 `.cursor/rules/`。
 
 ## Skills / Rules / Agents（与官方对齐）
 

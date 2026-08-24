@@ -136,7 +136,9 @@ impl PlatformAdapter for CursorAdapter {
         PlatformId::Cursor
     }
     fn skills_dir(&self) -> Utf8PathBuf {
-        self.home.join(".cursor/skills")
+        // Spec 008 / Agent Skills: Cursor 与 Codex 共用 `.agents/skills` 物理 target。
+        // `.cursor/skills` 仅作 legacy inventory，不是新默认目标。
+        self.home.join(".agents/skills")
     }
     fn rules_dir(&self) -> Utf8PathBuf {
         self.home.join(".cursor/rules")
@@ -163,7 +165,9 @@ impl PlatformAdapter for CodexAdapter {
         PlatformId::Codex
     }
     fn skills_dir(&self) -> Utf8PathBuf {
-        self.home.join(".codex/skills")
+        // Spec 008 / Agent Skills: 与 Cursor 共用 `.agents/skills`。
+        // `.codex/skills` 仅作 legacy inventory。
+        self.home.join(".agents/skills")
     }
     fn rules_dir(&self) -> Utf8PathBuf {
         // Codex 不直接消费 rules(PRD §6.3 + ARCHITECTURE §5),保留目录
@@ -426,8 +430,9 @@ pub fn asset_kind_label(kind: AssetKind) -> &'static str {
 /// 解析平台字符串（含别名）。
 pub fn parse_platform_str(s: &str) -> Result<PlatformId, CoreError> {
     match s {
-        "agentsmanager" | "agentsmanager" | "agents" | "agents-manager" | "AgentsManager"
-        | "AgentsManager" | "am" | "ac" => Ok(PlatformId::AgentsManager),
+        "agentsmanager" | "agents" | "agents-manager" | "AgentsManager" | "am" | "ac" => {
+            Ok(PlatformId::AgentsManager)
+        }
         "cursor" | "Cursor" | "cu" => Ok(PlatformId::Cursor),
         "codex" | "Codex" | "cx" => Ok(PlatformId::Codex),
         "claude" | "Claude" | "cl" => Ok(PlatformId::Claude),

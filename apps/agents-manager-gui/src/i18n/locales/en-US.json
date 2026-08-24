@@ -38,7 +38,7 @@
   },
   "git": {
     "settings": {
-      "title": "Git sync (~/.agents-manager)",
+      "title": "Git sync (~/.agents)",
       "assetRoot": "Path: {{path}}",
       "remoteUrl": "Remote URL",
       "remotePlaceholder": "https://gitea.example.com/user/agents-manager.git",
@@ -62,7 +62,7 @@
     },
     "toast": {
       "gitUnavailable": "Git not found. Install Git and restart the app.",
-      "initializedLocal": "Initialized local Git repo for ~/.agents-manager. Add a remote in Settings to sync.",
+      "initializedLocal": "Initialized local Git repo for ~/.agents. Add a remote in Settings to sync.",
       "initializedWithRemote": "Git repo ready; remote applied.",
       "bootstrapFailed": "Git bootstrap failed: {{error}}",
       "configSavedRemote": "Remote settings saved",
@@ -95,7 +95,7 @@
   },
   "linkState": {
     "linked": "Synced",
-    "synced": "Content match (not agents-manager deploy)",
+    "synced": "Canonical Agent Skills path (discoverable; not a managed link)",
     "unlinked": "Not synced",
     "broken": "Link broken",
     "missing": "Target missing"
@@ -167,9 +167,9 @@
     "loading": "Loading…",
     "close": "Close",
     "mcp": "No MCP servers yet. Add entries in <code>{{assetRoot}}/mcp.json</code>",
-    "mcpGlobal": "No MCP servers yet. Add entries in <code>~/.agents-manager/mcp.json</code>",
+    "mcpGlobal": "No MCP servers yet. Add entries in <code>~/.agents/mcp.json</code>",
     "assets": "No assets yet. Add files under <code>{{assetRoot}}/{{kindDir}}/</code>",
-    "assetsGlobal": "No assets yet. Add files under <code>~/.agents-manager/{{kindDir}}/</code>"
+    "assetsGlobal": "No assets yet. Add files under <code>~/.agents/{{kindDir}}/</code>"
   },
   "drawer": {
     "loading": "Loading…",
@@ -229,7 +229,7 @@
   },
   "copyToProject": {
     "title": "Copy to project",
-    "summary": "Copy {{count}} asset(s) into the target project's .agents-manager source",
+    "summary": "Copy {{count}} asset(s) into the target project's .agents source",
     "preview": "Selected: {{names}}",
     "previewMore": "Selected: {{names}} and {{rest}} more",
     "targetLabel": "Target project",
@@ -302,7 +302,7 @@
     "nameDerivedHint": "If empty, will use: {{name}}",
     "rootLabel": "Project root directory",
     "rootPlaceholder": "/path/to/repo",
-    "rootHint": "Repo root; creates <repo>/.agents-manager/ (same layout as ~/.agents-manager: skills, rules, agents, mcp.json)",
+    "rootHint": "Repo root; creates <repo>/.agents/ (same layout as ~/.agents: skills, rules, agents, mcp.json)",
     "pickFolder": "Choose folder",
     "pickFolderTitle": "Pick project root in file manager",
     "submit": "Register"

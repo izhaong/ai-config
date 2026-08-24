@@ -13,11 +13,11 @@
 
 ### US1 - 一次 install 覆盖父仓 + 子模块 (P1)
 
-**Given** 聚合仓根含 `.gitmodules` 与 `.agents-manager/`，**When** `agents-manager install --workspace <repo>`，**Then** 对父仓及每个已 checkout 的子模块路径执行项目级 install（增量合并，不覆盖非托管文件）。
+**Given** 聚合仓根含 `.gitmodules` 与 `.agents/`，**When** `agents-manager install --workspace <repo>`，**Then** 对父仓及每个已 checkout 的子模块路径执行项目级 install（增量合并，不覆盖非托管文件）。
 
 ### US2 - 子仓继承父仓资产源 (P1)
 
-**Given** 子模块无本地 `.agents-manager/`（或为空），**When** workspace install，**Then** 扫描源回落到 `<workspace>/.agents-manager` 合并 `~/.agents-manager`，而非仅全局。
+**Given** 子模块无本地 `.agents/`（或为空），**When** workspace install，**Then** 扫描源回落到 `<workspace>/.agents-manager` 合并 `~/.agents`，而非仅全局。
 
 ### US3 - bootstrap 渐进迁移 (P2)
 
@@ -27,7 +27,7 @@
 
 - **FR-001**: 解析 `.gitmodules` 的 `path` 列表（跳过未 checkout 目录）
 - **FR-002**: `resolve_member_sync_roots(member, workspace)` — 子仓无资产时继承 workspace `.agents-manager`
-- **FR-003**: CLI `install` / `sync` 支持 `--workspace`（隐含 `AGENT_MANAGER_ROOT=<workspace>`）
+- **FR-003**: CLI `install` / `sync` 支持 `--workspace`（隐含 `AGENTS_MANAGER_ROOT=<workspace>`）
 - **FR-004**: JSON 报告含 `members[]` 与每仓 outcomes
 - **FR-005**: 不替代 bootstrap 的 per-repo 白名单（后续 `repo-manifest.yaml`）
 
@@ -35,7 +35,7 @@
 
 | 能力 | bootstrap | workspace install |
 | ---- | --------- | ----------------- |
-| 资产范围 | 每仓手写白名单 | 父 `.agents-manager` ∪ `~/.agents-manager` 全量 |
+| 资产范围 | 每仓手写白名单 | 父 `.agents-manager` ∪ `~/.agents` 全量 |
 | hooks 模板 | `hooks.repo.json` / parent 变体 | agents-manager hook merge |
 | Codex 仅 3 仓 | 手动 `sync_codex_hooks` | 凡有 `.codex/` 即 merge |
 | COMMANDS.md | 生成 | 不生成 |

@@ -1964,6 +1964,28 @@ fn plan_direct_link(
     intent.target.path = normalized_target_path(&intent.target.path);
     let precondition = path_fingerprint(&intent.target.path)?;
     let source_path = canonical_source_path(&intent.source.absolute_path)?;
+    // When canonical source already lives at the platform target (Agent Skills
+    // `.agents/skills`), projection is a pure no-op: never adopt/retract the source itself.
+    if source_path == intent.target.path {
+        return Ok(ProjectionAction {
+            kind: ProjectionActionKind::Noop,
+            target: Some(intent.target),
+            precondition: Some(precondition),
+            ownership_fingerprint: None,
+            generated_renderer: None,
+            members: vec![ProjectionMember {
+                id: intent.id,
+                source: intent.source,
+                entry_key: None,
+            }],
+            mcp_members: Vec::new(),
+            consumers: intent.consumers,
+            state: Some("equivalent".to_owned()),
+            reason_code: "source_is_canonical_target".to_owned(),
+            reason: "canonical source already occupies the projection target; no link or retract"
+                .to_owned(),
+        });
+    }
     let observation = observe_target(&intent.target.path, &precondition);
     let expectation = ProjectionExpectation {
         id: intent.id.clone(),

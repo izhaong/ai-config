@@ -24,8 +24,8 @@
 
 | 层级 | 位置 | 内容 |
 | --- | --- | --- |
-| 全局 | `~/.agents-manager/{skills,rules,commands,agents,mcp.json}` | 跨项目通用（本机，不在 git） |
-| 项目 | `<project>/.agents-manager/` 或 `<project>/.cursor/` | 仅本项目的工作流、技术栈、仓库约定 |
+| 全局 | `~/.agents/{skills,rules,commands,agents,mcp.json}` | 跨项目通用（本机，不在 git） |
+| 项目 | `<project>/.agents/` 或 `<project>/.cursor/` | 仅本项目的工作流、技术栈、仓库约定 |
 | 本机 | `~/.config/agents-manager/secrets.env` | MCP 密钥 |
 
 项目规则**不要**复制 agents-manager 里的通用 `.mdc`；在 `00-project-core.mdc` 里写指针即可。
@@ -38,5 +38,5 @@
 | --- | --- |
 | `{{PROJECT_NAME}}` | 显示名 |
 | `{{PROJECT_SLUG}}` | 目录名 / slug |
-| `{{AGENT_MANAGER_REL}}` | 从项目根到 agents-manager 的相对路径 |
+| `{{AGENTS_MANAGER_REL}}` | 从项目根到 agents-manager 的相对路径 |
 | `{{GENERATED_DATE}}` | 生成日期 ISO |

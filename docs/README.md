@@ -22,7 +22,7 @@
 
 | 文档                                          | 说明                                                   |
 | --------------------------------------------- | ------------------------------------------------------ |
-| 用户资产 `~/.agents-manager/`                      | 全局 skills / rules / mcp / agents / commands / prompts / hooks（本机，不在仓库内） |
+| 用户资产 `~/.agents/`                      | 全局 skills / rules / mcp / agents / commands / prompts / hooks（本机，不在仓库内） |
 | [manifests/README.md](../manifests/README.md) | 插件 skill 索引（不入库）                              |
 
 ## AI 协作（本仓工具开发）

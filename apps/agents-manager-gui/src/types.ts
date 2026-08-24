@@ -138,6 +138,8 @@ export interface DoctorSummary {
     kind: AssetKind;
     reason: string;
   }>;
+  /** Read-only hints for old asset roots (~/.ai-config, ~/.agents-manager). */
+  legacy_asset_roots?: string[];
   exit_code: number;
 }
 

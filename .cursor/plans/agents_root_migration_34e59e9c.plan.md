@@ -4,28 +4,28 @@ overview: 先收尾 agents-manager 改名并修复已损坏的 workspace，再�
 todos:
   - id: finish-rename
     content: 收尾 agents-manager 改名：git mv crate/app 目录、补齐 agents_manager / AGENTS_MANAGER_* / AgentsManager 三种形式、修 remote URL 与断链的 AGENTS.md
-    status: pending
+    status: completed
   - id: core-root
     content: 改 paths.rs 的 USER_ASSET_DIR_NAME 与 BUNDLE_SEED_DIR_NAMES 为 .agents，确认 ASSET_SUBDIRS 与派生函数无需改动
-    status: pending
+    status: completed
   - id: self-guard
     content: 在 planner 的 plan_direct_link 加 source==target 短路（Noop/source_is_canonical_target，不写 ledger），并在 executor 对破坏性动作加同路径拒绝
-    status: pending
+    status: completed
   - id: inventory-dedup
     content: migration.rs 的 inventory() 跳过与 canonical layer 同路径的 platform 扫描，避免重复条目
-    status: pending
+    status: completed
   - id: adapt-existing-root
     content: 清理 ~/.agents/.agents 嵌套副本；把 ~/.agents/mcp.json 拆成 mcp/servers/<name>.json；确认 scanner 容忍 skills/ 下的异物目录
-    status: pending
+    status: completed
   - id: repo-dogfood
     content: 本仓 .agents/ 落成 git rename、修复两个 AGENTS.md 软链、templates/project 同步、.gitignore 区分资产与工具状态、repository_hygiene 断言
-    status: pending
+    status: completed
   - id: gui-cli-docs
     content: GUI 路径与 i18n、Cursor/Codex「源即目标」状态呈现、platform-contracts 与 Spec 008 契约文档、README/PRD 路径引用
-    status: pending
+    status: completed
   - id: tests
     content: 精确替换测试 fixture 路径（排除工具状态字面量），新增自投影守卫、retract 保护、inventory 去重用例
-    status: pending
+    status: completed
 isProject: false
 ---
 

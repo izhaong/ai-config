@@ -8,19 +8,19 @@
 
 ## 设计决策（已确认方向）
 
-### 物理布局 — 用 `.agents-manager/hooks/`，不用仓库根 `hooks/`
+### 物理布局 — 用 `.agents/hooks/`，不用仓库根 `hooks/`
 
 与 PRD §1.1 资产根同构一致：
 
 ```
-~/.agents-manager/hooks/<name>/          <repo>/.agents-manager/hooks/<name>/
+~/.agents/hooks/<name>/          <repo>/.agents/hooks/<name>/
 ├── HOOK.md                         （元数据：description、enabled_platforms）
 ├── hook.yaml                       （canonical：events、matcher、script_dir）
 └── scripts/                        （默认脚本目录，可在 hook.yaml 覆盖）
     └── lifecycle-tts.sh
 ```
 
-**不用** `<repo>/hooks/` 作为资产根：会破坏「唯一正文在 `.agents-manager/`」约定，也与全局 `~/.agents-manager/` 不同构。项目级 hooks 落在 `<repo>/.agents-manager/hooks/`。
+**不用** `<repo>/hooks/` 作为资产根：会破坏「唯一正文在 `.agents/`」约定，也与全局 `~/.agents/` 不同构。项目级 hooks 落在 `<repo>/.agents/hooks/`。
 
 ### 一条 hook = 一项源资产（类 skill 目录）
 
@@ -57,7 +57,7 @@
 
 ### US1 - 左侧可见、逐条管理 (P1)
 
-**Given** `~/.agents-manager/hooks/lifecycle-tts/`，**When** 打开 GUI Hook 类，**Then** 列表显示 `lifecycle-tts`，可编辑 `hook.yaml` / 脚本，平台 icon 仅展示**支持且已下发**的平台（非 unsupported 灰显）。
+**Given** `~/.agents/hooks/lifecycle-tts/`，**When** 打开 GUI Hook 类，**Then** 列表显示 `lifecycle-tts`，可编辑 `hook.yaml` / 脚本，平台 icon 仅展示**支持且已下发**的平台（非 unsupported 灰显）。
 
 ### US2 - 分平台 deploy / retract (P1)
 
@@ -65,7 +65,7 @@
 
 ### US3 - 生命周期 TTS (P1)
 
-默认资产 `lifecycle-tts`：shell 执行 `agents-manager` 相关命令后 TTS 播报；`AGENT_MANAGER_TTS=0` 静默。
+默认资产 `lifecycle-tts`：shell 执行 `agents-manager` 相关命令后 TTS 播报；`AGENTS_MANAGER_TTS=0` 静默。
 
 ## Requirements
 

@@ -962,6 +962,12 @@ fn ide_asset_link_state(
     if !src.exists() {
         return LinkState::Broken;
     }
+    // Agent Skills: canonical source already occupies the shared `.agents/skills` target.
+    let src_canon = fs::canonicalize(src.as_std_path()).ok();
+    let dest_canon = fs::canonicalize(dest.as_std_path()).ok();
+    if src_canon.is_some() && src_canon == dest_canon {
+        return LinkState::Synced;
+    }
     let expected_src = link_src_for_create(kind, src);
     deploy_health_to_link_state(&dest, crate::materialize::check(&dest, &expected_src))
 }
@@ -1421,8 +1427,8 @@ mod tests {
             PlatformId::Cursor,
             AssetKind::Prompt,
             root,
-            &root.join(".agents-manager"),
-            &root.join(".agents-manager"),
+            &root.join(".agents"),
+            &root.join(".agents"),
         )
         .expect_err("Prompt must not enter the legacy scanner");
         assert!(err.to_string().contains("source-first projection planner"));
@@ -1481,7 +1487,7 @@ mod tests {
     fn content_equal_unmanaged_copy_is_synced_not_linked() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(tmp.path()).unwrap();
-        let source = root.join(".agents-manager/skills/demo/SKILL.md");
+        let source = root.join(".agents/skills/demo/SKILL.md");
         let target = root.join(".cursor/skills/demo/SKILL.md");
         touch(&source, "# same\n");
         touch(&target, "# same\n");
@@ -1597,7 +1603,7 @@ mod tests {
         );
         touch(&claude_skills.join("scripts").join("run.sh"), "#!/bin/sh\n");
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1644,7 +1650,7 @@ mod tests {
         fs::create_dir_all(&claude_skill).unwrap();
         fs::write(claude_skill.join("SKILL.md"), "# Find\n").unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1690,7 +1696,7 @@ mod tests {
         fs::create_dir_all(&hermes_skill).unwrap();
         fs::write(hermes_skill.join("SKILL.md"), "# Find\n").unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1717,7 +1723,7 @@ mod tests {
         fs::create_dir_all(&hermes_skill).unwrap();
         fs::write(hermes_skill.join("SKILL.md"), "# ext\n").unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("skills")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
@@ -1764,7 +1770,7 @@ mod tests {
         fs::create_dir_all(&cursor_skill).unwrap();
         fs::write(cursor_skill.join("SKILL.md"), "# Demo\n").unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         fs::create_dir_all(asset_root.join("skills/demo")).unwrap();
         fs::write(asset_root.join("skills/demo/SKILL.md"), "# Demo\n").unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
@@ -1796,7 +1802,7 @@ mod tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
@@ -1835,7 +1841,7 @@ mod tests {
         )
         .unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let scope = crate::asset_ops::ScopeRoots {
@@ -1884,7 +1890,7 @@ mod tests {
         crate::paths::ensure_parent_dir(&cursor_mcp).unwrap();
         fs::write(&cursor_mcp, r#"{"mcpServers":{"demo":{"command":"npx"}}}"#).unwrap();
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 
         let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
@@ -1906,7 +1912,7 @@ mod tests {
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
 
-        let asset_root = home.join(".agents-manager");
+        let asset_root = home.join(".agents");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
         let cfg = serde_json::json!({ "command": "uvx", "args": ["demo"] });
         mcp_json::upsert_server_in_document(&asset_root, "svc", cfg.clone()).unwrap();
@@ -1969,7 +1975,7 @@ mod tests {
         let project = TempDir::new().unwrap();
         let global_root = Utf8Path::from_path(global.path()).unwrap();
         let project_root = Utf8Path::from_path(project.path()).unwrap();
-        let global_asset = global_root.join(".agents-manager");
+        let global_asset = global_root.join(".agents");
         fs::create_dir_all(global_asset.join("hooks")).unwrap();
         fs::write(
             global_asset.join("hooks.json"),
@@ -1993,7 +1999,7 @@ mod tests {
         )
         .unwrap();
 
-        let project_asset = project_root.join(".agents-manager");
+        let project_asset = project_root.join(".agents");
         fs::create_dir_all(&project_asset).unwrap();
 
         let dest = copy_asset_to_asset_root(
@@ -2086,7 +2092,7 @@ mod tests {
     fn import_hook_from_cursor_project_scope() {
         let tmp = TempDir::new().unwrap();
         let repo = Utf8Path::from_path(tmp.path()).unwrap();
-        let asset_root = repo.join(".agents-manager");
+        let asset_root = repo.join(".agents");
         fs::create_dir_all(asset_root.join("hooks")).unwrap();
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
 

@@ -10,7 +10,7 @@ $ARGUMENTS
 
 ## 说明
 
-执行 skill **agents-manager-verify**（`.agents-manager/skills/agents-manager-verify/SKILL.md`）。
+执行 skill **agents-manager-verify**（`.agents/skills/agents-manager-verify/SKILL.md`）。
 
 ## 默认命令集
 

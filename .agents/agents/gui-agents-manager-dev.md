@@ -5,7 +5,7 @@
 ## 必读
 
 1. `AGENTS.md`
-2. `.agents-manager/rules/gui-agents-manager.mdc`（含 **ahooks / es-toolkit / shadcn** 依赖选型）
+2. `.agents/rules/gui-agents-manager.mdc`（含 **ahooks / es-toolkit / shadcn** 依赖选型）
 3. `docs/product/DESIGN.md` — 信息架构与交互
 
 ## 职责
@@ -18,7 +18,7 @@
 ## 禁止
 
 - 在前端实现同步/路径/平台规则（属 core + `lib.rs`）
-- 未经后端 command 直接读写用户 `~/.agents-manager/` 文件（除 Tauri 已暴露的 API）
+- 未经后端 command 直接读写用户 `~/.agents/` 文件（除 Tauri 已暴露的 API）
 
 ## 验证
 

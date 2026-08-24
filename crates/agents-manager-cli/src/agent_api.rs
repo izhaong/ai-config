@@ -25,7 +25,7 @@ pub struct EnvSummary {
     pub mcp_json: Option<String>,
 }
 
-/// 解析可选 root；空则使用 `~/.agents-manager`，但不创建目录或播种资产。
+/// 解析可选 root；空则使用 `~/.agents`，但不创建目录或播种资产。
 pub fn resolve_scope_root(root: Option<&str>) -> Utf8PathBuf {
     match root.filter(|s| !s.is_empty()) {
         Some(s) => paths::resolve_asset_root(Utf8Path::new(s)),
@@ -167,7 +167,7 @@ mod tests {
 
         assert_eq!(
             root,
-            Utf8PathBuf::from_path_buf(home.join(".agents-manager")).unwrap()
+            Utf8PathBuf::from_path_buf(home.join(".agents")).unwrap()
         );
         assert!(
             !root.exists(),

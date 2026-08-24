@@ -42,7 +42,7 @@ describe("canOpenEntry", () => {
   it("opens mcp on agents-manager source view", () => {
     const e = entry({
       kind: "mcp",
-      platform_path: "/home/.agents-manager/mcp.json",
+      platform_path: "/home/.agents/mcp.json",
     });
     expect(canOpenEntry(e)).toBe(true);
   });
@@ -90,7 +90,7 @@ describe("shouldLoadFromSource", () => {
   it("mcp with agentsmanager linked loads from source on deploy view", () => {
     const e = entry({
       kind: "mcp",
-      platform_path: "/home/.agents-manager/mcp.json",
+      platform_path: "/home/.agents/mcp.json",
       states: ALL_STATES({ agentsmanager: "linked", cursor: "linked" }),
     });
     expect(shouldLoadFromSource(e, "cursor")).toBe(true);

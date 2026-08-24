@@ -31,7 +31,7 @@
 
 作为拥有平台内置插件、手工配置和其他管理工具资产的用户，我希望 agents-manager 能识别它们但默认不接管，使状态检查、同步和卸载都不会破坏现有环境。
 
-**Why this priority**: 当前电脑已经存在 `~/.agents-manager`、`.cc-switch`、平台插件和平台本地目录等多个来源；在无法证明所有权时覆盖或删除，会直接造成数据损失。
+**Why this priority**: 当前电脑已经存在 `~/.agents`、`.cc-switch`、平台插件和平台本地目录等多个来源；在无法证明所有权时覆盖或删除，会直接造成数据损失。
 
 **Independent Test**: 准备托管链接、同内容普通副本、异内容同名资产、第三方软链和平台内置资产，运行 `status`、plan、apply 与 uninstall；验证分类准确且所有外部内容保持不变。
 
@@ -134,7 +134,7 @@
 
 #### 统一源结构与投影类型
 
-全局源固定为 `~/.agents-manager/`，项目源固定为 `<repo>/.agents-manager/`；两者目录结构必须同构。平台目录不是 source layer。
+全局源固定为 `~/.agents/`，项目源固定为 `<repo>/.agents/`；两者目录结构必须同构。平台目录不是 source layer。
 
 ```text
 <asset_root>/
@@ -248,11 +248,11 @@ Hook adapter 必须完成事件名、matcher、输入输出和阻断语义的显
 
 #### 单一事实源与作用域
 
-- **FR-001**: 用户级权威源必须为 `~/.agents-manager/`；项目覆盖源必须为 `<repo>/.agents-manager/`；平台目录不得自动成为事实源。
+- **FR-001**: 用户级权威源必须为 `~/.agents/`；项目覆盖源必须为 `<repo>/.agents/`；平台目录不得自动成为事实源。
 - **FR-002**: 有效资产解析顺序必须固定为 `project override > workspace default > global`，同类型同名采用整项覆盖，异名采用并集。
 - **FR-003**: 每次 list、status、plan、apply 和 import 都必须显示资产的实际 source layer 和绝对源路径。
 - **FR-004**: MCP server 必须作为独立资产存放于 `mcp/servers/<name>.json`；平台聚合配置不得成为权威源。
-- **FR-005**: 入口提示词必须作为 `prompts/<name>.md` 存放在对应 `.agents-manager/` source layer；项目根 `AGENTS.md` 必须是指向 canonical prompt 的逐项链接或可证明所有权的最小生成入口，`CLAUDE.md` 等平台专用入口仅保留 import/reference 与平台差异，不维护多份手工正文。
+- **FR-005**: 入口提示词必须作为 `prompts/<name>.md` 存放在对应 `.agents/` source layer；项目根 `AGENTS.md` 必须是指向 canonical prompt 的逐项链接或可证明所有权的最小生成入口，`CLAUDE.md` 等平台专用入口仅保留 import/reference 与平台差异，不维护多份手工正文。
 
 #### 单向投影与平台适配
 

@@ -27,7 +27,7 @@ alwaysApply: true
 
 - GUI / CLI **不得**复制 core 已有逻辑；新能力先进 `agents-manager-core`，再暴露 CLI 子命令与 Tauri command。
 - 平台路径与 install 语义见 `crates/agents-manager-core/src/platform.rs`。
-- 用户资产在 `~/.agents-manager/`；本仓只维护工具与模板。
+- 用户资产在 `~/.agents/`；本仓只维护工具与模板。
 - Hook 物理布局（单文件 / 目录整包、可同步单元）见 [hooks-asset-layout.mdc](./hooks-asset-layout.mdc)。
 
 ## 开工前（Agent 自治，用户无感）

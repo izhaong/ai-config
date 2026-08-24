@@ -1262,6 +1262,11 @@ fn stage_projection_plan(
                     report.set_status(index, ApplyActionStatus::Applied);
                     Ok(())
                 }),
+            ProjectionActionKind::Noop if action.reason_code == "source_is_canonical_target" => {
+                // Canonical source already occupies the target; never claim ownership in the ledger.
+                report.set_status(index, ApplyActionStatus::Unchanged);
+                Ok(())
+            }
             ProjectionActionKind::Noop if action.members.is_empty() => {
                 // Generated MCP-only batches already proved every named entry against the
                 // persistent ledger during planning. They have no direct-link member from which
@@ -1567,6 +1572,7 @@ fn apply_create_link(
         .ok_or_else(|| {
             CoreError::InvalidPath("CreateLink action has no source member".to_owned())
         })?;
+    ensure_source_is_not_target(source, &target.path)?;
     ensure_target_is_allowed(&target.path, &context.deploy_base)?;
     let expected = action.precondition.as_ref().ok_or_else(|| {
         CoreError::InvalidPath("CreateLink action has no target precondition".to_owned())
@@ -1618,6 +1624,7 @@ fn apply_remove_managed_link(
         .ok_or_else(|| {
             CoreError::InvalidPath("RemoveManagedLink action has no source member".to_owned())
         })?;
+    ensure_source_is_not_target(source, &target.path)?;
     ensure_target_is_allowed(&target.path, &context.deploy_base)?;
     let expected = action.precondition.as_ref().ok_or_else(|| {
         CoreError::InvalidPath("RemoveManagedLink action has no target precondition".to_owned())
@@ -1659,6 +1666,7 @@ fn apply_adopt_equivalent(
         .ok_or_else(|| {
             CoreError::InvalidPath("AdoptEquivalent action has no source member".to_owned())
         })?;
+    ensure_source_is_not_target(source, &target.path)?;
     ensure_target_is_allowed(&target.path, &context.deploy_base)?;
     let expected = action.precondition.as_ref().ok_or_else(|| {
         CoreError::InvalidPath("AdoptEquivalent action has no target precondition".to_owned())
@@ -1711,6 +1719,7 @@ fn apply_copy_fallback(
         .ok_or_else(|| {
             CoreError::InvalidPath("CopyFallback action has no source member".to_owned())
         })?;
+    ensure_source_is_not_target(source, &target.path)?;
     ensure_target_is_allowed(&target.path, &context.deploy_base)?;
     let expected = action.precondition.as_ref().ok_or_else(|| {
         CoreError::InvalidPath("CopyFallback action has no target precondition".to_owned())
@@ -1793,6 +1802,13 @@ fn apply_remove_managed_copy(
     let target = action.target.as_ref().ok_or_else(|| {
         CoreError::InvalidPath("RemoveManagedCopy action has no target".to_owned())
     })?;
+    if let Some(source) = action
+        .members
+        .first()
+        .map(|member| &member.source.absolute_path)
+    {
+        ensure_source_is_not_target(source, &target.path)?;
+    }
     ensure_target_is_allowed(&target.path, &context.deploy_base)?;
     let expected = action.precondition.as_ref().ok_or_else(|| {
         CoreError::InvalidPath("RemoveManagedCopy action has no target precondition".to_owned())
@@ -3512,6 +3528,27 @@ fn ensure_target_is_allowed(target: &Utf8Path, deploy_base: &Utf8Path) -> Result
     }) {
         return Err(CoreError::InvalidPath(
             "projection target escapes the allowlisted deploy root".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse any destructive projection when the target path is the canonical source itself.
+fn ensure_source_is_not_target(source: &Utf8Path, target: &Utf8Path) -> Result<(), CoreError> {
+    let source_canon = match fs::canonicalize(source.as_std_path()) {
+        Ok(path) => Utf8PathBuf::from_path_buf(path)
+            .map_err(|path| CoreError::InvalidPath(path.to_string_lossy().into_owned()))?,
+        Err(_) => source.to_path_buf(),
+    };
+    let target_canon = match fs::canonicalize(target.as_std_path()) {
+        Ok(path) => Utf8PathBuf::from_path_buf(path)
+            .map_err(|path| CoreError::InvalidPath(path.to_string_lossy().into_owned()))?,
+        Err(_) => target.to_path_buf(),
+    };
+    if source_canon == target_canon || source == target {
+        return Err(CoreError::InvalidPath(
+            "refusing projection that would mutate the canonical source path (source_is_canonical_target)"
+                .to_owned(),
         ));
     }
     Ok(())

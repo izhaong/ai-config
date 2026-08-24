@@ -28,6 +28,8 @@ pub struct DoctorReport {
     pub literal_mcp_secret_values: usize,
     /// 资产根下遗留 mcp-secrets.env* 文件的相对路径与权限，不读取文件内容。
     pub legacy_mcp_secret_files: Vec<LegacyMcpSecretFile>,
+    /// 只读提示：检测到的旧资产根路径（`~/.ai-config` / `~/.agents-manager`），不做自动搬迁。
+    pub legacy_asset_roots: Vec<String>,
     pub exit_code: u8,
 }
 
@@ -67,6 +69,7 @@ pub fn compute_report(default_root: &Utf8Path) -> Result<DoctorReport, CoreError
             .as_ref()
             .map_or(0, |path| count_literal_mcp_secret_values(path)),
         legacy_mcp_secret_files: legacy_mcp_secret_files(default_root),
+        legacy_asset_roots: detect_legacy_asset_roots(),
         exit_code: 0,
     };
 
@@ -156,6 +159,19 @@ fn legacy_mcp_secret_files(root: &Utf8Path) -> Vec<LegacyMcpSecretFile> {
         .collect::<Vec<_>>();
     files.sort_by(|left, right| left.path.cmp(&right.path));
     files
+}
+
+/// 只读检测旧资产根；提示用户手动迁移，绝不自动搬迁。
+fn detect_legacy_asset_roots() -> Vec<String> {
+    let home = paths::home_dir();
+    let mut found = Vec::new();
+    for name in [".ai-config", ".agents-manager"] {
+        let candidate = home.join(name);
+        if candidate.is_dir() {
+            found.push(candidate.to_string());
+        }
+    }
+    found
 }
 
 #[cfg(unix)]
@@ -422,7 +438,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let _guard = crate::test_env::EnvGuard::set("HOME", home.to_str().unwrap());
-        let root = Utf8PathBuf::from_path_buf(home.join(".agents-manager")).unwrap();
+        let root = Utf8PathBuf::from_path_buf(home.join(".agents")).unwrap();
         crate::paths::ensure_user_asset_layout(&root).unwrap();
 
         let skill_name = "ext-skill";
@@ -448,7 +464,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let _guard = crate::test_env::EnvGuard::set("HOME", home.to_str().unwrap());
-        let root = Utf8PathBuf::from_path_buf(home.join(".agents-manager")).unwrap();
+        let root = Utf8PathBuf::from_path_buf(home.join(".agents")).unwrap();
         crate::paths::ensure_user_asset_layout(&root).unwrap();
         mcp_json::ensure_mcp_json(&root).unwrap();
         mcp_json::upsert_server_in_document(
@@ -469,7 +485,7 @@ mod tests {
     #[test]
     fn doctor_reports_literal_mcp_secret_metadata_without_values() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = Utf8PathBuf::from_path_buf(tmp.path().join(".agents-manager")).unwrap();
+        let root = Utf8PathBuf::from_path_buf(tmp.path().join(".agents")).unwrap();
         crate::paths::ensure_user_asset_layout(&root).unwrap();
         let sentinel = "T001_SECRET_SENTINEL_DO_NOT_LEAK";
         fs::write(

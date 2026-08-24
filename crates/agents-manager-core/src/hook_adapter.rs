@@ -1454,7 +1454,7 @@ mod tests {
     fn deploy_cursor_project_uses_dot_cursor_hooks_path() {
         let tmp = TempDir::new().unwrap();
         let repo = tmp.path().join("repo");
-        let asset = repo.join(".agents-manager");
+        let asset = repo.join(".agents");
         let hooks = asset.join("hooks");
         fs::create_dir_all(&hooks).unwrap();
         fs::write(

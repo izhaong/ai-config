@@ -12,7 +12,7 @@
 
 `crates/agents-manager-cli/src/main.rs` 的 `Cmd::Completion` 直接把 `Stdout` 交给 `clap_complete::generate`。该依赖在 writer 返回 BrokenPipe 时内部 panic，因此常见的 `completion zsh | head` 以 101 退出。
 
-`.agents-manager/skills/agents-manager-verify/SKILL.md` 目前只列出 cargo/npm/doctor/status 命令：
+`.agents/skills/agents-manager-verify/SKILL.md` 目前只列出 cargo/npm/doctor/status 命令：
 
 - 未比较 `target/debug/agents-manager` 与 PATH 中的真实安装版本；
 - 建议的 `agents-manager sync --dry-run` 与当前 0.4.0 `--apply` 契约不一致，旧版甚至可能默认写入；
@@ -55,8 +55,8 @@ installed version guard ──► real read-only doctor/status
 | ---------- | ---- | -------- | ---- |
 | `agents-manager-cli` | `src/main.rs` | 修改 | completion 先渲染到内存，再安全写 stdout |
 | `agents-manager-cli` | `src/main.rs` tests | 新增 | BrokenPipe 与普通 IO 错误回归 |
-| project skill | `.agents-manager/skills/agents-manager-verify/SKILL.md` | 修改 | 四层验证门禁 |
-| project skill | `.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh` | 新增 | 版本检查与隔离 E2E |
+| project skill | `.agents/skills/agents-manager-verify/SKILL.md` | 修改 | 四层验证门禁 |
+| project skill | `.agents/skills/agents-manager-verify/scripts/verify-closure.sh` | 新增 | 版本检查与隔离 E2E |
 | docs | `CHANGELOG.md` | 修改 | 记录 CLI 修复与验证增强 |
 
 ### API / 类型

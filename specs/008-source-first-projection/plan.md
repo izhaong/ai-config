@@ -16,7 +16,7 @@
 
 ## Global Constraints
 
-- `~/.agents-manager/` 是 user-global 唯一源；`<repo>/.agents-manager/` 是 project override；平台目录永远不是自动回流源。
+- `~/.agents/` 是 user-global 唯一源；`<repo>/.agents/` 是 project override；平台目录永远不是自动回流源。
 - Effective precedence 固定为 `project > workspace > global`，同 kind + name 整项覆盖，异名并集。
 - Direct assets 只允许逐项链接，禁止链接整个 `skills/`、`rules/`、`agents/`、`commands/`、`prompts/` 或 `hooks/` 根目录。
 - 内容相等只表示 `equivalent`，不能单独证明 agents-manager 所有权。
@@ -86,7 +86,7 @@ uninstall / retract
 ### 目标数据流
 
 ```text
-~/.agents-manager (global canonical)
+~/.agents (global canonical)
             +
 <workspace>/.agents-manager (optional workspace defaults)
             +
@@ -491,7 +491,7 @@ Planner 必须先规范化 target path，再按 `target.path` 聚合所有 gener
 
 | 维度 | Global | Workspace | Project/member |
 | --- | --- | --- | --- |
-| source root | `~/.agents-manager` | `<workspace>/.agents-manager` | `<repo>/.agents-manager` |
+| source root | `~/.agents` | `<workspace>/.agents-manager` | `<repo>/.agents` |
 | deploy base | `$HOME` | workspace root | repo root |
 | 同名优先级 | 低 | 中 | 高 |
 | 缺失资产 | — | 继承 global | 继承 workspace/global |
@@ -511,7 +511,7 @@ Planner 必须先规范化 target path，再按 `target.path` 聚合所有 gener
 
 Legacy `.codex/skills`、`.codex/mcp.json`、`.claude/mcp.json` 只进入 inventory，不再作为 deploy target。
 
-`Prompt` 不由四个平台各生成一份：planner 为它创建唯一 `ProjectionSurface::ProjectEntry`，把 `<repo>/AGENTS.md` 精确链接到 effective `.agents-manager/prompts/AGENTS.md`。各平台 adapter 只声明是否消费该 shared entry；Claude 额外生成最小 `CLAUDE.md` entry。若根入口已是普通文件或其他来源链接，状态为 Equivalent/Foreign/Conflict，必须显式 import/adopt，绝不模板覆盖。
+`Prompt` 不由四个平台各生成一份：planner 为它创建唯一 `ProjectionSurface::ProjectEntry`，把 `<repo>/AGENTS.md` 精确链接到 effective `.agents/prompts/AGENTS.md`。各平台 adapter 只声明是否消费该 shared entry；Claude 额外生成最小 `CLAUDE.md` entry。若根入口已是普通文件或其他来源链接，状态为 Equivalent/Foreign/Conflict，必须显式 import/adopt，绝不模板覆盖。
 
 ### 3. Ownership and ledger
 
@@ -838,7 +838,7 @@ public lifecycle 切换仍留给 T009。
 - Test: `crates/agents-manager-core/tests/hook_projection.rs`
 - Test: `crates/agents-manager-core/tests/prompt_projection.rs`
 
-**Produces:** Hook script/bundle direct link + platform config GeneratedMutation；`.agents-manager/prompts/AGENTS.md` canonical、root `AGENTS.md` ProjectEntry link、Claude minimal wrapper。
+**Produces:** Hook script/bundle direct link + platform config GeneratedMutation；`.agents/prompts/AGENTS.md` canonical、root `AGENTS.md` ProjectEntry link、Claude minimal wrapper。
 
 **执行状态（2026-07-17，防偏航）**：Prompt canonical source、Hook JSON transaction 与
 Hermes user 的跨域 coordinator 已完成独立 RED→GREEN checkpoint。Hook JSON 覆盖 Cursor、
@@ -850,12 +850,12 @@ public lifecycle 以及 Hermes cross-domain retract/uninstall；在此之前，�
 两份针对同一 `config.yaml` 的计划。
 
 - [x] **T008.1 Write failing Hook tests**：scan zero-write；foreign bindings preserved across platforms；retract only owned binding/link；drift blocks retract；bundle single unit；apply failure restores config+link；project overlay；migration always backup；Hermes project Hook unsupported 且 global config 零变化。
-- [x] **T008.2 Write failing Prompt tests**：project template seeds `.agents-manager/prompts/AGENTS.md`；root AGENTS 是精确 link；四平台只产生一个 ProjectEntry action；Claude wrapper 只引用 AGENTS；现有普通 AGENTS/CLAUDE 或外部 link 为 Equivalent/Foreign/Conflict 且零覆盖；prompt overlay 与 repeated apply noop。
+- [x] **T008.2 Write failing Prompt tests**：project template seeds `.agents/prompts/AGENTS.md`；root AGENTS 是精确 link；四平台只产生一个 ProjectEntry action；Claude wrapper 只引用 AGENTS；现有普通 AGENTS/CLAUDE 或外部 link 为 Equivalent/Foreign/Conflict 且零覆盖；prompt overlay 与 repeated apply noop。
 - [x] **T008.3 Write cross-domain container test**：Hermes user `config.yaml` 同时包含 MCP、`skills.external_dirs`、Hook 与 foreign provider/model 时，planner 只生成一个 target batch，container renderer 一次解析/替换并保留全部 foreign/unknown；workspace/project 请求为 Unsupported 且绝不触碰 global config。
 - [x] **T008.4 Verify RED**：`hook_projection` 与 `prompt_projection` 均先实测 RED；Prompt 6/6、Hook JSON 11/11 已转 GREEN，保留 Hermes YAML 跨域 RED 给 T008.3。
 - [ ] **T008.5 Split adapter responsibilities**：Hook/ExternalDirectory/PromptWrapper adapter 只产生 domain intents；每个目标配置只有一个 platform container renderer 负责跨 domain parse/render；ownership/planning/transaction 留 projection 模块；删除 reconcile side effect。
 - [x] **T008.6 Link scripts/bundles**：能直接执行的 script/目录逐项 link；无法链接时显式 unsupported/copy fallback，不再默认复制。
-- [x] **T008.7 Consolidate project entry prompts**：template 把完整正文 seed 到 `.agents-manager/prompts/AGENTS.md`；root `AGENTS.md` 由 ProjectEntry link 产生；`CLAUDE.md` 仅 import/reference + Claude-specific short section；Hermes/Cursor/Codex 直接读 AGENTS，禁止复制完整正文。
+- [x] **T008.7 Consolidate project entry prompts**：template 把完整正文 seed 到 `.agents/prompts/AGENTS.md`；root `AGENTS.md` 由 ProjectEntry link 产生；`CLAUDE.md` 仅 import/reference + Claude-specific short section；Hermes/Cursor/Codex 直接读 AGENTS，禁止复制完整正文。
 - [x] **T008.8 Verify**：`hermes_cross_domain_projection` 5 passed、`hook_projection` 11 passed、`prompt_projection` 6 passed、`mcp_projection` 35 passed；并回归 `projection_plan` 20 passed、`projection_apply` 25 passed及 core strict clippy。
 - [ ] **T008.9 Commit checkpoint**：`git commit -m "feat(hooks): 接入事务化生成投影与统一入口"`。
 
@@ -1096,9 +1096,9 @@ legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI al
 - Create: `crates/agents-manager-cli/tests/repository_hygiene.rs`
 - Delete after zero references: `materialize.rs`, `sync_conflict.rs`, legacy MCP paths/functions, obsolete path-independence logic
 
-- [x] **T012.1 Write failing hygiene tests**：`git ls-files` fixture 禁止 platform skill/prompt regular copies、generated configs 和 machine absolute paths；canonical project assets 必须唯一；root AGENTS 只能是指向 `.agents-manager/prompts/AGENTS.md` 的 tracked symlink（或经明确豁免的最小 bootstrap）；tracked MCP fixture 仅 placeholders。
+- [x] **T012.1 Write failing hygiene tests**：`git ls-files` fixture 禁止 platform skill/prompt regular copies、generated configs 和 machine absolute paths；canonical project assets 必须唯一；root AGENTS 只能是指向 `.agents/prompts/AGENTS.md` 的 tracked symlink（或经明确豁免的最小 bootstrap）；tracked MCP fixture 仅 placeholders。
 - [x] **T012.2 Verify RED**：`cargo test -p agents-manager-cli --test repository_hygiene`，预期当前四套 tracked copies 与绝对路径导致失败。
-- [x] **T012.3 Dogfood source-first layout**：保留 `.agents-manager` canonical；完整入口正文迁入 `.agents-manager/prompts/AGENTS.md`，根 AGENTS 使用 ProjectEntry link；平台 projection 改为本地生成并 gitignored。
+- [x] **T012.3 Dogfood source-first layout**：保留 `.agents-manager` canonical；完整入口正文迁入 `.agents/prompts/AGENTS.md`，根 AGENTS 使用 ProjectEntry link；平台 projection 改为本地生成并 gitignored。
 - [ ] **T012.4 Remove legacy production paths**：`rg` 确认无调用后删除 materialize、peer-copy、doctor materialize、旧 MCP whole-file deploy/retract；legacy inventory reader 保留一个发布周期且严格只读。
 - [ ] **T012.5 Rewrite product truth**：PRD 明确唯一源/单向 projection；ARCHITECTURE 只保留 planner/executor；DESIGN 更新状态/按钮；constitution 把“直接覆盖不备份”改为“foreign fail-closed + generated transaction backup”。
 - [ ] **T012.6 Verify no contradictory terms**：运行 `rg -n "五平台对等|独立硬拷贝|deploy_from_platform|materialize::deploy|\.codex/mcp\.json|\.claude/mcp\.json" README.md docs crates apps`；除 migration/history 章节外预期零命中。
@@ -1128,7 +1128,7 @@ legacy guard 2 passed、source-readonly 9 passed、mcp-migrate 2 passed、CLI al
 该段是发布后的运维 runbook，不在实现阶段自动执行：
 
 1. 停止 agents-manager daemon/watch 和任何会写 skills 的 `.cc-switch` 功能；保留 Provider 切换。
-2. 对 `~/.agents-manager`、平台目录、`.cc-switch/skills`、Codex/Claude 原生 MCP 配置做只读 inventory，保存 redacted plan。
+2. 对 `~/.agents`、平台目录、`.cc-switch/skills`、Codex/Claude 原生 MCP 配置做只读 inventory，保存 redacted plan。
 3. 对已进入 Git 的 literal MCP env/header 按潜在泄露处理：人工确认、服务侧轮换；历史重写另行授权。
 4. 先迁移 canonical MCP 到 per-server + secret references，验证 0600 与四平台 renderer；不删旧文件。
 5. 对同名 assets 按 `conflict > external_owned > equivalent > legacy_managed` 顺序人工处理；不批量 take-over `.cc-switch`。

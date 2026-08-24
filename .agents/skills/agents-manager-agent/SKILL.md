@@ -7,7 +7,7 @@ description: 通过 agents-manager CLI 或 MCP 服务器管理 skills/rules/agen
 
 ## 何时使用
 
-- 列出 / 读取 / 编辑 `~/.agents-manager/` 或 `<project>/.agents-manager/` 下的资产
+- 列出 / 读取 / 编辑 `~/.agents/` 或 `<project>/.agents/` 下的资产
 - 下发（deploy）或收回（retract）到 Cursor、Codex、Claude Code、Hermes
 - 跑 `doctor` / `status` / `sync` 排查同步问题
 - 用户提到「agents-manager MCP」「外部控制 agents-manager」
@@ -88,4 +88,4 @@ agents-manager --root /path/to/repo/.agents-manager list --json
 
 - **不**在输出中暴露 `secrets.env` 明文值
 - GUI 给人类；Agent **优先** MCP 或 CLI `--json`
-- 项目资产根为 `<repo>/.agents-manager/`，与 `~/.agents-manager/` 结构相同
+- 项目资产根为 `<repo>/.agents/`，与 `~/.agents/` 结构相同

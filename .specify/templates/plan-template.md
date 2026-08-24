@@ -64,7 +64,7 @@
 
 **全局 install** vs **项目 install**（若适用）：
 
-| 维度           | 全局 | 项目 (`AGENT_MANAGER_ROOT=<repo>`) |
+| 维度           | 全局 | 项目 (`AGENTS_MANAGER_ROOT=<repo>`) |
 | -------------- | ---- | ------------------------------ |
 | 资产扫描根     | …    | …                              |
 | default 合并源 | …    | …                              |

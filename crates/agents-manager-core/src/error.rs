@@ -277,7 +277,7 @@ mod tests {
     #[test]
     fn link_failed_hint_is_non_empty() {
         let err = CoreError::LinkFailed {
-            src: "/Users/alice/.agents-manager/skills/foo".to_string(),
+            src: "/Users/alice/.agents/skills/foo".to_string(),
             dest: "/Users/alice/.cursor/skills/foo".to_string(),
             reason: "目标路径已存在非链接文件".to_string(),
             hint: "把目标文件挪走或 `agents-manager retract skill foo` 收回再重试".to_string(),

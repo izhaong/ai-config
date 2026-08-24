@@ -9,7 +9,7 @@
 
 ### User Story 1 - 从 Codex 项目配置导入 MCP (Priority: P1)
 
-用户在任意目录克隆项目后，可以把 `.codex/config.toml` 中指定的 `[mcp_servers.<name>]` 导入 `<repo>/.agents-manager/mcp/servers/<name>.json`，不依赖旧电脑绝对路径，也不写入真实凭据。
+用户在任意目录克隆项目后，可以把 `.codex/config.toml` 中指定的 `[mcp_servers.<name>]` 导入 `<repo>/.agents/mcp/servers/<name>.json`，不依赖旧电脑绝对路径，也不写入真实凭据。
 
 **Independent Test**: 在临时项目写入包含 stdio、HTTP bearer env 和 env header 的 Codex TOML，逐项执行 import plan/apply，断言生成 canonical JSON 且原 TOML 字节不变。
 

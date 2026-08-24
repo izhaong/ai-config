@@ -6,7 +6,7 @@
 
 | 层级 | 路径 |
 | --- | --- |
-| 全局通用 | `~/.agents-manager/rules/*.mdc` |
+| 全局通用 | `~/.agents/rules/*.mdc` |
 | 本项目 | `.cursor/rules/*.mdc`（`.hermes` 安装的全局 rules 与 agents-manager 同源） |
 
 ## 入口
@@ -16,5 +16,5 @@
 
 ## Skills
 
-- 全局：`~/.agents-manager/skills/`（`agents-manager install` / `agents-manager sync` 下发到各 IDE）
+- 全局：`~/.agents/skills/`（`agents-manager install` / `agents-manager sync` 下发到各 IDE）
 - 项目：`.cursor/skills/`

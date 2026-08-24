@@ -78,7 +78,7 @@ fn deploy_uses_canonical_server_plan_and_preserves_foreign_cursor_entries() {
 fn deploy_from_a_project_root_writes_only_the_project_platform_target() {
     let home = TempDir::new().expect("temporary home");
     let project = TempDir::new().expect("temporary project");
-    let assets = project.path().join(".agents-manager");
+    let assets = project.path().join(".agents");
     fs::create_dir_all(assets.join("skills")).expect("mark project asset root");
     fs::create_dir_all(assets.join("mcp/servers")).expect("create project MCP source directory");
     fs::write(

@@ -25,7 +25,7 @@ impl Fixture {
     fn new() -> Self {
         let home = TempDir::new().expect("temporary HOME");
         let repo = TempDir::new().expect("temporary project");
-        let root = repo.path().join(".agents-manager");
+        let root = repo.path().join(".agents");
 
         write(
             &root.join("skills/demo/SKILL.md"),
@@ -52,7 +52,7 @@ impl Fixture {
     }
 
     fn asset_root(&self) -> PathBuf {
-        self.root().join(".agents-manager")
+        self.root().join(".agents")
     }
 
     fn cmd(&self) -> Command {

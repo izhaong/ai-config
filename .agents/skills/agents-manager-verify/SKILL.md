@@ -10,15 +10,15 @@ description: agents-manager 四层验收：源码测试、隔离生命周期、�
 ## 一键验证
 
 ```bash
-.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh all
+.agents/skills/agents-manager-verify/scripts/verify-closure.sh all
 ```
 
 可按层运行：
 
 ```bash
-.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh source
-.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh sandbox
-.agents-manager/skills/agents-manager-verify/scripts/verify-closure.sh runtime
+.agents/skills/agents-manager-verify/scripts/verify-closure.sh source
+.agents/skills/agents-manager-verify/scripts/verify-closure.sh sandbox
+.agents/skills/agents-manager-verify/scripts/verify-closure.sh runtime
 ```
 
 ## 1. Source：源码自动化

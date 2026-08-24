@@ -123,7 +123,7 @@ pub fn copy_tree(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
 ///
 /// **硬约束**：
 /// - **永远写硬拷贝**（实体复制；不生成 symlink / junction / Unix 硬链接）。
-/// - agents-manager 源（`~/.agents-manager` / `project/.agents-manager`）与各 IDE 平台目录 **互不共享 inode**；
+/// - agents-manager 源（`~/.agents` / `project/.agents-manager`）与各 IDE 平台目录 **互不共享 inode**；
 ///   删/改某一平台副本不影响源，也不影响其它平台。
 /// - MCP：`mcp.json` 为单文件 JSON，下发前 `ensure_platform_mcp_independent` 断开与源的链接。
 pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
@@ -138,7 +138,7 @@ pub fn deploy(src: &Utf8Path, dest: &Utf8Path) -> Result<(), CoreError> {
             src: src.to_string(),
             dest: dest.to_string(),
             reason: format!("源不存在: {src}"),
-            hint: "确认资产仍在 ~/.agents-manager 或项目 .agents-manager 中".to_string(),
+            hint: "确认资产仍在 ~/.agents 或项目 .agents-manager 中".to_string(),
         });
     }
 

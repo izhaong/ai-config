@@ -3,7 +3,7 @@
 ## 源资产形态
 
 ```
-.agents-manager/hooks/<name>/
+.agents/hooks/<name>/
   HOOK.md          # 人类可读（description，可选）
   hook.yaml        # canonical
   scripts/         # 或 hook.yaml.script_dir 指向其它子目录

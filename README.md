@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.78%2B-orange.svg)](https://www.rust-lang.org/)
 
-**Unified skills, rules, agents, and MCP management for multi-agent IDEs** — one user asset tree (`~/.agents-manager/`), synced to **Cursor**, **Codex**, **Claude Code**, and **Hermes**.
+**Unified skills, rules, agents, and MCP management for multi-agent IDEs** — one user asset tree (`~/.agents/`), synced to **Cursor**, **Codex**, **Claude Code**, and **Hermes**.
 
-> **中文简介**：在多 Agent IDE 之间统一管理 Skills、Rules、Agents 与 MCP；用户资产存放在 `~/.agents-manager/`（含单一明文 `mcp.json`），本仓库只提供 Rust CLI / Tauri GUI 与项目模板，不包含你的私有 skills 内容。
+> **中文简介**：在多 Agent IDE 之间统一管理 Skills、Rules、Agents 与 MCP；用户资产存放在 `~/.agents/`（Agent Skills 规范目录，MCP 为 `mcp/servers/*.json`），本仓库只提供 Rust CLI / Tauri GUI 与项目模板，不包含你的私有 skills 内容。
 
 ---
 
@@ -15,8 +15,8 @@
 
 | IDE             | Typical paths (after `install`)                                         |
 | --------------- | ----------------------------------------------------------------------- |
-| **Cursor**      | `~/.cursor/skills/`, `~/.cursor/agents/`, `~/.cursor/mcp.json`          |
-| **Codex**       | `~/.codex/skills/`, `~/.codex/subagents/`                               |
+| **Cursor**      | `~/.agents/skills/` (shared), `~/.cursor/agents/`, `~/.cursor/mcp.json` |
+| **Codex**       | `~/.agents/skills/` (shared), `~/.codex/subagents/`                      |
 | **Claude Code** | `~/.claude/skills/`, `~/.claude/subagents/`, rules via symlinks         |
 | **Hermes**      | `~/.hermes/skills/`, `~/.hermes/agents/` (optional `HERMES_SKILLS_DIR`) |
 
@@ -25,11 +25,14 @@
 ## Architecture
 
 ```text
-~/.agents-manager/                 # user asset root (not in git)
+~/.agents/                 # user asset root (Agent Skills; not in this git repo)
 ├── skills/<name>/SKILL.md
 ├── rules/*.mdc
 ├── agents/
-└── mcp.json                  # single plaintext MCP catalog → copied/merged to IDE configs
+├── commands/
+├── hooks/ + hooks.json
+├── prompts/AGENTS.md
+└── mcp/servers/<name>.json  # canonical MCP source → projected to IDE configs
 
 ~/.config/agents-manager/
 └── secrets.env               # secrets only (0600); never commit
@@ -42,7 +45,7 @@ agents-manager (this repo)
 └── manifests/                # plugin / asset manifests
 ```
 
-Install creates symlinks from each IDE’s skill (and rule) paths into `~/.agents-manager/`. MCP deploy reads **`~/.agents-manager/mcp.json`** and writes the target IDE file (e.g. full copy to Cursor).
+Install keeps IDE skill paths discoverable: Cursor/Codex consume `~/.agents/skills` directly (Agent Skills). Claude gets links under `.claude/skills`. MCP deploy reads **`~/.agents/mcp/servers/*.json`** (or legacy `mcp.json`) and writes the target IDE file.
 
 Details: [docs/product/ARCHITECTURE.md](docs/product/ARCHITECTURE.md) · [AGENTS.md](AGENTS.md)
 
@@ -58,7 +61,7 @@ cargo build -p agents-manager-cli --release
 ./target/release/agents-manager install
 ```
 
-First run ensures `~/.agents-manager/{skills,rules,agents,mcp.json}`. Legacy `~/.agents-manager/mcp/servers/` is merged into `mcp.json` when present.
+First run ensures `~/.agents/{skills,rules,agents,commands,hooks}` and prefers canonical MCP at `~/.agents/mcp/servers/*.json` (legacy root `mcp.json` can be split via `scripts/migrate-agents-root.sh`).
 
 **Sync everything once:**
 
@@ -100,7 +103,7 @@ Put real API keys in `~/.config/agents-manager/secrets.env` (see `templates/proj
 | `gui`                      | Launch Tauri UI                                    |
 | `completion`               | Shell completions                                  |
 
-Global flags: `--json`, `--quiet`, `--root <PATH>` (or `AGENT_MANAGER_ROOT`).
+Global flags: `--json`, `--quiet`, `--root <PATH>` (or `AGENTS_MANAGER_ROOT`).
 
 ```bash
 agents-manager --help
@@ -123,7 +126,7 @@ cargo clippy -p agents-manager-core -p agents-manager-cli -p agents-manager-stor
 cargo test -p agents-manager-core -p agents-manager-cli -p agents-manager-store
 ```
 
-**GUI (Tauri)** — bilingual UI (中文 / English), language switcher in the top bar; locale files under `apps/agents-manager-gui/src/i18n/locales/`. While the app is running, it watches `~/.agents-manager/{skills,rules,agents}` and `mcp.json` (plus registered project asset roots) and refreshes the asset list and per-platform link status automatically (~200ms debounce).
+**GUI (Tauri)** — bilingual UI (中文 / English), language switcher in the top bar; locale files under `apps/agents-manager-gui/src/i18n/locales/`. While the app is running, it watches `~/.agents/{skills,rules,agents,commands,hooks}` and `mcp/servers` (plus legacy `mcp.json`) (plus registered project asset roots) and refreshes the asset list and per-platform link status automatically (~200ms debounce).
 
 ```bash
 cd apps/agents-manager-gui && npm install && npm run tauri:dev
@@ -164,7 +167,7 @@ git push origin develop && git push github develop
 | ------------------------- | ----------------------------------------- |
 | Cursor cannot see a skill | Run `agents-manager install`, restart Cursor   |
 | MCP missing env vars      | Fill `secrets.env`, then `agents-manager sync` |
-| Empty skill list          | Add folders under `~/.agents-manager/skills/`  |
+| Empty skill list          | Add folders under `~/.agents/skills/`  |
 
 ---
 

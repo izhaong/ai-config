@@ -468,7 +468,7 @@ mod tests {
     fn cursor_toggle_platform_lifecycle_updates_platform_views() {
         let tmp = TempDir::new().unwrap();
         let root = camino::Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let asset_root = root.join(".agents-manager");
+        let asset_root = root.join(".agents");
         fs::create_dir_all(asset_root.join("hooks")).unwrap();
         fs::write(
             asset_root.join("hooks.json"),

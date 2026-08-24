@@ -186,7 +186,7 @@ mcp/servers/<name>.json (逐项)          secrets.env (0600, git 外)
 ```rust
 pub trait PlatformAdapter {
     fn id(&self) -> PlatformId;             // "agentsmanager" | "cursor" | "codex" | "claude" | "hermes"
-    fn skills_dir(&self) -> PathBuf;         // ~/.agents-manager/skills 或 ~/.cursor/skills 等
+    fn skills_dir(&self) -> PathBuf;         // ~/.agents/skills 或 ~/.cursor/skills 等
     fn rules_dir(&self) -> PathBuf;
     fn agents_dir(&self) -> PathBuf;
     fn mcp_deploy_path(&self) -> PathBuf;    // mcp.json 或 Hermes config.yaml
