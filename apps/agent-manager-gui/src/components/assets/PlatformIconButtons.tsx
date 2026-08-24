@@ -36,7 +36,7 @@ export function PlatformIconButtons({
   return (
     <div className="platform-actions ml-auto flex shrink-0 flex-nowrap items-center gap-[5px]">
       {ALL_PLATFORMS.map((p) => {
-        const isDeploy = p !== "aiconfig";
+        const isDeploy = p !== "agentmanager";
         const issueReason = isDeploy ? issueReasonFor?.(p) : undefined;
         const platUnsupported = !!issueReason;
         const state = linkStateFor?.(p);
@@ -66,7 +66,7 @@ export function PlatformIconButtons({
                 ? t("platform.batchClickMixed")
                 : active
                   ? t("platform.clickRemove")
-                  : p === "aiconfig"
+                  : p === "agentmanager"
                     ? t("platform.clickImportSource")
                     : t("platform.clickDeploy");
 
@@ -85,7 +85,7 @@ export function PlatformIconButtons({
             : isBatch
               ? batchNoSelection
                 ? t("toolbar.batchSyncNeedSelection")
-                : p === "aiconfig"
+                : p === "agentmanager"
                   ? browsingSource
                     ? t("toolbar.batchSyncSourceDisabled")
                     : t("toolbar.batchImportSourceState", {
@@ -97,7 +97,7 @@ export function PlatformIconButtons({
                       state: uiLabel,
                       hint: batchActionHint,
                     })
-              : p === "aiconfig"
+              : p === "agentmanager"
                 ? `${PLATFORM_NAME[p]} · ${uiLabel} · ${
                     active
                       ? t("platform.clickRemove")

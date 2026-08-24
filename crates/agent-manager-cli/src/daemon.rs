@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-use ai_config_core::error::exit_code;
+use agent_manager_core::error::exit_code;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 

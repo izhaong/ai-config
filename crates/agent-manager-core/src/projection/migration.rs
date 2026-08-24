@@ -3957,7 +3957,7 @@ fn hook_name_from_platform_command(
             PlatformId::Codex => ".codex/hooks",
             PlatformId::Claude => ".claude/hooks",
             PlatformId::Hermes => ".hermes/hooks",
-            PlatformId::AiConfig => return None,
+            PlatformId::AgentManager => return None,
         };
         let name = path.file_name().filter(|name| is_safe_asset_name(name))?;
         return (path == deploy_base.join(relative_root).join(name)).then(|| name.to_owned());
@@ -3985,7 +3985,7 @@ fn hook_name_from_platform_command(
             [".hermes", "hooks", name] => Some(*name),
             _ => None,
         },
-        PlatformId::AiConfig => None,
+        PlatformId::AgentManager => None,
     }?;
     is_safe_asset_name(name).then(|| name.to_owned())
 }
@@ -4547,7 +4547,7 @@ fn asset_kind_order(kind: AssetKind) -> u8 {
 
 fn platform_order(platform: PlatformId) -> u8 {
     match platform {
-        PlatformId::AiConfig => 0,
+        PlatformId::AgentManager => 0,
         PlatformId::Cursor => 1,
         PlatformId::Codex => 2,
         PlatformId::Claude => 3,

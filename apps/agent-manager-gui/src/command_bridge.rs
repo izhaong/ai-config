@@ -2,25 +2,25 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ai_config_core::asset_ops::{self, AssetFileDetail, ScopeRoots};
-use ai_config_core::error::CoreError;
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::paths::SyncRoots;
-use ai_config_core::projection::executor::{
+use agent_manager_core::asset_ops::{self, AssetFileDetail, ScopeRoots};
+use agent_manager_core::error::CoreError;
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::paths::SyncRoots;
+use agent_manager_core::projection::executor::{
     apply_projection_plans_transactionally, ApplyOptions, ExecutorContext, McpSecretProvider,
 };
-use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
-use ai_config_core::projection::lifecycle::build_projection_review;
-use ai_config_core::projection::migration_action::{
+use agent_manager_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
+use agent_manager_core::projection::lifecycle::build_projection_review;
+use agent_manager_core::projection::migration_action::{
     apply_import_plan, build_import_plan, import_request_for_sync_roots, ImportApplyOptions,
     ImportApplyReport, ImportPlan,
 };
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::planner::{
     McpSecretAvailability, ProjectionActionKind, ProjectionOperation, ProjectionPlan,
 };
-use ai_config_core::secrets;
-use ai_config_core::skills_add::{self, SkillAddBatchItem, SkillAddBatchOutcome, SkillsAddParams};
-use ai_config_store::Store;
+use agent_manager_core::secrets;
+use agent_manager_core::skills_add::{self, SkillAddBatchItem, SkillAddBatchOutcome, SkillsAddParams};
+use agent_manager_store::Store;
 use camino::Utf8PathBuf;
 use serde::Serialize;
 

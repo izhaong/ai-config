@@ -1,16 +1,16 @@
 use std::fs;
 
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::projection::executor::{
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::projection::executor::{
     apply_projection_plan, ApplyActionStatus, ApplyOptions, ExecutorContext,
 };
-use ai_config_core::projection::ledger::MemoryProjectionLedger;
-use ai_config_core::projection::model::{DeploymentScope, SourceLayer};
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::ledger::MemoryProjectionLedger;
+use agent_manager_core::projection::model::{DeploymentScope, SourceLayer};
+use agent_manager_core::projection::planner::{
     build_projection_plan, PlannerContext, ProjectionActionKind, ProjectionOperation,
     ProjectionRequest,
 };
-use ai_config_core::projection::source::{resolve_effective_assets, OverlayRoots};
+use agent_manager_core::projection::source::{resolve_effective_assets, OverlayRoots};
 use camino::{Utf8Path, Utf8PathBuf};
 use tempfile::TempDir;
 

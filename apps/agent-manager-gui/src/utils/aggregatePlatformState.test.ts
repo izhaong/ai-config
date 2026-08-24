@@ -12,7 +12,7 @@ function entry(
     description: "",
     platform_path: "",
     states: {
-      aiconfig: "unlinked",
+      agentmanager: "unlinked",
       cursor: "unlinked",
       codex: "unlinked",
       claude: "unlinked",

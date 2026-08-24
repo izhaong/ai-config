@@ -312,7 +312,7 @@ GUI 的 agent-manager 视图是唯一可编辑 source。平台视图只读盘点
 - **A-21** 注册项目后 `<repo>/.agent-manager/` 自动具备与 `~/.agent-manager/` 相同的 `skills/`、`rules/`、`agents/` 子目录及 `mcp.json` 占位
 - **A-22** 在平台视图浏览 Hermes 时，点击 Hermes icon **不**收回该 skill；在 agent-manager 源视图点击 agent-manager icon **不**收回 agent-manager 平台目录
 - **A-23** `npx skills` 等外部装入且内容一致的 skill 显示 **synced**；点击对应平台 icon 覆盖下发为 **linked**（写 marker），**更新**按钮可将 agent-manager 副本推到各已激活平台
-- **A-24** 点击 agent-manager icon 收回时，提示为 `← aiconfig OK`，**不**使用「从源收回」文案；其它 IDE 平台副本保留
+- **A-24** 点击 agent-manager icon 收回时，提示为 `← agentmanager OK`，**不**使用「从源收回」文案；其它 IDE 平台副本保留
 - **A-25** **删除**（确认后）删除 agent-manager 平台副本并尽力收回全部 IDE 平台，与平台 icon 单平台收回区分
 
 ---

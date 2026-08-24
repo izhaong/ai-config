@@ -198,7 +198,7 @@ export function useAssetOperations({
         return { action: "skip" };
       }
 
-      if (plat === "aiconfig" && isSourcePlatform(activePlatform)) {
+      if (plat === "agentmanager" && isSourcePlatform(activePlatform)) {
         if (action === "import") {
           return { action: "skip" };
         }
@@ -287,7 +287,7 @@ export function useAssetOperations({
       if (planned === "skip" || planned === "unsupported") {
         if (
           planned === "skip" &&
-          plat === "aiconfig" &&
+          plat === "agentmanager" &&
           hasSourceEntry(entry)
         ) {
           showToast("ok", t("platformView.importManaged"));
@@ -345,7 +345,7 @@ export function useAssetOperations({
       browsingSource,
     );
 
-    const deployPlat = plat !== "aiconfig" ? (plat as DeployPlatform) : null;
+    const deployPlat = plat !== "agentmanager" ? (plat as DeployPlatform) : null;
     if (
       deployPlat &&
       issueMap.has(`${deployPlat}:${activeKind}`) &&

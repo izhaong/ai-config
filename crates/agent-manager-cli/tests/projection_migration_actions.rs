@@ -50,8 +50,8 @@ impl Fixture {
         command
             .env("HOME", self.home())
             .env("USERPROFILE", self.home())
-            .env_remove("AI_CONFIG_ROOT")
-            .env_remove("AI_CONFIG_SECRETS_DIR")
+            .env_remove("AGENT_MANAGER_ROOT")
+            .env_remove("AGENT_MANAGER_SECRETS_DIR")
             .env_remove("HERMES_SKILLS_DIR")
             .arg("--root")
             .arg(&self.asset_root)
@@ -569,8 +569,8 @@ impl ProjectFixture {
         command
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
-            .env_remove("AI_CONFIG_ROOT")
-            .env_remove("AI_CONFIG_SECRETS_DIR")
+            .env_remove("AGENT_MANAGER_ROOT")
+            .env_remove("AGENT_MANAGER_SECRETS_DIR")
             .env_remove("HERMES_SKILLS_DIR")
             .arg("--root")
             .arg(&self.asset_root)

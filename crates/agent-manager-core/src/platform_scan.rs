@@ -85,8 +85,8 @@ pub fn scan_platform_assets(
             "Prompt 仅能经 source-first projection planner；旧扫描 lifecycle 已禁用".into(),
         ));
     }
-    if plat == PlatformId::AiConfig {
-        return scan_aiconfig_assets(kind, default_root, asset_root);
+    if plat == PlatformId::AgentManager {
+        return scan_agentmanager_assets(kind, default_root, asset_root);
     }
     let adapter = platform::for_scope_with_asset(plat, deploy_base, asset_root)?;
     if !adapter.supports(kind) {
@@ -112,7 +112,7 @@ pub fn scan_platform_assets(
             asset_root,
             &source_scan,
         );
-        let source_state = if states.get(&PlatformId::AiConfig) == Some(&LinkState::Linked) {
+        let source_state = if states.get(&PlatformId::AgentManager) == Some(&LinkState::Linked) {
             SourceState::Managed
         } else {
             SourceState::Unmanaged
@@ -134,7 +134,7 @@ pub fn scan_platform_assets(
 }
 
 /// agent-manager 源视图：直接枚举 asset_root，条目均为已纳管。
-fn scan_aiconfig_assets(
+fn scan_agentmanager_assets(
     kind: AssetKind,
     default_root: &Utf8Path,
     asset_root: &Utf8Path,
@@ -152,7 +152,7 @@ fn scan_aiconfig_assets(
             .map(|p| p.to_path_buf())
             .unwrap_or_else(crate::paths::global_deploy_base)
     };
-    let adapter = platform::aiconfig_adapter(asset_root);
+    let adapter = platform::agentmanager_adapter(asset_root);
     let source_scan = scan_source_for_scope(default_root, asset_root)?;
     let raw = if kind == AssetKind::Hook {
         crate::hook::list_hook_catalog(asset_root)?
@@ -183,7 +183,7 @@ fn scan_aiconfig_assets(
                     name.as_str()
                 };
                 let states = compute_entry_states(
-                    PlatformId::AiConfig,
+                    PlatformId::AgentManager,
                     kind,
                     state_key,
                     &platform_path,
@@ -193,7 +193,7 @@ fn scan_aiconfig_assets(
                 );
                 let hook_lifecycles = hook_lifecycle_views(
                     kind,
-                    PlatformId::AiConfig,
+                    PlatformId::AgentManager,
                     state_key,
                     asset_root,
                     &deploy_base,
@@ -299,7 +299,7 @@ fn platform_asset_key_from_command(command: &str, hooks_dir: &Utf8Path) -> Optio
 
 fn scan_platform_hooks(adapter: &dyn PlatformAdapter) -> Result<Vec<RawEntry>, CoreError> {
     let plat = adapter.id();
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Ok(Vec::new());
     }
     let deploy_base = adapter.skills_dir();
@@ -738,18 +738,18 @@ fn compute_entry_states(
                 browse_plat,
                 name,
             )
-        } else if plat == PlatformId::AiConfig {
+        } else if plat == PlatformId::AgentManager {
             // IDE 视图下，agent-manager icon 仅反映源是否存在该资产（避免被平台副本元数据干扰）
             if src.as_ref().is_some_and(|s| s.exists()) {
                 LinkState::Linked
-            } else if browse_plat != PlatformId::AiConfig
+            } else if browse_plat != PlatformId::AgentManager
                 && std::fs::symlink_metadata(platform_path.as_std_path()).is_ok()
             {
                 LinkState::Missing
             } else {
                 LinkState::Unlinked
             }
-        } else if browse_plat == PlatformId::AiConfig {
+        } else if browse_plat == PlatformId::AgentManager {
             if kind == AssetKind::Mcp {
                 if let Some(src_path) = src.as_deref() {
                     ide_mcp_link_state(plat, name, Some(src_path), deploy_base)
@@ -787,7 +787,7 @@ fn browse_platform_link_state(
     _name: &str,
 ) -> LinkState {
     // agent-manager 源视图：列表行在源中存在即视为已链接
-    if browse_plat == PlatformId::AiConfig {
+    if browse_plat == PlatformId::AgentManager {
         if let Some(src_path) = src {
             if src_path.exists() {
                 return LinkState::Linked;
@@ -982,7 +982,7 @@ pub fn import_skill_from_platform(
     asset_root: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "agent-manager 为资产源，不能从自身导入".into(),
         ));
@@ -1033,7 +1033,7 @@ pub fn import_rule_from_platform(
     asset_root: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "agent-manager 为资产源，不能从自身导入".into(),
         ));
@@ -1073,7 +1073,7 @@ pub fn import_agent_from_platform(
     asset_root: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "agent-manager 为资产源，不能从自身导入".into(),
         ));
@@ -1121,7 +1121,7 @@ pub fn import_command_from_platform(
     asset_root: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "agent-manager 为资产源，不能从自身导入".into(),
         ));
@@ -1158,7 +1158,7 @@ pub fn import_mcp_from_platform(
     asset_root: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "agent-manager 为资产源，不能从自身导入".into(),
         ));
@@ -1184,7 +1184,7 @@ pub fn import_hook_from_platform(
     asset_root: &Utf8Path,
     deploy_base: &Utf8Path,
 ) -> Result<Utf8PathBuf, CoreError> {
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "agent-manager 为资产源，不能从自身导入".into(),
         ));
@@ -1398,7 +1398,7 @@ fn find_agent_on_platform(agents_dir: &Utf8Path, name: &str) -> Result<Utf8PathB
 
 fn plat_label(p: PlatformId) -> &'static str {
     match p {
-        PlatformId::AiConfig => "aiconfig",
+        PlatformId::AgentManager => "agentmanager",
         PlatformId::Cursor => "cursor",
         PlatformId::Codex => "codex",
         PlatformId::Claude => "claude",
@@ -1618,7 +1618,7 @@ mod tests {
 
         let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
         let states = compute_entry_states(
-            PlatformId::AiConfig,
+            PlatformId::AgentManager,
             AssetKind::Skill,
             "import-me",
             &claude_skills,
@@ -1626,7 +1626,7 @@ mod tests {
             &asset_root,
             &source_scan,
         );
-        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::AgentManager), Some(&LinkState::Linked));
         assert_eq!(
             states.get(&PlatformId::Claude),
             Some(&LinkState::Synced),
@@ -1735,7 +1735,7 @@ mod tests {
     }
 
     #[test]
-    fn aiconfig_unlinked_when_not_in_source() {
+    fn agentmanager_unlinked_when_not_in_source() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8Path::from_path(tmp.path()).unwrap();
         let states = compute_entry_states(
@@ -1748,14 +1748,14 @@ mod tests {
             &ScanResult::default(),
         );
         assert_eq!(
-            states.get(&PlatformId::AiConfig),
+            states.get(&PlatformId::AgentManager),
             Some(&LinkState::Unlinked)
         );
         assert_eq!(states.get(&PlatformId::Claude), Some(&LinkState::Missing));
     }
 
     #[test]
-    fn aiconfig_linked_when_exists_in_source_on_ide_view() {
+    fn agentmanager_linked_when_exists_in_source_on_ide_view() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
@@ -1779,7 +1779,7 @@ mod tests {
             &asset_root,
             &source_scan,
         );
-        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::AgentManager), Some(&LinkState::Linked));
     }
 
     #[test]
@@ -1815,7 +1815,7 @@ mod tests {
             "仅存在于 Cursor 的 MCP 在 Cursor 视图应显示已同步"
         );
         assert_eq!(
-            states.get(&PlatformId::AiConfig),
+            states.get(&PlatformId::AgentManager),
             Some(&LinkState::Missing),
             "仅存在于 Cursor 的 MCP 在 Cursor 视图下 agent-manager icon 应显示源缺失"
         );
@@ -1918,7 +1918,7 @@ mod tests {
         let source_scan = scan_source_for_scope(&asset_root, &asset_root).unwrap();
         let mcp_path = mcp_json::mcp_json_path(&asset_root);
         let states = compute_entry_states(
-            PlatformId::AiConfig,
+            PlatformId::AgentManager,
             AssetKind::Mcp,
             "svc",
             &mcp_path,
@@ -1926,7 +1926,7 @@ mod tests {
             &asset_root,
             &source_scan,
         );
-        assert_eq!(states.get(&PlatformId::AiConfig), Some(&LinkState::Linked));
+        assert_eq!(states.get(&PlatformId::AgentManager), Some(&LinkState::Linked));
         assert_eq!(states.get(&PlatformId::Cursor), Some(&LinkState::Linked));
         assert_eq!(states.get(&PlatformId::Codex), Some(&LinkState::Unlinked));
     }

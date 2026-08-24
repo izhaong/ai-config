@@ -2,15 +2,15 @@
 
 use std::fs;
 
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::paths::SyncRoots;
-use ai_config_core::projection::fingerprint::path_fingerprint;
-use ai_config_core::projection::migration_action::{
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::paths::SyncRoots;
+use agent_manager_core::projection::fingerprint::path_fingerprint;
+use agent_manager_core::projection::migration_action::{
     apply_import_plan, build_import_plan, import_request_for_sync_roots,
     rollback_import_transaction, ImportActionKind, ImportApplyOptions, ImportRequest,
     ImportSecretStatus, RollbackStatus,
 };
-use ai_config_core::projection::model::SourceLayer;
+use agent_manager_core::projection::model::SourceLayer;
 use camino::Utf8Path;
 use tempfile::TempDir;
 

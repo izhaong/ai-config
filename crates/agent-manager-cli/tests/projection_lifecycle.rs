@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ai_config_core::projection::ledger::ProjectionLedger;
-use ai_config_store::Store;
+use agent_manager_core::projection::ledger::ProjectionLedger;
+use agent_manager_store::Store;
 use assert_cmd::Command;
 use camino::Utf8PathBuf;
 use serde_json::Value;
@@ -60,8 +60,8 @@ impl Fixture {
         command
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
-            .env_remove("AI_CONFIG_ROOT")
-            .env_remove("AI_CONFIG_SECRETS_DIR")
+            .env_remove("AGENT_MANAGER_ROOT")
+            .env_remove("AGENT_MANAGER_SECRETS_DIR")
             .env_remove("HERMES_SKILLS_DIR")
             .arg("--root")
             .arg(self.root());
@@ -117,7 +117,7 @@ impl Fixture {
         let secret_path =
             Utf8PathBuf::from_path_buf(self.home.path().join(".config/agent-manager/secrets.env"))
                 .expect("temporary secret path is UTF-8");
-        ai_config_core::secrets::save_to(
+        agent_manager_core::secrets::save_to(
             &[(
                 "UNRELATED_TEST_SECRET".to_owned(),
                 SECRET_VALUE_SENTINEL.to_owned(),

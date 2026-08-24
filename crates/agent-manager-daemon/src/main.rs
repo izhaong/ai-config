@@ -2,8 +2,8 @@
 
 #![allow(dead_code)]
 
-use ai_config_bus::Bus;
-use ai_config_store::Store;
+use agent_manager_bus::Bus;
+use agent_manager_store::Store;
 
 pub struct Daemon {
     pub bus: Bus,

@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-use ai_config_core::git::{GitSyncConfig, DEFAULT_BRANCH};
+use agent_manager_core::git::{GitSyncConfig, DEFAULT_BRANCH};
 
 pub const KEY_GIT_REMOTE_URL: &str = "git_remote_url";
 pub const KEY_GIT_BRANCH: &str = "git_branch";

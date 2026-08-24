@@ -1,35 +1,35 @@
 use std::fs;
 
-use ai_config_core::error::CoreError;
-use ai_config_core::model::PlatformId;
-use ai_config_core::projection::executor::{
+use agent_manager_core::error::CoreError;
+use agent_manager_core::model::PlatformId;
+use agent_manager_core::projection::executor::{
     apply_projection_plan, rollback_projection_transaction, ApplyOptions, ExecutorContext,
     McpSecretProvider,
 };
-use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
-use ai_config_core::projection::mcp::claude_json::{
+use agent_manager_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
+use agent_manager_core::projection::mcp::claude_json::{
     render_claude_mcp_json, ClaudeJsonServerIntent,
 };
-use ai_config_core::projection::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
-use ai_config_core::projection::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
-use ai_config_core::projection::mcp::entry_fingerprint::{
+use agent_manager_core::projection::mcp::codex_toml::{render_codex_mcp_toml, TomlServerIntent};
+use agent_manager_core::projection::mcp::cursor_json::{render_cursor_mcp_json, JsonServerIntent};
+use agent_manager_core::projection::mcp::entry_fingerprint::{
     inspect_claude_mcp_entries, inspect_codex_mcp_entries, inspect_cursor_mcp_entries,
     inspect_hermes_mcp_entries,
 };
-use ai_config_core::projection::mcp::hermes_yaml::{render_hermes_mcp_yaml, YamlServerIntent};
-use ai_config_core::projection::mcp::source::{
+use agent_manager_core::projection::mcp::hermes_yaml::{render_hermes_mcp_yaml, YamlServerIntent};
+use agent_manager_core::projection::mcp::source::{
     load_mcp_definitions, resolve_effective_mcp_definitions,
 };
-use ai_config_core::projection::model::SourceLayer;
-use ai_config_core::projection::model::{
+use agent_manager_core::projection::model::SourceLayer;
+use agent_manager_core::projection::model::{
     DeploymentScope, LedgerMutation, ProjectionId, ProjectionMode, ProjectionRecord,
     ProjectionSurface,
 };
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::planner::{
     build_mcp_projection_plan, McpSecretAvailability, PlannerContext, ProjectionActionKind,
     ProjectionOperation, ProjectionRequest,
 };
-use ai_config_core::projection::source::OverlayRoots;
+use agent_manager_core::projection::source::OverlayRoots;
 use camino::Utf8Path;
 use tempfile::TempDir;
 
@@ -410,7 +410,7 @@ command = "search-mcp"
     assert_eq!(mixed.actions[adopt_index].mcp_members.len(), 1);
     assert_eq!(mixed.actions[adopt_index].mcp_members[0].name, "search");
 
-    let adoption = ai_config_core::projection::planner::ProjectionPlan {
+    let adoption = agent_manager_core::projection::planner::ProjectionPlan {
         schema_version: mixed.schema_version,
         actions: vec![mixed.actions[adopt_index].clone()],
         action_ids: vec![mixed.action_ids[adopt_index].clone()],
@@ -1298,7 +1298,7 @@ fn mcp_entry_ownership_requires_entry_proof_but_ignores_unrelated_container_edit
         .apply_batch(&[LedgerMutation::Upsert(ProjectionRecord {
             id: ProjectionId {
                 scope_key: request.scope_key.clone(),
-                kind: ai_config_core::model::AssetKind::Mcp,
+                kind: agent_manager_core::model::AssetKind::Mcp,
                 name: "catalog".to_owned(),
                 surface: ProjectionSurface::Platform(PlatformId::Cursor),
             },
@@ -1337,7 +1337,7 @@ fn mcp_entry_ownership_requires_entry_proof_but_ignores_unrelated_container_edit
         .apply_batch(&[LedgerMutation::Upsert(ProjectionRecord {
             id: ProjectionId {
                 scope_key: request.scope_key.clone(),
-                kind: ai_config_core::model::AssetKind::Mcp,
+                kind: agent_manager_core::model::AssetKind::Mcp,
                 name: "catalog".to_owned(),
                 surface: ProjectionSurface::Platform(PlatformId::Cursor),
             },

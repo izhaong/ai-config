@@ -65,7 +65,7 @@
 
 ### US3 - 生命周期 TTS (P1)
 
-默认资产 `lifecycle-tts`：shell 执行 `agent-manager` 相关命令后 TTS 播报；`AI_CONFIG_TTS=0` 静默。
+默认资产 `lifecycle-tts`：shell 执行 `agent-manager` 相关命令后 TTS 播报；`AGENT_MANAGER_TTS=0` 静默。
 
 ## Requirements
 

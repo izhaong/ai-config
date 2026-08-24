@@ -17,7 +17,7 @@ function entry(
     description: "",
     platform_path: "/tmp/demo",
     states: {
-      aiconfig: "unlinked",
+      agentmanager: "unlinked",
       cursor: "unlinked",
       codex: "unlinked",
       claude: "unlinked",
@@ -28,7 +28,7 @@ function entry(
 }
 
 const sourceView: EntryPlatformToggleContext = {
-  activePlatform: "aiconfig",
+  activePlatform: "agentmanager",
   browsingSource: true,
   issueKey: () => false,
 };
@@ -49,7 +49,7 @@ describe("resolveEntryPlatformToggleAction", () => {
   it("已链接时收回", () => {
     expect(
       resolveEntryPlatformToggleAction(
-        entry({ cursor: "linked", aiconfig: "linked" }),
+        entry({ cursor: "linked", agentmanager: "linked" }),
         "cursor",
         sourceView,
       ),
@@ -59,18 +59,18 @@ describe("resolveEntryPlatformToggleAction", () => {
   it("未链接时在源视图下发", () => {
     expect(
       resolveEntryPlatformToggleAction(
-        entry({ cursor: "unlinked", aiconfig: "linked" }),
+        entry({ cursor: "unlinked", agentmanager: "linked" }),
         "cursor",
         sourceView,
       ),
     ).toBe("deploy");
   });
 
-  it("aiconfig 已纳管时在其它平台视图收回 agent-manager 副本", () => {
+  it("agentmanager 已纳管时在其它平台视图收回 agent-manager 副本", () => {
     expect(
       resolveEntryPlatformToggleAction(
-        entry({ aiconfig: "linked" }),
-        "aiconfig",
+        entry({ agentmanager: "linked" }),
+        "agentmanager",
         cursorView,
       ),
     ).toBe("retract");
@@ -79,8 +79,8 @@ describe("resolveEntryPlatformToggleAction", () => {
   it("源视图浏览 agent-manager 时 skill 点击 agent-manager icon 不收回", () => {
     expect(
       resolveEntryPlatformToggleAction(
-        entry({ aiconfig: "linked" }),
-        "aiconfig",
+        entry({ agentmanager: "linked" }),
+        "agentmanager",
         sourceView,
       ),
     ).toBe("skip");
@@ -89,8 +89,8 @@ describe("resolveEntryPlatformToggleAction", () => {
   it("源视图浏览 agent-manager 时 mcp 点击 agent-manager icon 仅展示状态", () => {
     expect(
       resolveEntryPlatformToggleAction(
-        { ...entry({ aiconfig: "linked" }), kind: "mcp" },
-        "aiconfig",
+        { ...entry({ agentmanager: "linked" }), kind: "mcp" },
+        "agentmanager",
         sourceView,
       ),
     ).toBe("skip");
@@ -130,7 +130,7 @@ describe("resolveEntryPlatformToggleAction", () => {
     expect(
       resolveEntryPlatformToggleAction(
         {
-          ...entry({ cursor: "linked", aiconfig: "linked" }),
+          ...entry({ cursor: "linked", agentmanager: "linked" }),
           kind: "mcp",
         },
         "cursor",
@@ -156,10 +156,10 @@ describe("resolveEntryPlatformToggleAction", () => {
     expect(
       resolveEntryPlatformToggleAction(
         {
-          ...entry({ cursor: "synced", aiconfig: "unlinked" }),
+          ...entry({ cursor: "synced", agentmanager: "unlinked" }),
           kind: "mcp",
         },
-        "aiconfig",
+        "agentmanager",
         cursorView,
       ),
     ).toBe("import");
@@ -178,7 +178,7 @@ describe("resolveEntryPlatformToggleAction", () => {
   it("平台视图不执行投影；只有源视图能打开 source-first 计划", () => {
     expect(
       resolveEntryPlatformToggleAction(
-        entry({ aiconfig: "linked", codex: "missing" }),
+        entry({ agentmanager: "linked", codex: "missing" }),
         "codex",
         cursorView,
       ),
@@ -189,28 +189,28 @@ describe("resolveEntryPlatformToggleAction", () => {
 describe("resolveBatchPlatformToggleMode", () => {
   it("全部已激活 → retract_all", () => {
     const rows = [
-      entry({ cursor: "linked", aiconfig: "linked" }),
-      entry({ cursor: "linked", aiconfig: "linked" }),
+      entry({ cursor: "linked", agentmanager: "linked" }),
+      entry({ cursor: "linked", agentmanager: "linked" }),
     ];
     expect(
-      resolveBatchPlatformToggleMode(rows, "cursor", "aiconfig", true),
+      resolveBatchPlatformToggleMode(rows, "cursor", "agentmanager", true),
     ).toBe("retract_all");
   });
 
   it("部分或全未激活 → activate_all", () => {
     const partial = [
-      entry({ cursor: "linked", aiconfig: "linked" }),
-      entry({ cursor: "unlinked", aiconfig: "linked" }),
+      entry({ cursor: "linked", agentmanager: "linked" }),
+      entry({ cursor: "unlinked", agentmanager: "linked" }),
     ];
     const none = [
-      entry({ cursor: "unlinked", aiconfig: "linked" }),
-      entry({ cursor: "missing", aiconfig: "linked" }),
+      entry({ cursor: "unlinked", agentmanager: "linked" }),
+      entry({ cursor: "missing", agentmanager: "linked" }),
     ];
     expect(
-      resolveBatchPlatformToggleMode(partial, "cursor", "aiconfig", true),
+      resolveBatchPlatformToggleMode(partial, "cursor", "agentmanager", true),
     ).toBe("activate_all");
     expect(
-      resolveBatchPlatformToggleMode(none, "cursor", "aiconfig", true),
+      resolveBatchPlatformToggleMode(none, "cursor", "agentmanager", true),
     ).toBe("activate_all");
   });
 
@@ -226,11 +226,11 @@ describe("resolveBatchPlatformToggleMode", () => {
 
   it("源视图浏览 agent-manager 时批量不收回 agent-manager", () => {
     const rows = [
-      entry({ aiconfig: "linked" }),
-      entry({ aiconfig: "linked" }),
+      entry({ agentmanager: "linked" }),
+      entry({ agentmanager: "linked" }),
     ];
     expect(
-      resolveBatchPlatformToggleMode(rows, "aiconfig", "aiconfig", true),
+      resolveBatchPlatformToggleMode(rows, "agentmanager", "agentmanager", true),
     ).toBe("activate_all");
   });
 
@@ -247,8 +247,8 @@ describe("resolveBatchPlatformToggleMode", () => {
 
 describe("resolveBatchEntryPlatformAction", () => {
   it("activate_all：已激活项跳过，未激活项下发", () => {
-    const linked = entry({ cursor: "linked", aiconfig: "linked" });
-    const unlinked = entry({ cursor: "unlinked", aiconfig: "linked" });
+    const linked = entry({ cursor: "linked", agentmanager: "linked" });
+    const unlinked = entry({ cursor: "unlinked", agentmanager: "linked" });
     expect(
       resolveBatchEntryPlatformAction(
         linked,
@@ -268,8 +268,8 @@ describe("resolveBatchEntryPlatformAction", () => {
   });
 
   it("retract_all：仅已激活项收回（IDE 平台）", () => {
-    const linked = entry({ cursor: "linked", aiconfig: "linked" });
-    const unlinked = entry({ cursor: "unlinked", aiconfig: "linked" });
+    const linked = entry({ cursor: "linked", agentmanager: "linked" });
+    const unlinked = entry({ cursor: "unlinked", agentmanager: "linked" });
     expect(
       resolveBatchEntryPlatformAction(
         linked,
@@ -301,11 +301,11 @@ describe("resolveBatchEntryPlatformAction", () => {
   });
 
   it("retract_all：agent-manager 批量收回平台副本", () => {
-    const linked = entry({ aiconfig: "linked" });
+    const linked = entry({ agentmanager: "linked" });
     expect(
       resolveBatchEntryPlatformAction(
         linked,
-        "aiconfig",
+        "agentmanager",
         "retract_all",
         cursorView,
       ),
@@ -313,11 +313,11 @@ describe("resolveBatchEntryPlatformAction", () => {
   });
 
   it("retract_all：源视图浏览 agent-manager 时 skill 不批量收回", () => {
-    const linked = entry({ aiconfig: "linked" });
+    const linked = entry({ agentmanager: "linked" });
     expect(
       resolveBatchEntryPlatformAction(
         linked,
-        "aiconfig",
+        "agentmanager",
         "retract_all",
         sourceView,
       ),

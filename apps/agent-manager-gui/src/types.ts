@@ -1,8 +1,8 @@
 export type AssetKind = "skill" | "rule" | "mcp" | "agent" | "command" | "hook";
 /** 5 平台：agent-manager 为资产源，其余为 IDE 下发目标 */
-export type Platform = "aiconfig" | "cursor" | "codex" | "claude" | "hermes";
+export type Platform = "agentmanager" | "cursor" | "codex" | "claude" | "hermes";
 /** 可向 IDE deploy / retract 的 4 个目标 */
-export type DeployPlatform = Exclude<Platform, "aiconfig">;
+export type DeployPlatform = Exclude<Platform, "agentmanager">;
 export type LinkState = "linked" | "synced" | "unlinked" | "broken" | "missing";
 
 /** Source-first planner ownership state. `synced` is deliberately absent: equal content alone
@@ -190,7 +190,7 @@ export interface AssetDetail {
 
 /** GUI 平台 dock 固定 5 个 */
 export const ALL_PLATFORMS: Platform[] = [
-  "aiconfig",
+  "agentmanager",
   "cursor",
   "codex",
   "claude",
@@ -214,7 +214,7 @@ export const ASSET_KINDS: AssetKind[] = [
 ];
 
 export function isSourcePlatform(platform: Platform): boolean {
-  return platform === "aiconfig";
+  return platform === "agentmanager";
 }
 
 export function canDeploy(state: LinkState): boolean {
@@ -246,5 +246,5 @@ export function isManagedPlatformState(state: LinkState): boolean {
 }
 
 export function hasSourceEntry(entry: PlatformAssetEntry): boolean {
-  return isPlatformActive(entry.states?.aiconfig ?? "unlinked");
+  return isPlatformActive(entry.states?.agentmanager ?? "unlinked");
 }

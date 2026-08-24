@@ -7,7 +7,7 @@ const ALL_STATES = (
     Record<Platform, PlatformAssetEntry["states"][Platform]>
   > = {},
 ): PlatformAssetEntry["states"] => ({
-  aiconfig: "unlinked",
+  agentmanager: "unlinked",
   cursor: "unlinked",
   codex: "unlinked",
   claude: "unlinked",
@@ -35,7 +35,7 @@ describe("canOpenEntry", () => {
   });
 
   it("opens when agent-manager source is linked", () => {
-    const e = entry({ states: ALL_STATES({ aiconfig: "linked" }) });
+    const e = entry({ states: ALL_STATES({ agentmanager: "linked" }) });
     expect(canOpenEntry(e)).toBe(true);
   });
 
@@ -65,11 +65,11 @@ describe("canOpenEntry", () => {
 describe("shouldLoadFromSource", () => {
   it("loads from source on agent-manager view for skills", () => {
     const e = entry();
-    expect(shouldLoadFromSource(e, "aiconfig")).toBe(true);
+    expect(shouldLoadFromSource(e, "agentmanager")).toBe(true);
   });
 
-  it("loads from source when aiconfig linked on deploy view", () => {
-    const e = entry({ states: ALL_STATES({ aiconfig: "linked" }) });
+  it("loads from source when agentmanager linked on deploy view", () => {
+    const e = entry({ states: ALL_STATES({ agentmanager: "linked" }) });
     expect(shouldLoadFromSource(e, "cursor")).toBe(true);
   });
 
@@ -87,11 +87,11 @@ describe("shouldLoadFromSource", () => {
     expect(shouldLoadFromSource(e, "cursor")).toBe(false);
   });
 
-  it("mcp with aiconfig linked loads from source on deploy view", () => {
+  it("mcp with agentmanager linked loads from source on deploy view", () => {
     const e = entry({
       kind: "mcp",
       platform_path: "/home/.agent-manager/mcp.json",
-      states: ALL_STATES({ aiconfig: "linked", cursor: "linked" }),
+      states: ALL_STATES({ agentmanager: "linked", cursor: "linked" }),
     });
     expect(shouldLoadFromSource(e, "cursor")).toBe(true);
   });

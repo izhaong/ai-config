@@ -1,1 +1,1 @@
-.ai-config/prompts/AGENTS.md
+.agent-manager/prompts/AGENTS.md

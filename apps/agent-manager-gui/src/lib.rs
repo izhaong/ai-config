@@ -28,26 +28,26 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
-use ai_config_core::asset_scope;
-use ai_config_core::doctor;
-use ai_config_core::error::CoreError;
-use ai_config_core::git::{self, GitEnsureOutcome, GitRepoStatus, GitSyncConfig, GitSyncOutcome};
-use ai_config_core::hook;
-use ai_config_core::hook_adapter;
-use ai_config_core::materialize;
-use ai_config_core::mcp_json;
-use ai_config_core::model::{AssetKind, PlatformId, Project};
-use ai_config_core::paths;
-use ai_config_core::platform;
-use ai_config_core::platform_scan::{self, LinkState, PlatformAssetEntry, PlatformAssetList};
-use ai_config_core::source;
-use ai_config_core::sync::{agent_link_src, asset_dest_for_at_base};
-use ai_config_core::template::McpSyncState;
-use ai_config_store::Store;
-use ai_config_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
+use agent_manager_core::asset_scope;
+use agent_manager_core::doctor;
+use agent_manager_core::error::CoreError;
+use agent_manager_core::git::{self, GitEnsureOutcome, GitRepoStatus, GitSyncConfig, GitSyncOutcome};
+use agent_manager_core::hook;
+use agent_manager_core::hook_adapter;
+use agent_manager_core::materialize;
+use agent_manager_core::mcp_json;
+use agent_manager_core::model::{AssetKind, PlatformId, Project};
+use agent_manager_core::paths;
+use agent_manager_core::platform;
+use agent_manager_core::platform_scan::{self, LinkState, PlatformAssetEntry, PlatformAssetList};
+use agent_manager_core::source;
+use agent_manager_core::sync::{agent_link_src, asset_dest_for_at_base};
+use agent_manager_core::template::McpSyncState;
+use agent_manager_store::Store;
+use agent_manager_watcher::{dedupe_roots, start_debounced, WatchRoots, WatcherHandle};
 
-use ai_config_core::asset_ops::parse_skill_meta;
-use ai_config_core::asset_ops::AssetFileDetail;
+use agent_manager_core::asset_ops::parse_skill_meta;
+use agent_manager_core::asset_ops::AssetFileDetail;
 
 // ── 共享状态 ──────────────────────────────────────────────────────
 
@@ -224,7 +224,7 @@ async fn cmd_import_to_source_plan(
     project: Option<String>,
     from_platform: String,
     replace: Option<bool>,
-) -> Result<ai_config_core::projection::migration_action::ImportPlan, String> {
+) -> Result<agent_manager_core::projection::migration_action::ImportPlan, String> {
     let kind = parse_kind(&kind)?;
     let source_platform = parse_deploy_plat(&from_platform)?;
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
@@ -252,7 +252,7 @@ async fn cmd_import_to_source_apply(
     replace: Option<bool>,
     plan_digest: String,
     selected_action_ids: Vec<String>,
-) -> Result<ai_config_core::projection::migration_action::ImportApplyReport, String> {
+) -> Result<agent_manager_core::projection::migration_action::ImportApplyReport, String> {
     let kind = parse_kind(&kind)?;
     let source_platform = parse_deploy_plat(&from_platform)?;
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
@@ -485,13 +485,13 @@ async fn cmd_platform_kind_paths(
     let k = parse_kind(&kind)?;
     let (_, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
     let mut out = Vec::with_capacity(5);
-    for plat in ai_config_core::platform::ui_platform_ids() {
-        let supported = if plat == PlatformId::AiConfig {
+    for plat in agent_manager_core::platform::ui_platform_ids() {
+        let supported = if plat == PlatformId::AgentManager {
             true
         } else {
             platform_supports(plat, k, &deploy_base)
         };
-        let path = ai_config_core::platform::kind_asset_path(plat, k, &deploy_base, &asset_root)
+        let path = agent_manager_core::platform::kind_asset_path(plat, k, &deploy_base, &asset_root)
             .map(|p| p.to_string())
             .unwrap_or_default();
         out.push(PlatformKindPath {
@@ -536,7 +536,7 @@ async fn cmd_skill_add_batch(
     project: Option<String>,
     skills: Vec<SkillAddBatchItemDto>,
     target_platforms: Vec<String>,
-) -> Result<ai_config_core::skills_add::SkillAddBatchOutcome, String> {
+) -> Result<agent_manager_core::skills_add::SkillAddBatchOutcome, String> {
     if skills.is_empty() {
         return Err("未选择任何 skill".into());
     }
@@ -547,9 +547,9 @@ async fn cmd_skill_add_batch(
         target_platforms.iter().map(|s| parse_plat(s)).collect();
     let platforms = platforms?;
     let (default_root, asset_root, deploy_base) = resolve_scope(&state, project.as_deref()).await?;
-    let items: Vec<ai_config_core::skills_add::SkillAddBatchItem> = skills
+    let items: Vec<agent_manager_core::skills_add::SkillAddBatchItem> = skills
         .into_iter()
-        .map(|s| ai_config_core::skills_add::SkillAddBatchItem {
+        .map(|s| agent_manager_core::skills_add::SkillAddBatchItem {
             source: s.source,
             skill_name: s.skill_name,
         })

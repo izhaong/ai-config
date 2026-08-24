@@ -38,7 +38,7 @@ describe("useAssetBrowser context reset", () => {
       useAssetBrowser(browserOptions(vi.fn())),
     );
 
-    expect(result.current.activePlatform).toBe("aiconfig");
+    expect(result.current.activePlatform).toBe("agentmanager");
   });
 
   it("does not reset drawer when onContextReset callback identity changes", async () => {

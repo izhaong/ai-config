@@ -1,19 +1,19 @@
 use std::fs;
 
-use ai_config_core::hook_adapter;
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::projection::executor::{apply_projection_plan, ApplyOptions, ExecutorContext};
-use ai_config_core::projection::fingerprint::path_content_digest;
-use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
-use ai_config_core::projection::model::{
+use agent_manager_core::hook_adapter;
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::projection::executor::{apply_projection_plan, ApplyOptions, ExecutorContext};
+use agent_manager_core::projection::fingerprint::path_content_digest;
+use agent_manager_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
+use agent_manager_core::projection::model::{
     DeploymentScope, EffectiveAsset, LedgerMutation, ProjectionMode, ProjectionRecord, SourceLayer,
 };
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::planner::{
     build_projection_plan, PlannerContext, ProjectionActionKind, ProjectionOperation,
     ProjectionRequest,
 };
-use ai_config_core::projection::source::{resolve_effective_assets, OverlayRoots};
-use ai_config_core::source::scan_project_root;
+use agent_manager_core::projection::source::{resolve_effective_assets, OverlayRoots};
+use agent_manager_core::source::scan_project_root;
 use camino::Utf8Path;
 use chrono::Utc;
 use tempfile::TempDir;
@@ -68,7 +68,7 @@ fn apply(
     root: &Utf8Path,
     request: &ProjectionRequest,
     ledger: &MemoryProjectionLedger,
-) -> Result<ai_config_core::projection::executor::ApplyReport, String> {
+) -> Result<agent_manager_core::projection::executor::ApplyReport, String> {
     let plan = build_projection_plan(request, &PlannerContext::new(ledger))
         .map_err(|error| error.to_string())?;
     apply_projection_plan(
@@ -227,30 +227,30 @@ fn hook_apply_failure_restores_config_and_script_link_together() {
     impl ProjectionLedger for FailingLedger {
         fn get(
             &self,
-            _id: &ai_config_core::projection::model::ProjectionId,
-        ) -> Result<Option<ProjectionRecord>, ai_config_core::error::CoreError> {
+            _id: &agent_manager_core::projection::model::ProjectionId,
+        ) -> Result<Option<ProjectionRecord>, agent_manager_core::error::CoreError> {
             Ok(None)
         }
 
         fn get_many(
             &self,
-            _ids: &[ai_config_core::projection::model::ProjectionId],
-        ) -> Result<Vec<ProjectionRecord>, ai_config_core::error::CoreError> {
+            _ids: &[agent_manager_core::projection::model::ProjectionId],
+        ) -> Result<Vec<ProjectionRecord>, agent_manager_core::error::CoreError> {
             Ok(Vec::new())
         }
 
         fn list_scope(
             &self,
             _scope_key: &str,
-        ) -> Result<Vec<ProjectionRecord>, ai_config_core::error::CoreError> {
+        ) -> Result<Vec<ProjectionRecord>, agent_manager_core::error::CoreError> {
             Ok(Vec::new())
         }
 
         fn apply_batch(
             &self,
             _mutations: &[LedgerMutation],
-        ) -> Result<(), ai_config_core::error::CoreError> {
-            Err(ai_config_core::error::CoreError::ProjectionLedger(
+        ) -> Result<(), agent_manager_core::error::CoreError> {
+            Err(agent_manager_core::error::CoreError::ProjectionLedger(
                 "forced ledger failure".to_owned(),
             ))
         }

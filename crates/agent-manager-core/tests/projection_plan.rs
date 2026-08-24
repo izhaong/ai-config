@@ -1,21 +1,21 @@
 use std::fs;
 use std::time::{Duration, Instant};
 
-use ai_config_core::error::CoreError;
-use ai_config_core::model::{AssetKind, McpServer, McpTransport, PlatformId};
-use ai_config_core::projection::fingerprint::path_content_digest;
-use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
-use ai_config_core::projection::mcp::entry_fingerprint::inspect_cursor_mcp_entries;
-use ai_config_core::projection::mcp::source::{EffectiveMcpDefinition, McpDefinition};
-use ai_config_core::projection::model::{
+use agent_manager_core::error::CoreError;
+use agent_manager_core::model::{AssetKind, McpServer, McpTransport, PlatformId};
+use agent_manager_core::projection::fingerprint::path_content_digest;
+use agent_manager_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
+use agent_manager_core::projection::mcp::entry_fingerprint::inspect_cursor_mcp_entries;
+use agent_manager_core::projection::mcp::source::{EffectiveMcpDefinition, McpDefinition};
+use agent_manager_core::projection::model::{
     DeploymentScope, EffectiveAsset, LedgerMutation, ProjectionId, ProjectionMode,
     ProjectionRecord, ProjectionSurface, SourceLayer, SourceRef,
 };
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::planner::{
     build_mcp_projection_plan, build_projection_plan, GeneratedContainerRenderer, PlannerContext,
     ProjectionActionKind, ProjectionOperation, ProjectionRequest,
 };
-use ai_config_core::projection::platform_adapter::TrustRequirement;
+use agent_manager_core::projection::platform_adapter::TrustRequirement;
 use camino::Utf8Path;
 use tempfile::TempDir;
 
@@ -46,8 +46,8 @@ struct FailingLedger;
 impl ProjectionLedger for FailingLedger {
     fn get(
         &self,
-        _id: &ai_config_core::projection::model::ProjectionId,
-    ) -> Result<Option<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        _id: &agent_manager_core::projection::model::ProjectionId,
+    ) -> Result<Option<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         Err(CoreError::ProjectionLedger(
             "fixture read failure".to_owned(),
         ))
@@ -55,8 +55,8 @@ impl ProjectionLedger for FailingLedger {
 
     fn get_many(
         &self,
-        _ids: &[ai_config_core::projection::model::ProjectionId],
-    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        _ids: &[agent_manager_core::projection::model::ProjectionId],
+    ) -> Result<Vec<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         Err(CoreError::ProjectionLedger(
             "fixture read failure".to_owned(),
         ))
@@ -65,7 +65,7 @@ impl ProjectionLedger for FailingLedger {
     fn list_scope(
         &self,
         _scope_key: &str,
-    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+    ) -> Result<Vec<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         Err(CoreError::ProjectionLedger(
             "fixture read failure".to_owned(),
         ))
@@ -73,7 +73,7 @@ impl ProjectionLedger for FailingLedger {
 
     fn apply_batch(
         &self,
-        _mutations: &[ai_config_core::projection::model::LedgerMutation],
+        _mutations: &[agent_manager_core::projection::model::LedgerMutation],
     ) -> Result<(), CoreError> {
         Err(CoreError::ProjectionLedger(
             "fixture write failure".to_owned(),
@@ -557,7 +557,7 @@ fn repeated_planning_is_read_only_and_keeps_ids_and_digest_stable() {
         vec![PlatformId::Cursor, PlatformId::Codex],
     );
     let ledger = MemoryProjectionLedger::default();
-    let before = ai_config_core::projection::fingerprint::directory_digest(root).unwrap();
+    let before = agent_manager_core::projection::fingerprint::directory_digest(root).unwrap();
     let baseline = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
 
     for _ in 0..100 {
@@ -567,7 +567,7 @@ fn repeated_planning_is_read_only_and_keeps_ids_and_digest_stable() {
     }
 
     assert_eq!(
-        ai_config_core::projection::fingerprint::directory_digest(root).unwrap(),
+        agent_manager_core::projection::fingerprint::directory_digest(root).unwrap(),
         before,
         "planning must not create target directories, ledger records, or files"
     );
@@ -812,7 +812,7 @@ fn thousand_item_plan_p95_stays_within_read_only_budget() {
         .collect::<Vec<_>>();
     let request = request(root, assets, vec![PlatformId::Cursor]);
     let ledger = MemoryProjectionLedger::default();
-    let before = ai_config_core::projection::fingerprint::directory_digest(root).unwrap();
+    let before = agent_manager_core::projection::fingerprint::directory_digest(root).unwrap();
     let mut samples = Vec::with_capacity(100);
 
     for _ in 0..100 {
@@ -829,7 +829,7 @@ fn thousand_item_plan_p95_stays_within_read_only_budget() {
         samples[94]
     );
     assert_eq!(
-        ai_config_core::projection::fingerprint::directory_digest(root).unwrap(),
+        agent_manager_core::projection::fingerprint::directory_digest(root).unwrap(),
         before,
         "benchmark must remain read-only"
     );

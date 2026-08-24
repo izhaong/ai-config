@@ -620,7 +620,7 @@ pub fn hook_capability_for(
                     .to_owned(),
             };
         }
-        PlatformId::AiConfig => {
+        PlatformId::AgentManager => {
             return HookCapability::Unsupported {
                 reason: "agent-manager is canonical source, not a projection target".to_owned(),
             };

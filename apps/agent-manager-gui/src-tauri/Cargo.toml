@@ -2,7 +2,7 @@
 name = "agent-manager-gui-bin"
 version = "0.4.1"
 edition = "2021"
-description = "Tauri 2 binary entry — calls into ai_config_gui_lib::run"
+description = "Tauri 2 binary entry — calls into agent_manager_gui_lib::run"
 
 [[bin]]
 name = "agent-manager-gui"

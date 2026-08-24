@@ -199,7 +199,7 @@ fn platform_dest_root(
             PlatformId::Codex => deploy_base.join(".codex/hooks"),
             PlatformId::Claude => deploy_base.join(".claude/hooks"),
             PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
-            PlatformId::AiConfig => deploy_base.join("hooks"),
+            PlatformId::AgentManager => deploy_base.join("hooks"),
         },
         AssetKind::Prompt => return None,
     })

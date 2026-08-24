@@ -3,5 +3,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    ai_config_gui_lib::run();
+    agent_manager_gui_lib::run();
 }

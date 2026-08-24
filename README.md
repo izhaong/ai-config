@@ -100,7 +100,7 @@ Put real API keys in `~/.config/agent-manager/secrets.env` (see `templates/proje
 | `gui`                      | Launch Tauri UI                                    |
 | `completion`               | Shell completions                                  |
 
-Global flags: `--json`, `--quiet`, `--root <PATH>` (or `AI_CONFIG_ROOT`).
+Global flags: `--json`, `--quiet`, `--root <PATH>` (or `AGENT_MANAGER_ROOT`).
 
 ```bash
 agent-manager --help

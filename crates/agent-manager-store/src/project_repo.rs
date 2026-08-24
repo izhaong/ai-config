@@ -9,7 +9,7 @@ use camino::Utf8Path;
 use rusqlite::{params, OptionalExtension, Row};
 use thiserror::Error;
 
-use ai_config_core::model::Project;
+use agent_manager_core::model::Project;
 
 /// `projects` 表的 CRUD 句柄。
 ///

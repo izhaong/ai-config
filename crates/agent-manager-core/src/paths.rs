@@ -1,9 +1,9 @@
 //! 用户全局资产根:`~/.agent-manager/`(skills / rules / mcp / agents)。
 //!
 //! - 默认始终读写 `~/.agent-manager/`;不存在则创建子目录。
-//! - 首次为空时,可从 `AI_CONFIG_SEED` 或安装包 Resources 合并拷贝(不覆盖已有文件)。
+//! - 首次为空时,可从 `AGENT_MANAGER_SEED` 或安装包 Resources 合并拷贝(不覆盖已有文件)。
 //! - 项目覆盖仍在 `<project>/.agent-manager/`(结构相同,与全局合并)。
-//! - `AI_CONFIG_ROOT` 可覆盖全局根(开发/测试);指向 agent-manager 仓库根时回退 `~/.agent-manager`。
+//! - `AGENT_MANAGER_ROOT` 可覆盖全局根(开发/测试);指向 agent-manager 仓库根时回退 `~/.agent-manager`。
 
 use camino::{Utf8Path, Utf8PathBuf};
 use walkdir::WalkDir;
@@ -14,7 +14,7 @@ use crate::mcp_json::{self};
 /// 用户主目录下的全局资产目录名。
 pub const USER_ASSET_DIR_NAME: &str = ".agent-manager";
 
-/// 安装包 Resources 内种子目录名(构建时由 `~/.agent-manager` 或 `AI_CONFIG_SEED` 打入)。
+/// 安装包 Resources 内种子目录名(构建时由 `~/.agent-manager` 或 `AGENT_MANAGER_SEED` 打入)。
 pub const BUNDLE_SEED_DIR_NAMES: &[&str] = &[".agent-manager", "seed"];
 
 /// 子目录(相对资产根)。
@@ -41,7 +41,7 @@ pub fn user_home_asset_root() -> Utf8PathBuf {
 }
 
 /// 是否为 agent-manager 工程仓库根(含 `crates/agent-manager-core`)。
-pub fn is_ai_config_repo(p: &Utf8Path) -> bool {
+pub fn is_agent_manager_repo(p: &Utf8Path) -> bool {
     p.join("crates/agent-manager-core").is_dir()
 }
 
@@ -92,7 +92,7 @@ pub struct SyncRoots {
     pub deploy_base: Utf8PathBuf,
 }
 
-/// 解析 CLI `--root` / `AI_CONFIG_ROOT` 对应的 install/sync 作用域。
+/// 解析 CLI `--root` / `AGENT_MANAGER_ROOT` 对应的 install/sync 作用域。
 ///
 /// - 全局：`~/.agent-manager` 或纯资产根 → 下发到 `$HOME`，合并源为自身。
 /// - 项目：仓库根 → 资产 `<repo>/.agent-manager`，default 合并 `~/.agent-manager`，下发到 `<repo>`。
@@ -143,7 +143,7 @@ pub fn resolve_asset_root(candidate: &Utf8Path) -> Utf8PathBuf {
     if is_asset_root(candidate) {
         return candidate.to_path_buf();
     }
-    if is_ai_config_repo(candidate) {
+    if is_agent_manager_repo(candidate) {
         return user_home_asset_root();
     }
     candidate.to_path_buf()
@@ -212,11 +212,11 @@ fn mcp_has_content(root: &Utf8Path) -> bool {
         .unwrap_or(false)
 }
 
-/// 收集可能的种子目录(按优先级):`AI_CONFIG_SEED`、安装包 Resources。
+/// 收集可能的种子目录(按优先级):`AGENT_MANAGER_SEED`、安装包 Resources。
 pub fn collect_seed_sources() -> Vec<Utf8PathBuf> {
     let mut out = Vec::new();
 
-    if let Ok(seed) = std::env::var("AI_CONFIG_SEED") {
+    if let Ok(seed) = std::env::var("AGENT_MANAGER_SEED") {
         if !seed.is_empty() {
             out.push(Utf8PathBuf::from(seed));
         }
@@ -249,7 +249,7 @@ fn dev_repo_asset_seed() -> Option<Utf8PathBuf> {
     }
     for base in candidates {
         let utf = Utf8PathBuf::from_path_buf(base).ok()?;
-        if !is_ai_config_repo(&utf) {
+        if !is_agent_manager_repo(&utf) {
             continue;
         }
         let asset = utf.join(USER_ASSET_DIR_NAME);
@@ -381,7 +381,7 @@ fn seed_hooks_if_missing(root: &Utf8Path) -> Result<(), CoreError> {
 }
 
 fn effective_global_asset_root() -> Utf8PathBuf {
-    if let Ok(env) = std::env::var("AI_CONFIG_ROOT") {
+    if let Ok(env) = std::env::var("AGENT_MANAGER_ROOT") {
         if !env.is_empty() {
             return resolve_asset_root(Utf8Path::new(&env));
         }
@@ -484,19 +484,19 @@ mod tests {
         ));
         let seed_u = Utf8PathBuf::from_path_buf(seed).unwrap();
         let dest_u = Utf8PathBuf::from_path_buf(dest.clone()).unwrap();
-        std::env::set_var("AI_CONFIG_SEED", seed_u.as_str());
+        std::env::set_var("AGENT_MANAGER_SEED", seed_u.as_str());
         seed_hooks_if_missing(&dest_u).unwrap();
-        std::env::remove_var("AI_CONFIG_SEED");
+        std::env::remove_var("AGENT_MANAGER_SEED");
         assert!(dest.join("hooks.json").is_file());
         assert!(dest.join("hooks/a.sh").is_file());
         assert!(dest.join("skills/foo/SKILL.md").is_file());
     }
 
     #[test]
-    fn init_uses_ai_config_root_override() {
+    fn init_uses_agent_manager_root_override() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
-        let _root_guard = crate::test_env::EnvGuard::set("AI_CONFIG_ROOT", root.as_str());
+        let _root_guard = crate::test_env::EnvGuard::set("AGENT_MANAGER_ROOT", root.as_str());
         let got = init_user_asset_root().unwrap();
         assert_eq!(got, root);
         assert!(root.join("skills").is_dir());
@@ -542,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_project_roots_from_dot_ai_config() {
+    fn resolve_project_roots_from_dot_agent_manager() {
         let tmp = TempDir::new().unwrap();
         let asset = Utf8PathBuf::from_path_buf(tmp.path().join(".agent-manager")).unwrap();
         fs::create_dir_all(asset.join("skills")).unwrap();
@@ -560,7 +560,7 @@ mod tests {
         let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         let _env_guard = crate::test_env::EnvGuard::set_many(&[
             ("HOME", Some(home.as_str())),
-            ("AI_CONFIG_ROOT", None),
+            ("AGENT_MANAGER_ROOT", None),
         ]);
         fs::create_dir_all(home.join(".agent-manager/skills")).unwrap();
         let repo = home.join("myproj");
@@ -579,7 +579,7 @@ mod tests {
         let home = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         let _env_guard = crate::test_env::EnvGuard::set_many(&[
             ("HOME", Some(home.as_str())),
-            ("AI_CONFIG_ROOT", None),
+            ("AGENT_MANAGER_ROOT", None),
         ]);
         let asset = home.join(".agent-manager");
         fs::create_dir_all(asset.join("skills/foo")).unwrap();
@@ -598,7 +598,7 @@ mod tests {
         fs::create_dir_all(repo.as_std_path()).unwrap();
         let _env_guard = crate::test_env::EnvGuard::set_many(&[
             ("HOME", Some(home.as_str())),
-            ("AI_CONFIG_ROOT", None),
+            ("AGENT_MANAGER_ROOT", None),
         ]);
 
         let _ = resolve_sync_roots(&repo);

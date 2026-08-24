@@ -96,13 +96,13 @@ pub fn supports_at_scope(
 
 // ── agent-manager（资产源）────────────────────────────────────────────
 
-struct AiConfigAdapter {
+struct AgentManagerAdapter {
     asset_root: Utf8PathBuf,
 }
 
-impl PlatformAdapter for AiConfigAdapter {
+impl PlatformAdapter for AgentManagerAdapter {
     fn id(&self) -> PlatformId {
-        PlatformId::AiConfig
+        PlatformId::AgentManager
     }
     fn skills_dir(&self) -> Utf8PathBuf {
         self.asset_root.join("skills")
@@ -264,8 +264,8 @@ impl PlatformAdapter for HermesAdapter {
 
 // ── 工厂 + 全局 registry ────────────────────────────────────────────
 
-pub fn aiconfig_adapter(asset_root: &camino::Utf8Path) -> Box<dyn PlatformAdapter> {
-    Box::new(AiConfigAdapter {
+pub fn agentmanager_adapter(asset_root: &camino::Utf8Path) -> Box<dyn PlatformAdapter> {
+    Box::new(AgentManagerAdapter {
         asset_root: asset_root.to_path_buf(),
     })
 }
@@ -291,7 +291,7 @@ pub fn for_id(id: PlatformId) -> Result<Box<dyn PlatformAdapter>, CoreError> {
 /// GUI / 浏览用 5 平台（含 agent-manager 源），固定顺序。
 pub fn ui_platform_ids() -> [PlatformId; 5] {
     [
-        PlatformId::AiConfig,
+        PlatformId::AgentManager,
         PlatformId::Cursor,
         PlatformId::Codex,
         PlatformId::Claude,
@@ -315,8 +315,8 @@ pub fn for_scope_with_asset(
     deploy_base: &camino::Utf8Path,
     asset_root: &camino::Utf8Path,
 ) -> Result<Box<dyn PlatformAdapter>, CoreError> {
-    if id == PlatformId::AiConfig {
-        return Ok(aiconfig_adapter(asset_root));
+    if id == PlatformId::AgentManager {
+        return Ok(agentmanager_adapter(asset_root));
     }
     for_scope(id, deploy_base)
 }
@@ -344,7 +344,7 @@ pub fn kind_asset_path(
             PlatformId::Codex => deploy_base.join(".codex/hooks"),
             PlatformId::Claude => deploy_base.join(".claude/hooks"),
             PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
-            PlatformId::AiConfig => asset_root.join("hooks"),
+            PlatformId::AgentManager => asset_root.join("hooks"),
         }),
     }
 }
@@ -358,14 +358,14 @@ pub fn for_scope(
     id: PlatformId,
     deploy_base: &camino::Utf8Path,
 ) -> Result<Box<dyn PlatformAdapter>, CoreError> {
-    if id == PlatformId::AiConfig {
+    if id == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "agent-manager 平台需 asset_root，请使用 for_scope_with_asset".into(),
         ));
     }
     if deploy_base == home() {
         return match id {
-            PlatformId::AiConfig => unreachable!(),
+            PlatformId::AgentManager => unreachable!(),
             PlatformId::Cursor => cursor_adapter(),
             PlatformId::Codex => codex_adapter(),
             PlatformId::Claude => claude_adapter(),
@@ -374,7 +374,7 @@ pub fn for_scope(
     }
     let base = deploy_base.to_path_buf();
     Ok(match id {
-        PlatformId::AiConfig => unreachable!(),
+        PlatformId::AgentManager => unreachable!(),
         PlatformId::Cursor => Box::new(CursorAdapter { home: base.clone() }),
         PlatformId::Codex => Box::new(CodexAdapter { home: base.clone() }),
         PlatformId::Claude => Box::new(ClaudeAdapter { home: base.clone() }),
@@ -402,7 +402,7 @@ type _CachedRegistry = OnceLock<()>;
 /// 平台 ID 的短标签（JSON / GUI）。
 pub fn platform_label(id: PlatformId) -> &'static str {
     match id {
-        PlatformId::AiConfig => "aiconfig",
+        PlatformId::AgentManager => "agentmanager",
         PlatformId::Cursor => "cursor",
         PlatformId::Codex => "codex",
         PlatformId::Claude => "claude",
@@ -426,18 +426,20 @@ pub fn asset_kind_label(kind: AssetKind) -> &'static str {
 /// 解析平台字符串（含别名）。
 pub fn parse_platform_str(s: &str) -> Result<PlatformId, CoreError> {
     match s {
-        "aiconfig" | "agent-manager" | "AiConfig" | "ac" => Ok(PlatformId::AiConfig),
+        "agentmanager" | "agent-manager" | "AgentManager" | "am" | "ac" => {
+            Ok(PlatformId::AgentManager)
+        }
         "cursor" | "Cursor" | "cu" => Ok(PlatformId::Cursor),
         "codex" | "Codex" | "cx" => Ok(PlatformId::Codex),
         "claude" | "Claude" | "cl" => Ok(PlatformId::Claude),
         "hermes" | "Hermes" | "he" => Ok(PlatformId::Hermes),
         other => Err(CoreError::InvalidPath(format!(
-            "未知平台 `{other}`(预期 aiconfig/cursor/codex/claude/hermes)"
+            "未知平台 `{other}`(预期 agentmanager/cursor/codex/claude/hermes)"
         ))),
     }
 }
 
-/// 解析 deploy / retract 目标平台（排除 aiconfig 源）。
+/// 解析 deploy / retract 目标平台（排除 agentmanager 源）。
 pub fn parse_deploy_platform_str(s: &str) -> Result<PlatformId, CoreError> {
     let p = parse_platform_str(s)?;
     if !p.is_deploy_target() {

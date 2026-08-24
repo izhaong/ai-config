@@ -75,8 +75,8 @@ sandbox_checks() {
   isolated_env=(
     "HOME=$sandbox_home"
     "USERPROFILE=$sandbox_home"
-    "AI_CONFIG_ROOT=$asset_root"
-    "AI_CONFIG_SECRETS_DIR=$sandbox_home/.config/agent-manager"
+    "AGENT_MANAGER_ROOT=$asset_root"
+    "AGENT_MANAGER_SECRETS_DIR=$sandbox_home/.config/agent-manager"
     "HERMES_SKILLS_DIR=$sandbox_home/.hermes/skills"
   )
 

@@ -10,7 +10,7 @@ use std::{
     process::ExitCode,
 };
 
-use ai_config_core::paths;
+use agent_manager_core::paths;
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 
@@ -40,7 +40,7 @@ struct Cli {
     #[arg(long, global = true)]
     quiet: bool,
 
-    /// 资产根目录(可被 --root / AI_CONFIG_ROOT / CWD 覆盖)
+    /// 资产根目录(可被 --root / AGENT_MANAGER_ROOT / CWD 覆盖)
     #[arg(long, global = true, value_name = "PATH")]
     root: Option<String>,
 
@@ -453,12 +453,12 @@ fn main() -> ExitCode {
     }
 }
 
-/// 解析资产根目录:优先级 `--root` > `AI_CONFIG_ROOT` > `~/.agent-manager`。
+/// 解析资产根目录:优先级 `--root` > `AGENT_MANAGER_ROOT` > `~/.agent-manager`。
 /// 命令入口只解析路径；初始化/播种必须由显式写操作负责。
 fn resolve_root(flag: Option<&str>) -> Utf8PathBuf {
     let raw = match flag {
         Some(s) => s.to_string(),
-        None => std::env::var("AI_CONFIG_ROOT").unwrap_or_else(|_| String::new()),
+        None => std::env::var("AGENT_MANAGER_ROOT").unwrap_or_else(|_| String::new()),
     };
     if raw.is_empty() {
         return paths::discover_global_asset_root_read_only();

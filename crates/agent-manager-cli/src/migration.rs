@@ -4,19 +4,19 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::process::ExitCode;
 
-use ai_config_core::error::exit_code;
-use ai_config_core::error::CoreError;
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::paths;
-use ai_config_core::platform;
-use ai_config_core::projection::migration::{
+use agent_manager_core::error::exit_code;
+use agent_manager_core::error::CoreError;
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::paths;
+use agent_manager_core::platform;
+use agent_manager_core::projection::migration::{
     inventory, CanonicalLayerRoot, InventoryRequest, InventoryScope,
 };
-use ai_config_core::projection::migration_action::{
+use agent_manager_core::projection::migration_action::{
     apply_import_plan, build_import_plan, rollback_import_transaction, ImportApplyOptions,
     ImportApplyReport, ImportPlan, ImportRequest, RollbackStatus,
 };
-use ai_config_core::projection::model::SourceLayer;
+use agent_manager_core::projection::model::SourceLayer;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 
@@ -490,7 +490,7 @@ fn import_source_location(
             let extension = match source_platform {
                 PlatformId::Cursor | PlatformId::Hermes => "mdc",
                 PlatformId::Claude => "md",
-                PlatformId::AiConfig | PlatformId::Codex => {
+                PlatformId::AgentManager | PlatformId::Codex => {
                     return Err(CoreError::NotImplemented(
                         "this platform rule format has no lossless import mapping",
                     ))

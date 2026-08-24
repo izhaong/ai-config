@@ -203,7 +203,7 @@ pub fn materialize_legacy_symlink_deploys(
         }
     }
 
-    repaired.extend(materialize_orphan_symlinks_under_ai_config(default_root)?);
+    repaired.extend(materialize_orphan_symlinks_under_agent_manager(default_root)?);
     Ok(repaired)
 }
 
@@ -223,7 +223,7 @@ fn try_materialize_legacy_dest(
 
 /// 扫描各平台目录：凡 symlink 指向 `default_root` 下资产的，一律迁移为实体硬拷贝
 /// （含 Hermes agents 等 capability 表未列出的历史下发）。
-fn materialize_orphan_symlinks_under_ai_config(
+fn materialize_orphan_symlinks_under_agent_manager(
     default_root: &Utf8Path,
 ) -> Result<Vec<String>, CoreError> {
     let mut repaired = Vec::new();

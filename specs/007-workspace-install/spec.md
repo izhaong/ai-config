@@ -27,7 +27,7 @@
 
 - **FR-001**: 解析 `.gitmodules` 的 `path` 列表（跳过未 checkout 目录）
 - **FR-002**: `resolve_member_sync_roots(member, workspace)` — 子仓无资产时继承 workspace `.agent-manager`
-- **FR-003**: CLI `install` / `sync` 支持 `--workspace`（隐含 `AI_CONFIG_ROOT=<workspace>`）
+- **FR-003**: CLI `install` / `sync` 支持 `--workspace`（隐含 `AGENT_MANAGER_ROOT=<workspace>`）
 - **FR-004**: JSON 报告含 `members[]` 与每仓 outcomes
 - **FR-005**: 不替代 bootstrap 的 per-repo 白名单（后续 `repo-manifest.yaml`）
 

@@ -13,14 +13,14 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("../../platformIcons", () => ({
   PLATFORM_FAVICON: {
-    aiconfig: "/aiconfig.png",
+    agentmanager: "/agentmanager.png",
     cursor: "/cursor.png",
     codex: "/codex.png",
     claude: "/claude.png",
     hermes: "/hermes.png",
   },
   PLATFORM_NAME: {
-    aiconfig: "agent-manager",
+    agentmanager: "agent-manager",
     cursor: "Cursor",
     codex: "Codex",
     claude: "Claude",
@@ -41,7 +41,7 @@ function states(
   overrides: Partial<Record<Platform, LinkState>> = {},
 ): Record<Platform, LinkState> {
   return {
-    aiconfig: "unlinked",
+    agentmanager: "unlinked",
     cursor: "synced",
     codex: "unlinked",
     claude: "unlinked",

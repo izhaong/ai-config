@@ -36,7 +36,7 @@ fn cmd(home: &Path, root: &Path) -> Command {
     let mut c = Command::cargo_bin(BIN).expect("binary");
     c.env("HOME", home);
     c.env("USERPROFILE", home);
-    c.env_remove("AI_CONFIG_SECRETS_DIR");
+    c.env_remove("AGENT_MANAGER_SECRETS_DIR");
     c.env_remove("HERMES_SKILLS_DIR");
     c.arg("--root").arg(root);
     c
@@ -109,7 +109,7 @@ fn status_does_not_initialize_global_asset_root() {
     command
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
-        .env_remove("AI_CONFIG_ROOT")
+        .env_remove("AGENT_MANAGER_ROOT")
         .arg("status")
         .assert()
         .success();

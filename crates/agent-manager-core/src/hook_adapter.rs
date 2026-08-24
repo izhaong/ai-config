@@ -22,7 +22,7 @@ pub fn platform_hooks_dir(deploy_base: &Utf8Path, plat: PlatformId) -> Utf8PathB
         PlatformId::Codex => deploy_base.join(".codex/hooks"),
         PlatformId::Claude => claude_hooks_script_dir(deploy_base),
         PlatformId::Hermes => paths::home_dir().join(".hermes/agent-hooks"),
-        PlatformId::AiConfig => hook::hooks_dir(deploy_base),
+        PlatformId::AgentManager => hook::hooks_dir(deploy_base),
     }
 }
 
@@ -78,7 +78,7 @@ fn platform_config_path(deploy_base: &Utf8Path, plat: PlatformId) -> Utf8PathBuf
         PlatformId::Codex => deploy_base.join(".codex/hooks.json"),
         PlatformId::Claude => deploy_base.join(".claude/settings.json"),
         PlatformId::Hermes => paths::home_dir().join(".hermes/config.yaml"),
-        PlatformId::AiConfig => Utf8PathBuf::new(),
+        PlatformId::AgentManager => Utf8PathBuf::new(),
     }
 }
 
@@ -115,14 +115,14 @@ pub fn deploy(
         }
         PlatformId::Claude => merge_claude_settings(deploy_base, &spec)?,
         PlatformId::Hermes => merge_hermes_config(&spec)?,
-        PlatformId::AiConfig => {}
+        PlatformId::AgentManager => {}
     }
 
     let dest = platform_config_path(deploy_base, plat);
     Ok(format!(
         "Hook `{script_filename}` → {} OK ({})",
         platform::platform_label(plat),
-        if plat == PlatformId::AiConfig {
+        if plat == PlatformId::AgentManager {
             spec.script_path.as_str()
         } else {
             dest.as_str()
@@ -170,7 +170,7 @@ pub fn retract(
             }
         }
         PlatformId::Hermes => remove_hermes_managed(script_filename)?,
-        PlatformId::AiConfig => {}
+        PlatformId::AgentManager => {}
     }
 
     if script_dest.exists() {
@@ -199,7 +199,7 @@ pub fn is_deployed(deploy_base: &Utf8Path, plat: PlatformId, script_filename: &s
             config_contains_token(&platform_config_path(deploy_base, plat), &token)
         }
         PlatformId::Hermes => hermes_contains_hook(script_filename),
-        PlatformId::AiConfig => hook::script_path(deploy_base, script_filename).is_file(),
+        PlatformId::AgentManager => hook::script_path(deploy_base, script_filename).is_file(),
     }
 }
 
@@ -210,7 +210,7 @@ pub fn read_platform_bindings(
     script_filename: &str,
 ) -> Result<Vec<hook::HookBinding>, CoreError> {
     match plat {
-        PlatformId::AiConfig => Ok(hook::load_spec(deploy_base, script_filename)?.bindings),
+        PlatformId::AgentManager => Ok(hook::load_spec(deploy_base, script_filename)?.bindings),
         PlatformId::Cursor | PlatformId::Codex => {
             let path = platform_config_path(deploy_base, plat);
             if !path.is_file() {
@@ -277,7 +277,7 @@ pub fn deploy_between_platforms(
         }
         PlatformId::Claude => merge_claude_settings(deploy_base, &spec)?,
         PlatformId::Hermes => merge_hermes_config(&spec)?,
-        PlatformId::AiConfig => {}
+        PlatformId::AgentManager => {}
     }
     Ok(format!(
         "Hook `{script_filename}`: {} → {} OK",
@@ -310,7 +310,7 @@ pub fn toggle_platform_lifecycle(
     lifecycle: &str,
     enabled: bool,
 ) -> Result<(), CoreError> {
-    if plat == PlatformId::AiConfig {
+    if plat == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath("源视图请切换 agent-manager 平台".into()));
     }
     if !platform::supports_at_scope(plat, crate::model::AssetKind::Hook, deploy_base) {
@@ -411,7 +411,7 @@ fn platform_command(
                 )
             }
         }
-        PlatformId::AiConfig => source_command.to_string(),
+        PlatformId::AgentManager => source_command.to_string(),
     }
 }
 
@@ -458,7 +458,7 @@ fn upsert_platform_binding(
         }
         PlatformId::Claude => merge_claude_single_binding(deploy_base, script_filename, binding)?,
         PlatformId::Hermes => merge_hermes_single_binding(script_filename, binding)?,
-        PlatformId::AiConfig => {}
+        PlatformId::AgentManager => {}
     }
     Ok(())
 }
@@ -502,7 +502,7 @@ fn remove_platform_binding(
             remove_claude_binding(deploy_base, script_filename, &platform_lifecycle)?
         }
         PlatformId::Hermes => remove_hermes_binding(script_filename, &platform_lifecycle)?,
-        PlatformId::AiConfig => {}
+        PlatformId::AgentManager => {}
     }
     Ok(())
 }

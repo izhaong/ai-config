@@ -1,13 +1,13 @@
 use std::fs;
 
-use ai_config_core::error::CoreError;
-use ai_config_core::model::{AssetKind, McpServer, McpTransport, PlatformId};
-use ai_config_core::projection::executor::{apply_projection_plan, ApplyOptions, ExecutorContext};
-use ai_config_core::projection::fingerprint::path_content_digest;
-use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
-use ai_config_core::projection::mcp::source::{EffectiveMcpDefinition, McpDefinition};
-use ai_config_core::projection::model::{DeploymentScope, EffectiveAsset, SourceLayer, SourceRef};
-use ai_config_core::projection::planner::{
+use agent_manager_core::error::CoreError;
+use agent_manager_core::model::{AssetKind, McpServer, McpTransport, PlatformId};
+use agent_manager_core::projection::executor::{apply_projection_plan, ApplyOptions, ExecutorContext};
+use agent_manager_core::projection::fingerprint::path_content_digest;
+use agent_manager_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
+use agent_manager_core::projection::mcp::source::{EffectiveMcpDefinition, McpDefinition};
+use agent_manager_core::projection::model::{DeploymentScope, EffectiveAsset, SourceLayer, SourceRef};
+use agent_manager_core::projection::planner::{
     build_hermes_cross_domain_projection_plan, build_mcp_projection_plan, build_projection_plan,
     PlannerContext, ProjectionActionKind, ProjectionOperation, ProjectionRequest,
 };
@@ -19,28 +19,28 @@ struct FailingLedger;
 impl ProjectionLedger for FailingLedger {
     fn get(
         &self,
-        _id: &ai_config_core::projection::model::ProjectionId,
-    ) -> Result<Option<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        _id: &agent_manager_core::projection::model::ProjectionId,
+    ) -> Result<Option<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         Ok(None)
     }
 
     fn get_many(
         &self,
-        _ids: &[ai_config_core::projection::model::ProjectionId],
-    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        _ids: &[agent_manager_core::projection::model::ProjectionId],
+    ) -> Result<Vec<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         Ok(Vec::new())
     }
 
     fn list_scope(
         &self,
         _scope_key: &str,
-    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+    ) -> Result<Vec<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         Ok(Vec::new())
     }
 
     fn apply_batch(
         &self,
-        _mutations: &[ai_config_core::projection::model::LedgerMutation],
+        _mutations: &[agent_manager_core::projection::model::LedgerMutation],
     ) -> Result<(), CoreError> {
         Err(CoreError::ProjectionLedger(
             "forced ledger failure".to_owned(),
@@ -55,28 +55,28 @@ struct FailingApplyLedger<'a> {
 impl ProjectionLedger for FailingApplyLedger<'_> {
     fn get(
         &self,
-        id: &ai_config_core::projection::model::ProjectionId,
-    ) -> Result<Option<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        id: &agent_manager_core::projection::model::ProjectionId,
+    ) -> Result<Option<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         self.inner.get(id)
     }
 
     fn get_many(
         &self,
-        ids: &[ai_config_core::projection::model::ProjectionId],
-    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+        ids: &[agent_manager_core::projection::model::ProjectionId],
+    ) -> Result<Vec<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         self.inner.get_many(ids)
     }
 
     fn list_scope(
         &self,
         scope_key: &str,
-    ) -> Result<Vec<ai_config_core::projection::model::ProjectionRecord>, CoreError> {
+    ) -> Result<Vec<agent_manager_core::projection::model::ProjectionRecord>, CoreError> {
         self.inner.list_scope(scope_key)
     }
 
     fn apply_batch(
         &self,
-        _mutations: &[ai_config_core::projection::model::LedgerMutation],
+        _mutations: &[agent_manager_core::projection::model::LedgerMutation],
     ) -> Result<(), CoreError> {
         Err(CoreError::ProjectionLedger(
             "forced ledger write failure".to_owned(),

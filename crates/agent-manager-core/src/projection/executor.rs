@@ -2348,7 +2348,7 @@ fn render_hook_json(
         let lifecycle = match platform {
             crate::model::PlatformId::Cursor => "afterShellExecution",
             crate::model::PlatformId::Codex | crate::model::PlatformId::Claude => "PostToolUse",
-            crate::model::PlatformId::Hermes | crate::model::PlatformId::AiConfig => {
+            crate::model::PlatformId::Hermes | crate::model::PlatformId::AgentManager => {
                 return Err(CoreError::NotImplemented(
                     "Hook YAML projection requires its dedicated transactional renderer",
                 ))
@@ -2358,7 +2358,7 @@ fn render_hook_json(
             crate::model::PlatformId::Cursor => format!(".cursor/hooks/{}", member.id.name),
             crate::model::PlatformId::Codex => format!(".codex/hooks/{}", member.id.name),
             crate::model::PlatformId::Claude => format!(".claude/hooks/{}", member.id.name),
-            crate::model::PlatformId::Hermes | crate::model::PlatformId::AiConfig => unreachable!(),
+            crate::model::PlatformId::Hermes | crate::model::PlatformId::AgentManager => unreachable!(),
         };
         let entry = if platform == crate::model::PlatformId::Cursor {
             serde_json::json!({

@@ -2,7 +2,7 @@
 
 ## 根因
 
-1. `load_context` 把 `AI_CONFIG_ROOT=<repo>` 当作资产根 `scan_project_root`，未合并 `~/.agent-manager`
+1. `load_context` 把 `AGENT_MANAGER_ROOT=<repo>` 当作资产根 `scan_project_root`，未合并 `~/.agent-manager`
 2. `entry_matches_token` 用 `/hooks/foo` 子串匹配，误删 `.cursor/hooks/foo` 用户条目
 3. 项目 install 对 commands/skills 等直接 `materialize::deploy` 覆盖已有文件
 

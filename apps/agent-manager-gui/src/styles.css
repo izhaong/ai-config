@@ -1404,7 +1404,7 @@ button.danger:disabled {
   font-size: 11px;
 }
 
-.aiconfig-btn {
+.agentmanager-btn {
   width: 32px;
   height: 32px;
   padding: 4px;
@@ -1416,23 +1416,23 @@ button.danger:disabled {
   border: 1px solid var(--border);
 }
 
-.aiconfig-btn img {
+.agentmanager-btn img {
   width: 20px;
   height: 20px;
   object-fit: contain;
 }
 
-.aiconfig-btn.managed {
+.agentmanager-btn.managed {
   border-color: var(--ok);
   opacity: 0.85;
 }
 
-.aiconfig-btn.importable:hover:not(:disabled) {
+.agentmanager-btn.importable:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--bg-elev);
 }
 
-.aiconfig-btn.disabled {
+.agentmanager-btn.disabled {
   opacity: 0.35;
 }
 

@@ -23,7 +23,7 @@ pub fn vercel_agent_key(plat: PlatformId) -> Option<&'static str> {
         PlatformId::Codex => Some("codex"),
         PlatformId::Claude => Some("claude-code"),
         PlatformId::Hermes => Some("hermes-agent"),
-        PlatformId::AiConfig => None,
+        PlatformId::AgentManager => None,
     }
 }
 
@@ -47,19 +47,19 @@ pub fn add_remote_skill(
         ));
     }
 
-    if params.target_platform == PlatformId::AiConfig {
-        let dir_name = add_to_aiconfig_platform(scope.asset_root, source, params.skill_name)?;
+    if params.target_platform == PlatformId::AgentManager {
+        let dir_name = add_to_agentmanager_platform(scope.asset_root, source, params.skill_name)?;
         return Ok(format!(
             "已添加 skill `{dir_name}` 到 agent-manager 平台 ({})",
             scope.asset_root.join("skills").join(&dir_name)
         ));
     }
 
-    let skill_name = ensure_skill_in_aiconfig(scope.asset_root, source, params.skill_name)?;
+    let skill_name = ensure_skill_in_agentmanager(scope.asset_root, source, params.skill_name)?;
     asset_ops::deploy(scope, AssetKind::Skill, &skill_name, params.target_platform)
 }
 
-fn add_to_aiconfig_platform(
+fn add_to_agentmanager_platform(
     asset_root: &Utf8Path,
     source: &str,
     skill_name: Option<&str>,
@@ -68,7 +68,7 @@ fn add_to_aiconfig_platform(
     let temp_utf8 = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
         .map_err(|_| CoreError::InvalidPath("临时目录路径非 UTF-8".into()))?;
 
-    let args = build_aiconfig_add_args(source, skill_name);
+    let args = build_agentmanager_add_args(source, skill_name);
     run_npx(&temp_utf8, &args)?;
 
     let installed = find_skill_dirs_under(&temp_utf8)?;
@@ -90,7 +90,7 @@ fn add_to_aiconfig_platform(
 }
 
 /// 确保 skill 已存在于 agent-manager 源；返回 skill 目录名（用于 deploy）。
-fn ensure_skill_in_aiconfig(
+fn ensure_skill_in_agentmanager(
     asset_root: &Utf8Path,
     source: &str,
     skill_name: Option<&str>,
@@ -101,13 +101,13 @@ fn ensure_skill_in_aiconfig(
         if dest.is_dir() {
             return Ok(name.to_string());
         }
-        add_to_aiconfig_platform(asset_root, source, Some(name))?;
+        add_to_agentmanager_platform(asset_root, source, Some(name))?;
         return Ok(name.to_string());
     }
-    add_to_aiconfig_platform(asset_root, source, None)
+    add_to_agentmanager_platform(asset_root, source, None)
 }
 
-fn build_aiconfig_add_args(source: &str, skill_name: Option<&str>) -> Vec<String> {
+fn build_agentmanager_add_args(source: &str, skill_name: Option<&str>) -> Vec<String> {
     let mut args = vec![
         "skills".into(),
         "add".into(),
@@ -250,7 +250,7 @@ pub fn add_remote_skills_batch(
     let mut errors = Vec::new();
 
     for item in items {
-        let skill_name = match ensure_skill_in_aiconfig(
+        let skill_name = match ensure_skill_in_agentmanager(
             scope.asset_root,
             item.source.trim(),
             item.skill_name.as_deref(),
@@ -265,7 +265,7 @@ pub fn add_remote_skills_batch(
         };
 
         for plat in platforms {
-            if *plat == PlatformId::AiConfig {
+            if *plat == PlatformId::AgentManager {
                 ok += 1;
                 continue;
             }
@@ -318,7 +318,7 @@ mod tests {
     fn vercel_agent_keys_match_upstream() {
         assert_eq!(vercel_agent_key(PlatformId::Claude), Some("claude-code"));
         assert_eq!(vercel_agent_key(PlatformId::Hermes), Some("hermes-agent"));
-        assert_eq!(vercel_agent_key(PlatformId::AiConfig), None);
+        assert_eq!(vercel_agent_key(PlatformId::AgentManager), None);
     }
 
     #[test]

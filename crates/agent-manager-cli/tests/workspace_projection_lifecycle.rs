@@ -5,7 +5,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ai_config_core::projection::fingerprint::path_content_digest;
+use agent_manager_core::projection::fingerprint::path_content_digest;
 use assert_cmd::Command;
 use serde_json::Value;
 use tempfile::TempDir;
@@ -50,8 +50,8 @@ impl WorkspaceFixture {
         command
             .env("HOME", self.home.path())
             .env("USERPROFILE", self.home.path())
-            .env_remove("AI_CONFIG_ROOT")
-            .env_remove("AI_CONFIG_SECRETS_DIR")
+            .env_remove("AGENT_MANAGER_ROOT")
+            .env_remove("AGENT_MANAGER_SECRETS_DIR")
             .env_remove("HERMES_SKILLS_DIR")
             .arg("--root")
             .arg(self.workspace.path())

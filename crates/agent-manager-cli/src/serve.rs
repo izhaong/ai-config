@@ -13,21 +13,21 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use ai_config_core::asset_ops::AssetFileDetail;
-use ai_config_core::doctor::DoctorReport;
-use ai_config_core::error::CoreError;
+use agent_manager_core::asset_ops::AssetFileDetail;
+use agent_manager_core::doctor::DoctorReport;
+use agent_manager_core::error::CoreError;
 
 use crate::agent_api::{self, parse_kind, parse_platform, resolve_scope_root, EnvSummary};
 use crate::lifecycle::{ListReport, StatusReport};
 use crate::projection::LifecycleReport;
 
 #[derive(Debug, Clone)]
-pub struct AiConfigMcpServer {
+pub struct AgentManagerMcpServer {
     default_root: Arc<Utf8PathBuf>,
     tool_router: ToolRouter<Self>,
 }
 
-impl AiConfigMcpServer {
+impl AgentManagerMcpServer {
     pub fn new(default_root: Utf8PathBuf) -> Self {
         Self {
             default_root: Arc::new(default_root),
@@ -97,9 +97,9 @@ struct DeployParam {
 }
 
 #[tool_router]
-impl AiConfigMcpServer {
+impl AgentManagerMcpServer {
     #[tool(description = "列出已纳管资产（skills / rules / agents / commands / mcp）")]
-    async fn ai_config_list(
+    async fn agent_manager_list(
         &self,
         Parameters(params): Parameters<RootParam>,
     ) -> Result<Json<ListReport>, McpError> {
@@ -108,7 +108,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "各资产在各平台的链接/同步状态")]
-    async fn ai_config_status(
+    async fn agent_manager_status(
         &self,
         Parameters(params): Parameters<RootParam>,
     ) -> Result<Json<StatusReport>, McpError> {
@@ -117,7 +117,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "健康检查：断链、缺 secrets、平台能力问题等")]
-    async fn ai_config_doctor(
+    async fn agent_manager_doctor(
         &self,
         Parameters(params): Parameters<RootParam>,
     ) -> Result<Json<DoctorReport>, McpError> {
@@ -126,7 +126,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "生成 source-first 同步计划；仅 apply=true 才会写入目标平台")]
-    async fn ai_config_sync(
+    async fn agent_manager_sync(
         &self,
         Parameters(params): Parameters<RootParam>,
     ) -> Result<Json<LifecycleReport>, McpError> {
@@ -137,7 +137,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "读取单条资产正文与元数据")]
-    async fn ai_config_show(
+    async fn agent_manager_show(
         &self,
         Parameters(params): Parameters<KindNameParam>,
     ) -> Result<Json<AssetFileDetail>, McpError> {
@@ -149,7 +149,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "保存单条资产正文到 agent-manager 源目录")]
-    async fn ai_config_save(
+    async fn agent_manager_save(
         &self,
         Parameters(params): Parameters<SaveParam>,
     ) -> Result<Json<OkMessage>, McpError> {
@@ -163,7 +163,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "下发单条资产到指定平台")]
-    async fn ai_config_deploy(
+    async fn agent_manager_deploy(
         &self,
         Parameters(params): Parameters<DeployParam>,
     ) -> Result<Json<OkMessage>, McpError> {
@@ -179,7 +179,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "从指定平台收回单条资产副本")]
-    async fn ai_config_retract(
+    async fn agent_manager_retract(
         &self,
         Parameters(params): Parameters<DeployParam>,
     ) -> Result<Json<OkMessage>, McpError> {
@@ -195,7 +195,7 @@ impl AiConfigMcpServer {
     }
 
     #[tool(description = "资产根目录扫描摘要（各类型数量）")]
-    async fn ai_config_env(
+    async fn agent_manager_env(
         &self,
         Parameters(params): Parameters<RootParam>,
     ) -> Result<Json<EnvSummary>, McpError> {
@@ -207,9 +207,9 @@ impl AiConfigMcpServer {
 #[tool_handler(
     router = self.tool_router,
     name = "agent-manager",
-    instructions = "Manage agent-manager assets across Cursor, Codex, Claude Code, and Hermes. Prefer ai_config_doctor before sync/deploy. Never expose secrets values."
+    instructions = "Manage agent-manager assets across Cursor, Codex, Claude Code, and Hermes. Prefer agent_manager_doctor before sync/deploy. Never expose secrets values."
 )]
-impl ServerHandler for AiConfigMcpServer {
+impl ServerHandler for AgentManagerMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
@@ -223,7 +223,7 @@ pub fn run(default_root: Utf8PathBuf) -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "ai_config_cli=info,rmcp=warn".into()),
+                .unwrap_or_else(|_| "agent_manager_cli=info,rmcp=warn".into()),
         )
         .with_writer(std::io::stderr)
         .with_ansi(false)
@@ -235,7 +235,7 @@ pub fn run(default_root: Utf8PathBuf) -> anyhow::Result<()> {
         .build()?;
 
     rt.block_on(async {
-        let server = AiConfigMcpServer::new(default_root);
+        let server = AgentManagerMcpServer::new(default_root);
         let service = server.serve(stdio()).await?;
         service.waiting().await?;
         Ok::<(), anyhow::Error>(())
@@ -247,7 +247,7 @@ mod tests {
     use std::ffi::OsString;
     use std::fs;
 
-    use ai_config_core::paths;
+    use agent_manager_core::paths;
     use tempfile::TempDir;
 
     use super::*;
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn tool_output_schemas_are_objects() {
-        let server = AiConfigMcpServer::new(paths::discover_global_asset_root());
+        let server = AgentManagerMcpServer::new(paths::discover_global_asset_root());
         let tools = server.tool_router.list_all();
         assert_eq!(tools.len(), 9);
         for tool in tools {
@@ -318,9 +318,9 @@ mod tests {
 
     #[test]
     fn mutation_tools_require_explicit_apply_and_sync_returns_projection_plan() {
-        let server = AiConfigMcpServer::new(paths::discover_global_asset_root());
+        let server = AgentManagerMcpServer::new(paths::discover_global_asset_root());
         let tools = server.tool_router.list_all();
-        for name in ["ai_config_sync", "ai_config_deploy", "ai_config_retract"] {
+        for name in ["agent_manager_sync", "agent_manager_deploy", "agent_manager_retract"] {
             let tool = tools
                 .iter()
                 .find(|tool| tool.name == name)
@@ -339,7 +339,7 @@ mod tests {
 
         let sync = tools
             .iter()
-            .find(|tool| tool.name == "ai_config_sync")
+            .find(|tool| tool.name == "agent_manager_sync")
             .expect("sync tool");
         let output = sync.output_schema.as_ref().expect("sync output schema");
         let plan = output
@@ -369,10 +369,10 @@ mod tests {
     async fn sync_handler_is_plan_only_by_default_and_foreign_guard_blocks_apply() {
         let repo = projection_fixture();
         let root = Utf8PathBuf::from_path_buf(repo.path().to_path_buf()).expect("utf8 repo");
-        let server = AiConfigMcpServer::new(root.clone());
+        let server = AgentManagerMcpServer::new(root.clone());
 
         let plan_only = server
-            .ai_config_sync(Parameters(RootParam {
+            .agent_manager_sync(Parameters(RootParam {
                 root: None,
                 apply: false,
             }))
@@ -393,9 +393,9 @@ mod tests {
                 apply: true,
             };
             let result = if operation == "deploy" {
-                server.ai_config_deploy(Parameters(params)).await
+                server.agent_manager_deploy(Parameters(params)).await
             } else {
-                server.ai_config_retract(Parameters(params)).await
+                server.agent_manager_retract(Parameters(params)).await
             };
             let error = match result {
                 Ok(_) => panic!("single-item MCP {operation} must fail closed"),
@@ -415,7 +415,7 @@ mod tests {
         fs::write(&foreign, "foreign instructions\n").expect("foreign project entry");
         let foreign_before = fs::read(&foreign).expect("read foreign entry");
         let blocked = server
-            .ai_config_sync(Parameters(RootParam {
+            .agent_manager_sync(Parameters(RootParam {
                 root: None,
                 apply: true,
             }))
@@ -439,11 +439,11 @@ mod tests {
         let _lock = MCP_SYNC_ENV_LOCK.lock().await;
         let home = TempDir::new().expect("temporary HOME");
         let _home = EnvVarGuard::set("HOME", home.path());
-        let _asset_root = EnvVarGuard::remove("AI_CONFIG_ROOT");
+        let _asset_root = EnvVarGuard::remove("AGENT_MANAGER_ROOT");
         let secrets = TempDir::new().expect("temporary secret directory");
         let secret_path = Utf8PathBuf::from_path_buf(secrets.path().join("secrets.env"))
             .expect("temporary secret path is UTF-8");
-        ai_config_core::secrets::save_to(
+        agent_manager_core::secrets::save_to(
             &[(
                 "UNRELATED_TEST_SECRET".to_owned(),
                 SECRET_VALUE_SENTINEL.to_owned(),
@@ -451,7 +451,7 @@ mod tests {
             &secret_path,
         )
         .expect("seed strict temporary secret store");
-        let _secret_dir = EnvVarGuard::set("AI_CONFIG_SECRETS_DIR", secrets.path());
+        let _secret_dir = EnvVarGuard::set("AGENT_MANAGER_SECRETS_DIR", secrets.path());
 
         let repo = projection_fixture();
         let source = repo.path().join(".agent-manager/mcp/servers/catalog.json");
@@ -471,10 +471,10 @@ mod tests {
         )
         .expect("write missing-secret canonical MCP source");
         let root = Utf8PathBuf::from_path_buf(repo.path().to_path_buf()).expect("UTF-8 repo");
-        let server = AiConfigMcpServer::new(root);
+        let server = AgentManagerMcpServer::new(root);
 
         let report = server
-            .ai_config_sync(Parameters(RootParam {
+            .agent_manager_sync(Parameters(RootParam {
                 root: None,
                 apply: true,
             }))

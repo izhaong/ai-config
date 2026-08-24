@@ -118,7 +118,7 @@ fn import_source_location(
             let extension = match source_platform {
                 PlatformId::Cursor | PlatformId::Hermes => "mdc",
                 PlatformId::Claude => "md",
-                PlatformId::AiConfig | PlatformId::Codex => {
+                PlatformId::AgentManager | PlatformId::Codex => {
                     return Err(CoreError::NotImplemented(
                         "this platform rule format has no lossless import mapping",
                     ))
@@ -1146,7 +1146,7 @@ fn validate_manifest_action(
 }
 
 fn validate_request(request: &ImportRequest) -> Result<(), CoreError> {
-    if !safe_name(&request.name) || request.source_platform == PlatformId::AiConfig {
+    if !safe_name(&request.name) || request.source_platform == PlatformId::AgentManager {
         return Err(CoreError::InvalidPath(
             "invalid import asset identity".to_owned(),
         ));
@@ -1587,7 +1587,7 @@ fn canonical_mcp_value(request: &ImportRequest, entry: Value) -> Value {
 
 fn platform_name(platform: PlatformId) -> &'static str {
     match platform {
-        PlatformId::AiConfig => "aiconfig",
+        PlatformId::AgentManager => "agentmanager",
         PlatformId::Cursor => "cursor",
         PlatformId::Codex => "codex",
         PlatformId::Claude => "claude",

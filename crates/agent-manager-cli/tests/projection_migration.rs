@@ -45,8 +45,8 @@ impl InventoryFixture {
         command
             .env("HOME", self.home())
             .env("USERPROFILE", self.home())
-            .env_remove("AI_CONFIG_ROOT")
-            .env_remove("AI_CONFIG_SECRETS_DIR")
+            .env_remove("AGENT_MANAGER_ROOT")
+            .env_remove("AGENT_MANAGER_SECRETS_DIR")
             .env_remove("HERMES_SKILLS_DIR")
             .arg("--root")
             .arg(&self.asset_root)
@@ -450,7 +450,7 @@ fn unknown_root_symlink_is_lstat_only_even_when_target_content_is_unreadable() {
 }
 
 #[test]
-fn cc_switch_platform_link_is_external_owned_but_never_ai_config_owned_or_selectable() {
+fn cc_switch_platform_link_is_external_owned_but_never_agent_manager_owned_or_selectable() {
     let fixture = InventoryFixture::new();
     let external = fixture.home().join(".cc-switch/skills/shared");
     write(&external.join("SKILL.md"), "cc-switch managed\n");
@@ -507,8 +507,8 @@ fn rules_inventory_output(home: &Path, root: &Path) -> std::process::Output {
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env_remove("AI_CONFIG_ROOT")
-        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("AGENT_MANAGER_ROOT")
+        .env_remove("AGENT_MANAGER_SECRETS_DIR")
         .env_remove("HERMES_SKILLS_DIR")
         .arg("--root")
         .arg(root)
@@ -3330,8 +3330,8 @@ fn workspace_inventory_uses_workspace_scope_overlay_and_never_falls_back_to_home
     let output = command
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
-        .env_remove("AI_CONFIG_ROOT")
-        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("AGENT_MANAGER_ROOT")
+        .env_remove("AGENT_MANAGER_SECRETS_DIR")
         .env_remove("HERMES_SKILLS_DIR")
         .args(["--workspace", "--root"])
         .arg(workspace.path())
@@ -3455,8 +3455,8 @@ fn workspace_inventory_without_root_fails_closed_with_json_error_and_writes_noth
     let output = command
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())
-        .env_remove("AI_CONFIG_ROOT")
-        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("AGENT_MANAGER_ROOT")
+        .env_remove("AGENT_MANAGER_SECRETS_DIR")
         .env_remove("HERMES_SKILLS_DIR")
         .args(["--workspace", "migrate", "inventory", "--json"])
         .output()

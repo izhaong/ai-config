@@ -11,24 +11,24 @@ use camino::{Utf8Component, Utf8Path, Utf8PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
-use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::model::{McpServer, PlatformId};
-use ai_config_core::paths;
-use ai_config_core::projection::executor::{
+use agent_manager_core::error::{exit_code, CoreError};
+use agent_manager_core::model::{McpServer, PlatformId};
+use agent_manager_core::paths;
+use agent_manager_core::projection::executor::{
     apply_projection_plan, ApplyOptions, ExecutorContext, McpSecretProvider,
 };
-use ai_config_core::projection::ledger::MemoryProjectionLedger;
-use ai_config_core::projection::mcp::source::{
+use agent_manager_core::projection::ledger::MemoryProjectionLedger;
+use agent_manager_core::projection::mcp::source::{
     load_mcp_definition_at, load_mcp_definitions, resolve_effective_mcp_definitions,
     EffectiveMcpDefinition,
 };
-use ai_config_core::projection::model::DeploymentScope;
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::model::DeploymentScope;
+use agent_manager_core::projection::planner::{
     build_mcp_projection_plan, McpSecretAvailability, PlannerContext, ProjectionActionKind,
     ProjectionOperation, ProjectionRequest,
 };
-use ai_config_core::projection::source::OverlayRoots;
-use ai_config_core::secrets;
+use agent_manager_core::projection::source::OverlayRoots;
+use agent_manager_core::secrets;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
@@ -154,7 +154,7 @@ struct McpProjectionCommandReport<'a> {
     operation: &'a str,
     server: &'a str,
     platform: &'a str,
-    report: ai_config_core::projection::executor::ApplyReport,
+    report: agent_manager_core::projection::executor::ApplyReport,
 }
 
 /// The old CLI entrypoint is intentionally only an orchestration layer.  It never renders a

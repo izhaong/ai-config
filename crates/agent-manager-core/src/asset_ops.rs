@@ -116,8 +116,8 @@ pub fn retract(
     plat: PlatformId,
 ) -> Result<String, CoreError> {
     reject_legacy_prompt(kind)?;
-    if plat == PlatformId::AiConfig {
-        return retract_aiconfig_platform(scope, kind, name);
+    if plat == PlatformId::AgentManager {
+        return retract_agentmanager_platform(scope, kind, name);
     }
     ensure_deploy_target(plat)?;
     ensure_platform_supports(scope, plat, kind)?;
@@ -237,14 +237,14 @@ pub fn save_content(
 
 /// 仅从 agent-manager 平台目录收回（与其它 IDE 平台 `retract` 语义一致，不牵动其它平台副本）。
 ///
-/// 保留别名供 CLI / 旧命令；GUI 平台 icon 走 `retract(..., AiConfig)`。
+/// 保留别名供 CLI / 旧命令；GUI 平台 icon 走 `retract(..., AgentManager)`。
 pub fn retract_source(
     scope: &ScopeRoots<'_>,
     kind: AssetKind,
     name: &str,
 ) -> Result<String, CoreError> {
     reject_legacy_prompt(kind)?;
-    retract(scope, kind, name, PlatformId::AiConfig)
+    retract(scope, kind, name, PlatformId::AgentManager)
 }
 
 /// 删除源并尽力收回各平台。
@@ -267,7 +267,7 @@ pub fn delete_source(
     remove_source_entry(scope, kind, name)
 }
 
-fn retract_aiconfig_platform(
+fn retract_agentmanager_platform(
     _scope: &ScopeRoots<'_>,
     _kind: AssetKind,
     _name: &str,
@@ -956,7 +956,7 @@ mod deploy_from_platform_tests {
         );
     }
     #[test]
-    fn retract_aiconfig_source_is_not_retractable_from_platform_action() {
+    fn retract_agentmanager_source_is_not_retractable_from_platform_action() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
@@ -976,7 +976,7 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: home,
         };
-        assert!(retract(&scope, AssetKind::Skill, "keep-me", PlatformId::AiConfig).is_err());
+        assert!(retract(&scope, AssetKind::Skill, "keep-me", PlatformId::AgentManager).is_err());
         assert!(skill_dir.join("SKILL.md").is_file());
         assert!(
             claude_skill.join("SKILL.md").is_file(),
@@ -985,7 +985,7 @@ mod deploy_from_platform_tests {
     }
 
     #[test]
-    fn retract_aiconfig_hook_does_not_mutate_source_manifest() {
+    fn retract_agentmanager_hook_does_not_mutate_source_manifest() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
@@ -1013,7 +1013,7 @@ mod deploy_from_platform_tests {
             &scope,
             AssetKind::Hook,
             "speak-lifecycle.py",
-            PlatformId::AiConfig,
+            PlatformId::AgentManager,
         )
         .is_err());
 
@@ -1061,7 +1061,7 @@ mod deploy_from_platform_tests {
     }
 
     #[test]
-    fn retract_preserves_unmanaged_platform_skill_without_aiconfig_source() {
+    fn retract_preserves_unmanaged_platform_skill_without_agentmanager_source() {
         let tmp = TempDir::new().unwrap();
         let home = Utf8Path::from_path(tmp.path()).unwrap();
         let _home_guard = crate::test_env::EnvGuard::set("HOME", tmp.path().to_str().unwrap());
@@ -1173,7 +1173,7 @@ mod deploy_from_platform_tests {
     }
 
     #[test]
-    fn retract_aiconfig_mcp_does_not_delete_source_server() {
+    fn retract_agentmanager_mcp_does_not_delete_source_server() {
         let tmp = TempDir::new().unwrap();
         let asset_root = Utf8Path::from_path(tmp.path()).unwrap().join(".agent-manager");
         mcp_json::ensure_mcp_json(&asset_root).unwrap();
@@ -1189,7 +1189,7 @@ mod deploy_from_platform_tests {
             asset_root: &asset_root,
             deploy_base: &asset_root,
         };
-        assert!(retract(&scope, AssetKind::Mcp, "agent-manager", PlatformId::AiConfig).is_err());
+        assert!(retract(&scope, AssetKind::Mcp, "agent-manager", PlatformId::AgentManager).is_err());
         assert!(mcp_json::get_server_config(&asset_root, "agent-manager")
             .unwrap()
             .is_some());

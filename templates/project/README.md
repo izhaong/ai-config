@@ -38,5 +38,5 @@
 | --- | --- |
 | `{{PROJECT_NAME}}` | 显示名 |
 | `{{PROJECT_SLUG}}` | 目录名 / slug |
-| `{{AI_CONFIG_REL}}` | 从项目根到 agent-manager 的相对路径 |
+| `{{AGENT_MANAGER_REL}}` | 从项目根到 agent-manager 的相对路径 |
 | `{{GENERATED_DATE}}` | 生成日期 ISO |

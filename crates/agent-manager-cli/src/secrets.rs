@@ -4,15 +4,15 @@
 //! - `secrets list`:**不**输出 value(只输出 key 列表);遵守 PRD §8.1 / §10 A-14
 //! - `secrets set` 从 stdin 读 value,**不**回显(canonical mode + 无 terminal echo)
 //! - `secrets validate` 退出码 0 / 4(对齐 §6.1)
-//! - 所有写盘路径走 `ai_config_core::secrets::save_to`(强制 0600 + 原子)
+//! - 所有写盘路径走 `agent_manager_core::secrets::save_to`(强制 0600 + 原子)
 
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 use camino::Utf8Path;
 
-use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::secrets as core_secrets;
+use agent_manager_core::error::{exit_code, CoreError};
+use agent_manager_core::secrets as core_secrets;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 

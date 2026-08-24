@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::projection::ledger::ProjectionLedger;
-use ai_config_core::projection::model::{ProjectionMode, ProjectionSurface};
-use ai_config_store::Store;
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::projection::ledger::ProjectionLedger;
+use agent_manager_core::projection::model::{ProjectionMode, ProjectionSurface};
+use agent_manager_store::Store;
 use rusqlite::{params, Connection};
 
 #[test]

@@ -15,8 +15,8 @@ use std::process::ExitCode;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Serialize;
 
-use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::source;
+use agent_manager_core::error::{exit_code, CoreError};
+use agent_manager_core::source;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 

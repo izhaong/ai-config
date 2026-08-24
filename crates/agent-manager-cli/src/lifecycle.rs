@@ -24,17 +24,17 @@ use camino::Utf8Path;
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::hook_adapter;
-use ai_config_core::link::{self, LinkHealth};
-use ai_config_core::materialize;
-use ai_config_core::mcp_json;
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::paths;
-use ai_config_core::platform;
-use ai_config_core::source;
-use ai_config_core::sync;
-use ai_config_core::template::McpSyncState;
+use agent_manager_core::error::{exit_code, CoreError};
+use agent_manager_core::hook_adapter;
+use agent_manager_core::link::{self, LinkHealth};
+use agent_manager_core::materialize;
+use agent_manager_core::mcp_json;
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::paths;
+use agent_manager_core::platform;
+use agent_manager_core::source;
+use agent_manager_core::sync;
+use agent_manager_core::template::McpSyncState;
 
 use crate::output::{emit_error_envelope, emit_json, emit_line, OutputMode};
 
@@ -61,7 +61,7 @@ fn all_platforms() -> [PlatformId; 4] {
 
 fn platform_label(p: PlatformId) -> &'static str {
     match p {
-        PlatformId::AiConfig => "aiconfig",
+        PlatformId::AgentManager => "agentmanager",
         PlatformId::Cursor => "cursor",
         PlatformId::Codex => "codex",
         PlatformId::Claude => "claude",
@@ -434,7 +434,7 @@ pub fn run_doctor(default_root: &Utf8Path, mode: OutputMode, materialize: bool) 
         return ExitCode::from(error.exit_code());
     }
 
-    let report = match ai_config_core::doctor::compute_report(default_root) {
+    let report = match agent_manager_core::doctor::compute_report(default_root) {
         Ok(r) => r,
         Err(e) => {
             emit_error_envelope(mode, e.exit_code(), &e.to_string(), e.hint());
@@ -589,8 +589,8 @@ mod tests {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let prev = std::env::var("HOME").ok();
             std::env::set_var("HOME", p);
-            // 同时清掉 AI_CONFIG_HOME(防止旧 env 干扰)
-            std::env::remove_var("AI_CONFIG_HOME");
+            // 同时清掉 AGENT_MANAGER_HOME(防止旧 env 干扰)
+            std::env::remove_var("AGENT_MANAGER_HOME");
             Self { prev, _lock: lock }
         }
     }
@@ -786,7 +786,7 @@ mod tests {
             crate::projection::execute(&root, false, false, false).expect("source-first sync plan");
         assert_eq!(
             execution.exit_code,
-            ai_config_core::error::exit_code::SUCCESS
+            agent_manager_core::error::exit_code::SUCCESS
         );
         assert!(execution.report.apply.is_none());
         assert!(!execution.report.plan.actions.is_empty());
@@ -813,7 +813,7 @@ mod tests {
         )
         .unwrap();
 
-        let members = ai_config_core::workspace::discover_members(&ws).unwrap();
+        let members = agent_manager_core::workspace::discover_members(&ws).unwrap();
         assert_eq!(members.len(), 2);
 
         let result = crate::projection::execute(&ws, true, false, false);
@@ -823,11 +823,11 @@ mod tests {
         };
         assert!(matches!(
             error,
-            ai_config_core::error::CoreError::NotImplemented(_)
+            agent_manager_core::error::CoreError::NotImplemented(_)
         ));
         assert_eq!(
             error.exit_code(),
-            ai_config_core::error::exit_code::ARG_ERROR
+            agent_manager_core::error::exit_code::ARG_ERROR
         );
         assert!(
             !home_tmp.path().join(".agents/skills/foo").exists(),
@@ -851,7 +851,7 @@ mod tests {
             .expect("show");
         assert_eq!(
             out.status.code(),
-            Some(ai_config_core::error::exit_code::PARTIAL_FAILURE as i32),
+            Some(agent_manager_core::error::exit_code::PARTIAL_FAILURE as i32),
             "show 不存在的 name 应退出码 3(部分失败)"
         );
 

@@ -53,8 +53,8 @@ function skipBrowseCurrentToggle(
 ): boolean {
   if (
     ctx.browsingSource &&
-    ctx.activePlatform === "aiconfig" &&
-    plat === "aiconfig"
+    ctx.activePlatform === "agentmanager" &&
+    plat === "agentmanager"
   ) {
     return true;
   }
@@ -78,7 +78,7 @@ export function resolveBatchPlatformToggleMode(
   ) {
     return "activate_all";
   }
-  if (browsingSource && activePlatform === "aiconfig" && plat === "aiconfig") {
+  if (browsingSource && activePlatform === "agentmanager" && plat === "agentmanager") {
     return "activate_all";
   }
   const agg = aggregateManagedPlatformState(entries, plat);
@@ -91,12 +91,12 @@ export function resolveEntryPlatformToggleAction(
   plat: Platform,
   ctx: EntryPlatformToggleContext,
 ): EntryPlatformToggleAction {
-  if (plat === "aiconfig") {
-    const state = entry.states.aiconfig;
+  if (plat === "agentmanager") {
+    const state = entry.states.agentmanager;
 
     if (
       ctx.browsingSource &&
-      ctx.activePlatform === "aiconfig" &&
+      ctx.activePlatform === "agentmanager" &&
       canRetractEntry(entry, state)
     ) {
       return "skip";

@@ -6,27 +6,27 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::ExitCode;
 
-use ai_config_core::error::{exit_code, CoreError};
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::paths::{self, SyncRoots};
-use ai_config_core::projection::executor::{
+use agent_manager_core::error::{exit_code, CoreError};
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::paths::{self, SyncRoots};
+use agent_manager_core::projection::executor::{
     apply_projection_plans_transactionally, rollback_projection_transaction, ApplyOptions,
     ApplyReport, ExecutorContext, McpSecretProvider, ProjectionRollbackReport,
     ProjectionTransactionError,
 };
-use ai_config_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
-use ai_config_core::projection::mcp::source::resolve_effective_mcp_definitions;
-use ai_config_core::projection::model::{
+use agent_manager_core::projection::ledger::{MemoryProjectionLedger, ProjectionLedger};
+use agent_manager_core::projection::mcp::source::resolve_effective_mcp_definitions;
+use agent_manager_core::projection::model::{
     DeploymentScope, LedgerMutation, ProjectionId, ProjectionRecord,
 };
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::planner::{
     build_hermes_cross_domain_projection_plan, build_mcp_projection_plan, build_projection_plan,
     McpSecretAvailability, PlannerContext, ProjectionActionKind, ProjectionOperation,
     ProjectionPlan, ProjectionRequest, PROJECTION_PLAN_SCHEMA_VERSION,
 };
-use ai_config_core::projection::source::{resolve_effective_assets, OverlayRoots};
-use ai_config_core::secrets;
-use ai_config_store::Store;
+use agent_manager_core::projection::source::{resolve_effective_assets, OverlayRoots};
+use agent_manager_core::secrets;
+use agent_manager_store::Store;
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -520,7 +520,7 @@ fn build_workspace_bundles(
 ) -> Result<Vec<WorkspaceBundle>, CoreError> {
     let global_default = paths::discover_global_asset_root_read_only();
     let workspace_assets = paths::project_asset_root(workspace_root);
-    ai_config_core::workspace::discover_members(workspace_root)?
+    agent_manager_core::workspace::discover_members(workspace_root)?
         .into_iter()
         .filter(|member| member != workspace_root)
         .map(|member| {
@@ -876,7 +876,7 @@ fn has_ledger_entry(path: &Utf8Path) -> bool {
     std::fs::symlink_metadata(path).is_ok()
 }
 
-fn is_missing_secret_skip(action: &ai_config_core::projection::planner::ProjectionAction) -> bool {
+fn is_missing_secret_skip(action: &agent_manager_core::projection::planner::ProjectionAction) -> bool {
     action.state.as_deref() == Some("skipped")
         && action.reason_code == "mcp_missing_secret_keys"
         && !action.mcp_members.is_empty()

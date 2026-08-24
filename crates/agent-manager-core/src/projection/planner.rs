@@ -1933,7 +1933,7 @@ fn plan_project_entry_prompt(
     let consumers = platforms
         .iter()
         .copied()
-        .filter(|platform| *platform != PlatformId::AiConfig)
+        .filter(|platform| *platform != PlatformId::AgentManager)
         .collect();
     let action = plan_direct_link(
         DirectLinkIntent {
@@ -2706,7 +2706,7 @@ fn asset_kind_key(kind: AssetKind) -> u8 {
 
 fn platform_key(platform: &PlatformId) -> u8 {
     match platform {
-        PlatformId::AiConfig => 0,
+        PlatformId::AgentManager => 0,
         PlatformId::Cursor => 1,
         PlatformId::Codex => 2,
         PlatformId::Claude => 3,

@@ -194,7 +194,7 @@ pub fn supported_deploy_platforms(lifecycle: &str) -> Vec<PlatformId> {
 
 pub fn lifecycle_supported(plat: PlatformId, lifecycle: &str) -> bool {
     match plat {
-        PlatformId::AiConfig | PlatformId::Cursor => true,
+        PlatformId::AgentManager | PlatformId::Cursor => true,
         PlatformId::Codex | PlatformId::Claude => matches!(
             lifecycle,
             "preToolUse"
@@ -239,18 +239,18 @@ pub fn list_lifecycle_views(
     script_filename: &str,
 ) -> Vec<HookLifecycleView> {
     let source = source_bindings(asset_root, script_filename);
-    let platform = if browse_plat == PlatformId::AiConfig {
+    let platform = if browse_plat == PlatformId::AgentManager {
         Vec::new()
     } else {
         platform_bindings(deploy_base, browse_plat, script_filename)
     };
-    let active_bindings = if browse_plat == PlatformId::AiConfig {
+    let active_bindings = if browse_plat == PlatformId::AgentManager {
         &source
     } else {
         &platform
     };
 
-    let active_plat = if browse_plat == PlatformId::AiConfig {
+    let active_plat = if browse_plat == PlatformId::AgentManager {
         PlatformId::Cursor
     } else {
         browse_plat
@@ -259,7 +259,7 @@ pub fn list_lifecycle_views(
     lifecycle_catalog()
         .iter()
         .filter(|def| {
-            browse_plat == PlatformId::AiConfig
+            browse_plat == PlatformId::AgentManager
                 || lifecycle_supported_on_any_deploy_platform(def.id)
         })
         .map(|def| {
@@ -296,7 +296,7 @@ pub fn toggle_lifecycle(
             hint: format!("平台不支持生命周期 `{lifecycle}`"),
         });
     }
-    if browse_plat == PlatformId::AiConfig {
+    if browse_plat == PlatformId::AgentManager {
         toggle_source_lifecycle(asset_root, script_filename, lifecycle, enabled)
     } else {
         hook_adapter::toggle_platform_lifecycle(
@@ -356,7 +356,7 @@ mod tests {
         )
         .unwrap();
         fs::write(root.join("hooks/demo.py"), "#!/usr/bin/env python3\n").unwrap();
-        let views = list_lifecycle_views(&root, &root, PlatformId::AiConfig, "demo.py");
+        let views = list_lifecycle_views(&root, &root, PlatformId::AgentManager, "demo.py");
         let st = views
             .iter()
             .find(|v| v.lifecycle == "sessionStart")
@@ -442,14 +442,14 @@ mod tests {
         fs::write(root.join("hooks.json"), r#"{"version":1,"hooks":{}}"#).unwrap();
         fs::write(root.join("hooks/demo.py"), "#!/usr/bin/env python3\n").unwrap();
 
-        toggle_lifecycle(&root, &root, PlatformId::AiConfig, "demo.py", "stop", true).unwrap();
+        toggle_lifecycle(&root, &root, PlatformId::AgentManager, "demo.py", "stop", true).unwrap();
 
-        let views = list_lifecycle_views(&root, &root, PlatformId::AiConfig, "demo.py");
+        let views = list_lifecycle_views(&root, &root, PlatformId::AgentManager, "demo.py");
         let stop = views.iter().find(|v| v.lifecycle == "stop").unwrap();
         assert!(stop.active);
 
-        toggle_lifecycle(&root, &root, PlatformId::AiConfig, "demo.py", "stop", false).unwrap();
-        let views = list_lifecycle_views(&root, &root, PlatformId::AiConfig, "demo.py");
+        toggle_lifecycle(&root, &root, PlatformId::AgentManager, "demo.py", "stop", false).unwrap();
+        let views = list_lifecycle_views(&root, &root, PlatformId::AgentManager, "demo.py");
         let stop = views.iter().find(|v| v.lifecycle == "stop").unwrap();
         assert!(!stop.active);
     }

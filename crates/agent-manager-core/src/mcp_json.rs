@@ -471,7 +471,7 @@ mod tests {
         fs::write(&legacy_server, legacy_contents).unwrap();
         fs::create_dir_all(root.join("skills/kept")).unwrap();
         fs::write(root.join("skills/kept/SKILL.md"), "# kept").unwrap();
-        let _root_guard = crate::test_env::EnvGuard::set("AI_CONFIG_ROOT", root.as_str());
+        let _root_guard = crate::test_env::EnvGuard::set("AGENT_MANAGER_ROOT", root.as_str());
 
         assert_eq!(crate::paths::init_user_asset_root().unwrap(), root);
 
@@ -480,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_gui_style_ai_config_server() {
+    fn upsert_gui_style_agent_manager_server() {
         let tmp = TempDir::new().unwrap();
         let root = Utf8PathBuf::from_path_buf(tmp.path().to_path_buf()).unwrap();
         ensure_mcp_json(&root).unwrap();

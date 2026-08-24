@@ -3,17 +3,17 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use schemars::JsonSchema;
 
-use ai_config_core::asset_ops::{self, ScopeRoots};
-use ai_config_core::doctor;
-use ai_config_core::error::CoreError;
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::paths;
-use ai_config_core::source;
+use agent_manager_core::asset_ops::{self, ScopeRoots};
+use agent_manager_core::doctor;
+use agent_manager_core::error::CoreError;
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::paths;
+use agent_manager_core::source;
 
 use crate::lifecycle::{ListReport, StatusReport};
 use crate::projection::{self, LifecycleReport};
 
-/// 资产根扫描摘要（MCP `ai_config_env`）。
+/// 资产根扫描摘要（MCP `agent_manager_env`）。
 #[derive(Debug, serde::Serialize, JsonSchema)]
 pub struct EnvSummary {
     pub root: String,
@@ -65,9 +65,9 @@ pub fn parse_platform(s: &str) -> Result<PlatformId, String> {
         "codex" => Ok(PlatformId::Codex),
         "claude" | "claudecode" | "claude-code" => Ok(PlatformId::Claude),
         "hermes" => Ok(PlatformId::Hermes),
-        "aiconfig" | "agent-manager" => Ok(PlatformId::AiConfig),
+        "agentmanager" | "agent-manager" => Ok(PlatformId::AgentManager),
         other => Err(format!(
-            "未知平台 `{other}`；可用: cursor, codex, claude, hermes, aiconfig"
+            "未知平台 `{other}`；可用: cursor, codex, claude, hermes, agentmanager"
         )),
     }
 }
@@ -115,7 +115,7 @@ pub fn deploy(
     _apply: bool,
 ) -> Result<String, CoreError> {
     Err(CoreError::NotImplemented(
-        "MCP 单项 deploy 尚未映射到 source-first projection plan；请使用 ai_config_sync 并显式 apply=true",
+        "MCP 单项 deploy 尚未映射到 source-first projection plan；请使用 agent_manager_sync 并显式 apply=true",
     ))
 }
 
@@ -127,7 +127,7 @@ pub fn retract(
     _apply: bool,
 ) -> Result<String, CoreError> {
     Err(CoreError::NotImplemented(
-        "MCP 单项 retract 尚未映射到 source-first projection plan；请使用 ai_config_sync 的 uninstall 生命周期",
+        "MCP 单项 retract 尚未映射到 source-first projection plan；请使用 agent_manager_sync 的 uninstall 生命周期",
     ))
 }
 
@@ -159,9 +159,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let home = tmp.path().join("home");
         let previous_home = std::env::var("HOME").ok();
-        let previous_root = std::env::var("AI_CONFIG_ROOT").ok();
+        let previous_root = std::env::var("AGENT_MANAGER_ROOT").ok();
         std::env::set_var("HOME", &home);
-        std::env::remove_var("AI_CONFIG_ROOT");
+        std::env::remove_var("AGENT_MANAGER_ROOT");
 
         let root = resolve_scope_root(None);
 
@@ -179,9 +179,9 @@ mod tests {
             std::env::remove_var("HOME");
         }
         if let Some(value) = previous_root {
-            std::env::set_var("AI_CONFIG_ROOT", value);
+            std::env::set_var("AGENT_MANAGER_ROOT", value);
         } else {
-            std::env::remove_var("AI_CONFIG_ROOT");
+            std::env::remove_var("AGENT_MANAGER_ROOT");
         }
     }
 

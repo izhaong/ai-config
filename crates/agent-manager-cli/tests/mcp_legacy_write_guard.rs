@@ -25,7 +25,7 @@ fn cmd(home: &Path, root: &Path) -> Command {
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("AGENT_MANAGER_SECRETS_DIR")
         .env_remove("HERMES_SKILLS_DIR")
         .arg("--root")
         .arg(root);
@@ -77,7 +77,7 @@ fn legacy_mcp_secret_extraction_flags_do_not_bypass_reviewed_source_first_plans(
     let before = fs::read(&legacy).expect("read source before");
 
     let assert = cmd(home.path(), root.path())
-        .env("AI_CONFIG_SECRETS_DIR", root.path().join("secret-store"))
+        .env("AGENT_MANAGER_SECRETS_DIR", root.path().join("secret-store"))
         .args([
             "--json",
             "mcp",

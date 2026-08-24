@@ -44,7 +44,7 @@ export function useAssetBrowser({
   reloadDrawerIfOpen,
 }: UseAssetBrowserOptions) {
   const { t } = useTranslation();
-  const [activePlatform, setActivePlatform] = useState<Platform>("aiconfig");
+  const [activePlatform, setActivePlatform] = useState<Platform>("agentmanager");
   const [activeKind, setActiveKind] = useState<AssetKind>("skill");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [manualLoading, setManualLoading] = useState(false);

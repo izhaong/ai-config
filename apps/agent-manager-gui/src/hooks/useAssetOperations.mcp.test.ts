@@ -63,7 +63,7 @@ function mcpEntry(
     description: "stdio",
     platform_path: "/home/.cursor/mcp.json",
     states: {
-      aiconfig: "unlinked",
+      agentmanager: "unlinked",
       cursor: "synced",
       codex: "unlinked",
       claude: "unlinked",
@@ -116,7 +116,7 @@ describe("useAssetOperations MCP add", () => {
 
   it("submitAddMcp saves via saveAsset", async () => {
     const { result } = renderOps({
-      activePlatform: "aiconfig",
+      activePlatform: "agentmanager",
       browsingSource: true,
     });
 
@@ -192,8 +192,8 @@ describe("useAssetOperations MCP platform toggle", () => {
   });
 
   it("源视图部署先请求 scope-level source-first review，而不是平台互拷", async () => {
-    const { result } = renderOps({ browsingSource: true, activePlatform: "aiconfig" });
-    const entry = mcpEntry({ aiconfig: "linked", codex: "missing" });
+    const { result } = renderOps({ browsingSource: true, activePlatform: "agentmanager" });
+    const entry = mcpEntry({ agentmanager: "linked", codex: "missing" });
 
     await act(async () => {
       result.current.handlePlatformToggle(entry, "codex");
@@ -208,10 +208,10 @@ describe("useAssetOperations MCP platform toggle", () => {
 
   it("从 Cursor 视图先请求 source-first 导入审阅，而不是直接写入", async () => {
     const { result } = renderOps();
-    const entry = mcpEntry({ aiconfig: "unlinked" });
+    const entry = mcpEntry({ agentmanager: "unlinked" });
 
     await act(async () => {
-      result.current.handlePlatformToggle(entry, "aiconfig");
+      result.current.handlePlatformToggle(entry, "agentmanager");
     });
 
     await vi.waitFor(() => {
@@ -227,10 +227,10 @@ describe("useAssetOperations MCP platform toggle", () => {
 
   it("从 Codex 视图为 MCP 请求 Codex source-first 导入审阅", async () => {
     const { result } = renderOps({ activePlatform: "codex" });
-    const entry = mcpEntry({ cursor: "unlinked", codex: "synced", aiconfig: "unlinked" });
+    const entry = mcpEntry({ cursor: "unlinked", codex: "synced", agentmanager: "unlinked" });
 
     await act(async () => {
-      result.current.handlePlatformToggle(entry, "aiconfig");
+      result.current.handlePlatformToggle(entry, "agentmanager");
     });
 
     await vi.waitFor(() => {

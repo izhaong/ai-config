@@ -1,8 +1,8 @@
 //! Projection ledger 的 SQLite 实现。
 
-use ai_config_core::error::CoreError;
-use ai_config_core::projection::ledger::ProjectionLedger;
-use ai_config_core::projection::model::{
+use agent_manager_core::error::CoreError;
+use agent_manager_core::projection::ledger::ProjectionLedger;
+use agent_manager_core::projection::model::{
     LedgerMutation, ProjectionId, ProjectionMode, ProjectionRecord, ProjectionSurface,
 };
 use rusqlite::{params, OptionalExtension, Row};
@@ -274,8 +274,8 @@ pub enum StoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ai_config_core::model::{AssetKind, PlatformId};
-    use ai_config_core::projection::model::{ProjectionMode, ProjectionSurface};
+    use agent_manager_core::model::{AssetKind, PlatformId};
+    use agent_manager_core::projection::model::{ProjectionMode, ProjectionSurface};
     use camino::Utf8PathBuf;
 
     fn record(name: &str) -> ProjectionRecord {

@@ -8,7 +8,7 @@ repository.workspace = true
 description = "agent-manager 图形界面:Tauri 2.5 + React 19 前端(PRD §14 Q-2 拍板 React 最新版)"
 
 [lib]
-name = "ai_config_gui_lib"
+name = "agent_manager_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

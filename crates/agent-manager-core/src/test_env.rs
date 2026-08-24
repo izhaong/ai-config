@@ -73,7 +73,7 @@ mod tests {
         let read_guard = read_guard();
         let (tx, rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
-            let _guard = EnvGuard::set("AI_CONFIG_TEST_ENV_LOCK", "set");
+            let _guard = EnvGuard::set("AGENT_MANAGER_TEST_ENV_LOCK", "set");
             tx.send(()).unwrap();
         });
 

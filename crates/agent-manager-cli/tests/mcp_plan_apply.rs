@@ -36,8 +36,8 @@ fn command(home: &Path, root: &Path) -> Command {
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env_remove("AI_CONFIG_ROOT")
-        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("AGENT_MANAGER_ROOT")
+        .env_remove("AGENT_MANAGER_SECRETS_DIR")
         .arg("--root")
         .arg(root);
     command

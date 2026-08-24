@@ -1,19 +1,19 @@
 use std::fs;
 
-use ai_config_core::error::CoreError;
-use ai_config_core::model::{AssetKind, PlatformId};
-use ai_config_core::projection::executor::{
+use agent_manager_core::error::CoreError;
+use agent_manager_core::model::{AssetKind, PlatformId};
+use agent_manager_core::projection::executor::{
     apply_projection_plan, apply_projection_plans_transactionally, rollback_projection_transaction,
     ApplyActionStatus, ApplyOptions, ExecutorContext,
 };
-use ai_config_core::projection::fingerprint::path_content_digest;
-use ai_config_core::projection::ledger::MemoryProjectionLedger;
-use ai_config_core::projection::ledger::ProjectionLedger;
-use ai_config_core::projection::model::{
+use agent_manager_core::projection::fingerprint::path_content_digest;
+use agent_manager_core::projection::ledger::MemoryProjectionLedger;
+use agent_manager_core::projection::ledger::ProjectionLedger;
+use agent_manager_core::projection::model::{
     DeploymentScope, EffectiveAsset, LedgerMutation, ProjectionId, ProjectionMode,
     ProjectionRecord, SourceLayer,
 };
-use ai_config_core::projection::planner::{
+use agent_manager_core::projection::planner::{
     build_projection_plan, CopyFallbackAuthorization, CopyFallbackPolicy, LinkAvailability,
     PlannerContext, ProjectionActionKind, ProjectionOperation, ProjectionRequest,
 };
@@ -709,7 +709,7 @@ fn selected_equivalent_adoption_moves_the_old_target_to_backup_before_linking() 
     let plan = build_projection_plan(&request, &PlannerContext::new(&ledger)).unwrap();
     assert_eq!(
         plan.actions[0].kind,
-        ai_config_core::projection::planner::ProjectionActionKind::AdoptEquivalent
+        agent_manager_core::projection::planner::ProjectionActionKind::AdoptEquivalent
     );
 
     let report = apply_projection_plan(

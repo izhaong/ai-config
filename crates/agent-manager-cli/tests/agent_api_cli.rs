@@ -33,7 +33,7 @@ fn cmd(home: &Path, root: &Path) -> Command {
     let mut c = Command::cargo_bin(BIN).expect("binary");
     c.env("HOME", home);
     c.env("USERPROFILE", home);
-    c.env_remove("AI_CONFIG_SECRETS_DIR");
+    c.env_remove("AGENT_MANAGER_SECRETS_DIR");
     c.env_remove("HERMES_SKILLS_DIR");
     c.arg("--root").arg(root);
     c
@@ -44,7 +44,7 @@ fn mcp_sync_plan(home: &Path, root: &Path) -> serde_json::Value {
     let mut child = std::process::Command::new(bin)
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("AGENT_MANAGER_SECRETS_DIR")
         .env_remove("HERMES_SKILLS_DIR")
         .arg("--root")
         .arg(root)
@@ -104,7 +104,7 @@ fn mcp_sync_plan(home: &Path, root: &Path) -> serde_json::Value {
             "id": 2,
             "method": "tools/call",
             "params": {
-                "name": "ai_config_sync",
+                "name": "agent_manager_sync",
                 "arguments": { "root": root.to_string_lossy(), "apply": false }
             }
         })

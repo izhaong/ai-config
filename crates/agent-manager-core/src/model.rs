@@ -174,7 +174,7 @@ impl Agent {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum PlatformId {
-    AiConfig,
+    AgentManager,
     Cursor,
     Codex,
     Claude,
@@ -184,7 +184,7 @@ pub enum PlatformId {
 impl PlatformId {
     /// 是否可向该平台 deploy / retract（agent-manager 仅为源，不下发）。
     pub fn is_deploy_target(self) -> bool {
-        !matches!(self, PlatformId::AiConfig)
+        !matches!(self, PlatformId::AgentManager)
     }
 }
 

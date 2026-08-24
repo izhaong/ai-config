@@ -43,7 +43,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **source-first T001 安全止血**：`retract` / `uninstall` 在缺少 marker、精确 legacy link 或 MCP 具名所有权记录时 fail-closed，不再删除普通平台副本或整份 MCP 配置；`status` / `doctor` / scope 解析不再初始化资产根或回写 Hook。项目 MCP 渲染使用项目 deploy base；doctor 仅报告字面 MCP secret 的计数及遗留 secret 文件元数据，不输出值。
-- **install 项目级增量合并**（Gitea #22）：`AI_CONFIG_ROOT=<repo>` 时正确解析 `<repo>/.agent-manager` + `~/.agent-manager` 合并源并下发到仓库根；hook merge 仅移除 `managedBy: agent-manager` 条目；项目作用域跳过覆盖非托管文件。
+- **install 项目级增量合并**（Gitea #22）：`AGENT_MANAGER_ROOT=<repo>` 时正确解析 `<repo>/.agent-manager` + `~/.agent-manager` 合并源并下发到仓库根；hook merge 仅移除 `managedBy: agent-manager` 条目；项目作用域跳过覆盖非托管文件。
 - **GUI 平台按钮状态**：强化激活/未激活平台按钮的视觉对比。
 
 ### Added
@@ -58,7 +58,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **资产同步 Hooks（第六类）+ 生命周期 TTS**：源资产为 Cursor 格式 `hooks/hooks.json` + 扁平脚本（如 `hooks/lifecycle-tts.sh`）；列表项对应 manifest 中各生命周期下的 hook 对象，**title = command 路径中的文件名**，**description = 脚本开头 `"""..."""`**；唯一性按文件名 + 脚本内容。`install` / `sync` 按脚本 merge 下发四平台（adapter 兼容 Codex / Claude / Hermes）。默认 `lifecycle-tts` TTS 播报；`AI_CONFIG_TTS=0` 可关闭。
+- **资产同步 Hooks（第六类）+ 生命周期 TTS**：源资产为 Cursor 格式 `hooks/hooks.json` + 扁平脚本（如 `hooks/lifecycle-tts.sh`）；列表项对应 manifest 中各生命周期下的 hook 对象，**title = command 路径中的文件名**，**description = 脚本开头 `"""..."""`**；唯一性按文件名 + 脚本内容。`install` / `sync` 按脚本 merge 下发四平台（adapter 兼容 Codex / Claude / Hermes）。默认 `lifecycle-tts` TTS 播报；`AGENT_MANAGER_TTS=0` 可关闭。
 
 ### Changed
 
@@ -124,7 +124,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **agent-manager 平台 icon 收回**：`retract(..., AiConfig)` 仅删 agent-manager 平台目录；源视图浏览时点击 agent-manager icon 不收回。
+- **agent-manager 平台 icon 收回**：`retract(..., AgentManager)` 仅删 agent-manager 平台目录；源视图浏览时点击 agent-manager icon 不收回。
 - **GUI 侧边栏可拖拽调节**：项目区高度、资产/平台宽度、侧栏总宽可手动调整，布局持久化至 `localStorage`。
 - **Core 收敛**：新增 `asset_scope`、`doctor`、`asset_ops`、`path_independence`、`skills_add`；GUI 经 `command_bridge` 调 core。
 - **产品文档**：PRD **v0.5**、DESIGN **v0.2**、ARCHITECTURE 模块图对齐 `materialize` / `asset_ops`。

@@ -12,7 +12,7 @@ function entry(
     description: "",
     platform_path: "",
     states: {
-      aiconfig: "unlinked",
+      agentmanager: "unlinked",
       cursor: "unlinked",
       codex: "unlinked",
       claude: "unlinked",
@@ -30,7 +30,7 @@ describe("entryUpdate", () => {
 
   it("有源且平台已激活时列入更新目标", () => {
     const e = entry({
-      aiconfig: "linked",
+      agentmanager: "linked",
       cursor: "linked",
       codex: "synced",
       claude: "unlinked",
@@ -40,7 +40,7 @@ describe("entryUpdate", () => {
   });
 
   it("平台能力受限时不可更新", () => {
-    const e = entry({ aiconfig: "linked", cursor: "linked" });
+    const e = entry({ agentmanager: "linked", cursor: "linked" });
     expect(canUpdateEntry(e, (plat) => plat === "cursor")).toBe(false);
   });
 });

@@ -86,12 +86,12 @@ pub fn emit_error_envelope(mode: OutputMode, code: u8, msg: &str, hint: Option<&
 /// 把任意 `anyhow::Error` 翻译成退出码(优先看根因是不是 `CoreError`)。
 #[allow(dead_code)] // 供未来 subcommand 复用
 pub fn report_anyhow(mode: OutputMode, err: anyhow::Error) -> ExitCode {
-    if let Some(core) = err.downcast_ref::<ai_config_core::error::CoreError>() {
+    if let Some(core) = err.downcast_ref::<agent_manager_core::error::CoreError>() {
         let code = core.exit_code();
         emit_error_envelope(mode, code, &core.to_string(), core.hint());
         return ExitCode::from(code);
     }
-    let code = ai_config_core::error::exit_code::FS_ERROR;
+    let code = agent_manager_core::error::exit_code::FS_ERROR;
     emit_error_envelope(mode, code, &err.to_string(), None);
     ExitCode::from(code)
 }

@@ -27,7 +27,7 @@ pub mod projection_repo;
 pub mod schema;
 pub mod settings_repo;
 
-// `ProjectRepo` 重导出到顶级,使用方写 `use ai_config_store::ProjectRepo;` 即可。
+// `ProjectRepo` 重导出到顶级,使用方写 `use agent_manager_store::ProjectRepo;` 即可。
 // `StoreError` 不重导出 — lib.rs 自己定义了**完整**的 `StoreError`(包含
 // `Open` / `DataDirUnknown` / `Sqlite` / `Project` 转发),使用方只需要面对一种
 // 错误类型,无需知道内部模块边界。

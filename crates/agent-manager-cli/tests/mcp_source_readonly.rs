@@ -52,7 +52,7 @@ fn cmd(home: &Path, root: &Path) -> Command {
     command
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env_remove("AI_CONFIG_SECRETS_DIR")
+        .env_remove("AGENT_MANAGER_SECRETS_DIR")
         .env_remove("HERMES_SKILLS_DIR")
         .arg("--root")
         .arg(root);
@@ -229,7 +229,7 @@ fn mcp_migrate_extract_secrets_apply_is_now_fail_closed_without_a_reviewed_plan(
     let legacy_before = fs::read(&legacy).expect("read legacy source before migration");
 
     let assert = cmd(home.path(), root.path())
-        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .env("AGENT_MANAGER_SECRETS_DIR", &secret_dir)
         .args([
             "--json",
             "mcp",
@@ -277,7 +277,7 @@ fn mcp_migrate_extract_secrets_apply_aborts_on_existing_different_secret_without
         r#"{"mcpServers":{"collision-server":{"command":"catalog-mcp","env":{"CATALOG_TOKEN":"new-secret-value"}}}}"#,
     )
     .expect("write legacy source");
-    ai_config_core::secrets::save_to(
+    agent_manager_core::secrets::save_to(
         &[("CATALOG_TOKEN".to_owned(), "old-secret-value".to_owned())],
         camino::Utf8Path::from_path(&secret_path).expect("utf8 secret path"),
     )
@@ -285,7 +285,7 @@ fn mcp_migrate_extract_secrets_apply_aborts_on_existing_different_secret_without
     let secret_before = fs::read(&secret_path).expect("read secret store before migration");
 
     let assert = cmd(home.path(), root.path())
-        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .env("AGENT_MANAGER_SECRETS_DIR", &secret_dir)
         .args([
             "mcp",
             "migrate",
@@ -339,7 +339,7 @@ fn mcp_migrate_extract_secrets_apply_rejects_url_userinfo_before_any_write() {
     .expect("write userinfo source");
 
     let assert = cmd(home.path(), root.path())
-        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .env("AGENT_MANAGER_SECRETS_DIR", &secret_dir)
         .args([
             "mcp",
             "migrate",
@@ -384,7 +384,7 @@ fn mcp_migrate_extract_secrets_apply_refuses_a_symlinked_secret_store() {
     symlink(&outside, secret_dir.join("secrets.env")).expect("link secret store");
 
     let assert = cmd(home.path(), root.path())
-        .env("AI_CONFIG_SECRETS_DIR", &secret_dir)
+        .env("AGENT_MANAGER_SECRETS_DIR", &secret_dir)
         .args([
             "mcp",
             "migrate",
